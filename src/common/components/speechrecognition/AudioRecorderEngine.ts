@@ -58,12 +58,12 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: 48000,
+          sampleRate: 16000,
           sampleSize: 16,
           channelCount: 1,
           echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
+          noiseSuppression: true,
+          autoGainControl: true,
         },
       });
 
