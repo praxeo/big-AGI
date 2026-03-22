@@ -51,9 +51,6 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     this.onResultCallback = onResultCallback;
     this.setState = setState;
 
-    // Pre-warm the mic so start() is instant
-    this._warmUpMic();
-
     setState({ isAvailable: true });
   }
 
