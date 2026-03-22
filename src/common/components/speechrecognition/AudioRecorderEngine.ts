@@ -13,6 +13,10 @@ import {
  * (Mistral Voxtral, OpenAI Whisper, self-hosted vLLM, etc.).
  *
  * Flow: record mic → stop → POST blob to /api/stt/transcribe → get text.
+ *
+ * The mic stream is pre-warmed on engine creation so that start() is
+ * near-instant (no getUserMedia cold-boot). The stream is only released
+ * when the engine is disposed.
  */
 export class AudioRecorderEngine implements IRecognitionEngine {
   public readonly engineType = 'audioRecorder';
@@ -28,6 +32,15 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   private results: SpeechResult = createSpeechRecognitionResults();
   private skipTranscriptionOnStop = false;
 
+  private static readonly AUDIO_CONSTRAINTS: MediaTrackConstraints = {
+    sampleRate: 16000,
+    sampleSize: 16,
+    channelCount: 1,
+    echoCancellation: false,
+    noiseSuppression: true,
+    autoGainControl: true,
+  };
+
   constructor(
     preferredLanguage: string,
     _softStopTimeoutIgnored: number,
@@ -37,44 +50,52 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     this.preferredLanguage = preferredLanguage;
     this.onResultCallback = onResultCallback;
     this.setState = setState;
+
+    // Pre-warm the mic so start() is instant
+    this._warmUpMic();
+
     setState({ isAvailable: true });
   }
 
-  async start() {
-    if (
-      typeof navigator === 'undefined' ||
-      !navigator.mediaDevices ||
-      typeof navigator.mediaDevices.getUserMedia !== 'function'
-    ) {
-      this.setState({ errorMessage: 'Media devices API not supported.' });
-      return;
-    }
+  private async _warmUpMic() {
+    try {
+      if (
+        typeof navigator === 'undefined' ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== 'function'
+      ) return;
 
+      this._mediaStream = await navigator.mediaDevices.getUserMedia({
+        audio: AudioRecorderEngine.AUDIO_CONSTRAINTS,
+      });
+    } catch (error: any) {
+      console.warn('Mic pre-warm failed (will retry on start):', error?.message);
+      this._mediaStream = null;
+    }
+  }
+
+  async start() {
     this.results = createSpeechRecognitionResults();
     this.skipTranscriptionOnStop = false;
     this.audioChunks = [];
     this.onResultCallback(this.results);
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          sampleRate: 16000,
-          sampleSize: 16,
-          channelCount: 1,
-          echoCancellation: false,
-          noiseSuppression: true,
-          autoGainControl: true,
-        },
-      });
+      // Reuse pre-warmed stream, or grab a new one if pre-warm failed
+      if (!this._mediaStream) {
+        this._mediaStream = await navigator.mediaDevices.getUserMedia({
+          audio: AudioRecorderEngine.AUDIO_CONSTRAINTS,
+        });
+      }
 
-      this._mediaStream = stream;
+      const stream = this._mediaStream;
 
       const recorderOptions: MediaRecorderOptions = {};
       if (typeof MediaRecorder !== 'undefined' && typeof MediaRecorder.isTypeSupported === 'function') {
-        if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
-          recorderOptions.mimeType = 'audio/ogg;codecs=opus';
-        } else if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+        if (MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
           recorderOptions.mimeType = 'audio/webm;codecs=opus';
+        } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+          recorderOptions.mimeType = 'audio/ogg;codecs=opus';
         }
       }
 
@@ -95,10 +116,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
         const recorderMimeType = this._mediaRecorder?.mimeType || 'audio/webm';
 
-        if (this._mediaStream) {
-          this._mediaStream.getTracks().forEach((t) => t.stop());
-          this._mediaStream = null;
-        }
+        // Don't release the stream — keep it warm for next recording
 
         try {
           if (!this.skipTranscriptionOnStop) {
@@ -121,6 +139,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
         this._handleError('Recording failed.');
       };
 
+      // Flush chunks every 100ms — prevents first-word clipping
       this._mediaRecorder.start(100);
     } catch (error: any) {
       console.error('MediaDevices.getUserMedia error:', error);
@@ -138,12 +157,6 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   dispose() {
     this.skipTranscriptionOnStop = true;
 
-    if (this._mediaStream) {
-      this.results.doneReason = 'react-unmount';
-      this._mediaStream.getTracks().forEach((t) => t.stop());
-      this._mediaStream = null;
-    }
-
     if (this._mediaRecorder) {
       if (this._mediaRecorder.state !== 'inactive')
         this._mediaRecorder.stop();
@@ -153,10 +166,16 @@ export class AudioRecorderEngine implements IRecognitionEngine {
       this._mediaRecorder.onerror = null;
       this._mediaRecorder = null;
     }
+
+    // Only release the mic when the engine is fully disposed
+    if (this._mediaStream) {
+      this._mediaStream.getTracks().forEach((t) => t.stop());
+      this._mediaStream = null;
+    }
   }
 
   isBetweenBeginEnd() {
-    return !!this._mediaStream;
+    return !!this._mediaRecorder && this._mediaRecorder.state === 'recording';
   }
 
   updateConfiguration(
