@@ -121,7 +121,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
         this._handleError('Recording failed.');
       };
 
-      this._mediaRecorder.start();
+      this._mediaRecorder.start(100);
     } catch (error: any) {
       console.error('MediaDevices.getUserMedia error:', error);
       this._handleError('Microphone access denied or not available.');
