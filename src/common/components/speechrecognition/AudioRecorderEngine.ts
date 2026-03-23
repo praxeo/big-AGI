@@ -1,6 +1,7 @@
 import {
   createSpeechRecognitionResults,
   IRecognitionEngine,
+  PLACEHOLDER_INTERIM_TRANSCRIPT,
   SpeechDoneReason,
   SpeechRecognitionState,
   SpeechResult,
@@ -14,8 +15,11 @@ import {
  *
  * Supports two modes:
  *   - Standard:  record mic → stop → POST blob → get text.
- *   - Realtime:  while recording, POST a growing audio blob every few
- *                seconds so the user sees interim text progressively.
+ *   - Realtime:  while recording, POST a growing audio blob every second
+ *                so the user sees interim text progressively. On stop, the
+ *                last interim result is promoted to the final transcript
+ *                instantly — no extra round trip.
+ *
  *                Includes an in-flight guard so requests never pile up —
  *                if the previous request hasn't returned, the interval
  *                tick is skipped. This lets the polling self-adapt to
@@ -42,6 +46,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
   // Realtime interim polling
   private _interimInterval: ReturnType<typeof setInterval> | null = null;
+  private _interimStartTimeout: ReturnType<typeof setTimeout> | null = null;
   private _interimRequestId = 0;
   private _interimInFlight = false;
   private _recorderMimeType = 'audio/webm';
@@ -59,6 +64,11 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   // Actual request cadence self-adapts: if the provider is slower than this
   // interval, ticks are skipped until the in-flight request returns.
   private static readonly INTERIM_INTERVAL_MS = 1000;
+
+  // Delay before the first interim poll fires (ms). Gives enough audio to
+  // produce a meaningful transcription and avoids cold-start penalties on
+  // a tiny blob.
+  private static readonly INTERIM_INITIAL_DELAY_MS = 2000;
 
   constructor(
     preferredLanguage: string,
@@ -130,8 +140,22 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
         try {
           if (!this.skipTranscriptionOnStop) {
-            const audioBlob = new Blob(this.audioChunks, { type: this._recorderMimeType });
-            await this._handleAudioBlob(audioBlob, this._recorderMimeType);
+            // If we already have interim text from realtime polling,
+            // promote it to the final result instantly — no extra round trip
+            if (this.realtimeMode
+              && this.results.interimTranscript
+              && this.results.interimTranscript !== PLACEHOLDER_INTERIM_TRANSCRIPT) {
+              this.results.transcript = this.results.interimTranscript;
+              this.results.interimTranscript = '';
+              this.results.done = true;
+              this.results.doneReason = this.results.doneReason ?? 'api-unknown-timeout';
+              this.onResultCallback(this.results);
+            } else {
+              // Standard mode, or no interim text yet (very short recording)
+              // — send the full blob for transcription
+              const audioBlob = new Blob(this.audioChunks, { type: this._recorderMimeType });
+              await this._handleAudioBlob(audioBlob, this._recorderMimeType);
+            }
           }
         } finally {
           this._cleanupRecorder();
@@ -195,12 +219,30 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   private _startInterimPolling() {
     this._stopInterimPolling();
     this._interimInFlight = false;
-    this._interimInterval = setInterval(() => {
+
+    // Wait before the first poll — gives enough audio to produce a
+    // meaningful result and avoids cold-start penalty on a tiny blob
+    this._interimStartTimeout = setTimeout(() => {
+      if (this.disposed) return;
+      if (!this._mediaRecorder || this._mediaRecorder.state !== 'recording') return;
+
+      this._interimStartTimeout = null;
+
+      // Fire the first request immediately
       this._sendInterimRequest();
-    }, AudioRecorderEngine.INTERIM_INTERVAL_MS);
+
+      // Then start the regular interval
+      this._interimInterval = setInterval(() => {
+        this._sendInterimRequest();
+      }, AudioRecorderEngine.INTERIM_INTERVAL_MS);
+    }, AudioRecorderEngine.INTERIM_INITIAL_DELAY_MS);
   }
 
   private _stopInterimPolling() {
+    if (this._interimStartTimeout) {
+      clearTimeout(this._interimStartTimeout);
+      this._interimStartTimeout = null;
+    }
     if (this._interimInterval) {
       clearInterval(this._interimInterval);
       this._interimInterval = null;
