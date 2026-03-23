@@ -45,13 +45,13 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     sampleRate: 16000,
     sampleSize: 16,
     channelCount: 1,
-    echoCancellation: false,
+    echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
   };
 
   // How often to send interim transcription requests (ms)
-  private static readonly INTERIM_INTERVAL_MS = 3000;
+  private static readonly INTERIM_INTERVAL_MS = 1000;
 
   constructor(
     preferredLanguage: string,
