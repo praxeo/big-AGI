@@ -20,6 +20,15 @@ export const PLACEHOLDER_INTERIM_TRANSCRIPT = 'Listening...';
 // ────────────────────────────────────────────────────────────────────────────
 const FORCE_SERVER_STT = true;
 
+// ────────────────────────────────────────────────────────────────────────────
+// When true (and FORCE_SERVER_STT is also true), the AudioRecorderEngine
+// sends a growing audio blob every ~3 seconds during recording so the user
+// sees interim transcription results progressively.
+//
+// Set to false for the original record → stop → transcribe behaviour.
+// ────────────────────────────────────────────────────────────────────────────
+const FORCE_REALTIME = true;
+
 function resolveEngineType(requested: RecognitionEngineType): RecognitionEngineType {
   if (FORCE_SERVER_STT && requested === 'webSpeechApi')
     return 'audioRecorder';
@@ -170,8 +179,9 @@ export const useSpeechRecognition = (
     if (engineRef.current?.engineType === resolved)
       return;
 
+    // Dispose old engine (not just stop — releases mic stream)
     if (engineRef.current) {
-      engineRef.current.stop('switch-engine', false);
+      engineRef.current.dispose();
       engineRef.current = null;
     }
 
@@ -207,6 +217,7 @@ export const useSpeechRecognition = (
           softStopTimeoutRef.current,
           onResultCallbackRef.current,
           updateState,
+          FORCE_SERVER_STT && FORCE_REALTIME,
         );
         break;
     }
