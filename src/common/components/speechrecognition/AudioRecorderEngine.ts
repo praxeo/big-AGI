@@ -13,7 +13,7 @@ import {
  *
  * Supports two modes controlled by the realtimeMode flag:
  *   - Standard:  record → stop → transcribe → done.
- *   - Realtime:  every 3s, send growing blob for interim text.
+ *   - Realtime:  every few seconds, send growing blob for interim text.
  *                On stop, send full blob for final accurate transcript.
  */
 export class AudioRecorderEngine implements IRecognitionEngine {
@@ -34,6 +34,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
   // Realtime interim polling
   private _interimInterval: ReturnType<typeof setInterval> | null = null;
+  private _lastInterimLength = 0;
   private _recorderMimeType = 'audio/webm';
 
   private static readonly AUDIO_CONSTRAINTS: MediaTrackConstraints = {
@@ -45,7 +46,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     autoGainControl: true,
   };
 
-  private static readonly INTERIM_INTERVAL_MS = 3000;
+  private static readonly INTERIM_INTERVAL_MS = 4000;
 
   constructor(
     preferredLanguage: string,
@@ -67,6 +68,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     this.skipTranscriptionOnStop = false;
     this.disposed = false;
     this.audioChunks = [];
+    this._lastInterimLength = 0;
     this.onResultCallback(this.results);
 
     try {
@@ -173,7 +175,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     this.onResultCallback = onResultCallback;
   }
 
-  // ── Interim polling (simple) ───────────────────────────────────────
+  // ── Interim polling ────────────────────────────────────────────────
 
   private _stopPolling() {
     if (this._interimInterval) {
@@ -188,13 +190,23 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
     const blob = new Blob([...this.audioChunks], { type: this._recorderMimeType });
 
+    // Skip if too little audio — model will hallucinate
+    if (blob.size < 10000) return;
+
     try {
       const text = await _transcribeViaServer(blob, this._recorderMimeType, this.preferredLanguage);
 
       if (this.disposed) return;
       if (this._mediaRecorder?.state === 'recording') {
-        this.results.interimTranscript = text;
-        this.onResultCallback(this.results);
+        if (!text.trim()) return;
+
+        // Only update if the new text is longer — prevents flickering
+        // from the model re-interpreting earlier audio differently
+        if (text.length >= this._lastInterimLength) {
+          this._lastInterimLength = text.length;
+          this.results.interimTranscript = text;
+          this.onResultCallback(this.results);
+        }
       }
     } catch {
       // Swallow interim errors
