@@ -13,6 +13,7 @@
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
 
 const DEFAULT_BASE_URL = 'https://api.mistral.ai';
 const DEFAULT_MODEL = 'voxtral-mini-latest';
