@@ -16,6 +16,10 @@ import {
  *   - Standard:  record mic → stop → POST blob → get text.
  *   - Realtime:  while recording, POST a growing audio blob every few
  *                seconds so the user sees interim text progressively.
+ *                Includes an in-flight guard so requests never pile up —
+ *                if the previous request hasn't returned, the interval
+ *                tick is skipped. This lets the polling self-adapt to
+ *                provider speed and growing blob size.
  *
  * The mic stream is kept alive between recordings so that start() is
  * near-instant after the first permission grant.
@@ -39,6 +43,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   // Realtime interim polling
   private _interimInterval: ReturnType<typeof setInterval> | null = null;
   private _interimRequestId = 0;
+  private _interimInFlight = false;
   private _recorderMimeType = 'audio/webm';
 
   private static readonly AUDIO_CONSTRAINTS: MediaTrackConstraints = {
@@ -50,7 +55,9 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     autoGainControl: true,
   };
 
-  // How often to send interim transcription requests (ms)
+  // How often to check whether to send an interim transcription request (ms).
+  // Actual request cadence self-adapts: if the provider is slower than this
+  // interval, ticks are skipped until the in-flight request returns.
   private static readonly INTERIM_INTERVAL_MS = 1000;
 
   constructor(
@@ -74,6 +81,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     this.disposed = false;
     this.audioChunks = [];
     this._interimRequestId = 0;
+    this._interimInFlight = false;
     this.onResultCallback(this.results);
 
     try {
@@ -186,6 +194,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
 
   private _startInterimPolling() {
     this._stopInterimPolling();
+    this._interimInFlight = false;
     this._interimInterval = setInterval(() => {
       this._sendInterimRequest();
     }, AudioRecorderEngine.INTERIM_INTERVAL_MS);
@@ -201,6 +210,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
   private async _sendInterimRequest() {
     if (this.disposed) return;
     if (this.audioChunks.length === 0) return;
+    if (this._interimInFlight) return;
 
     // Snapshot current chunks into a blob
     const blob = new Blob([...this.audioChunks], { type: this._recorderMimeType });
@@ -208,6 +218,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     // Monotonic request ID — lets us discard stale responses
     const requestId = ++this._interimRequestId;
 
+    this._interimInFlight = true;
     try {
       const text = await _transcribeViaServer(blob, this._recorderMimeType, this.preferredLanguage);
 
@@ -222,6 +233,8 @@ export class AudioRecorderEngine implements IRecognitionEngine {
       }
     } catch {
       // Swallow interim errors — the final transcription is what matters
+    } finally {
+      this._interimInFlight = false;
     }
   }
 
