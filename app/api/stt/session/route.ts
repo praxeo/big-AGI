@@ -56,7 +56,6 @@ export async function POST(req: Request) {
 
   const sessionConfig = JSON.stringify({
     type: 'transcription',
-    model,
     audio: {
       input: {
         format: { type: 'audio/pcm', rate: 24000 },
