@@ -1,3 +1,5 @@
+// src/common/components/speechrecognition/useSpeechRecognition.ts
+
 import * as React from 'react';
 
 import { Is, isBrowser } from '~/common/util/pwaUtils';
@@ -6,6 +8,7 @@ import { useUIPreferencesStore } from '~/common/stores/store-ui';
 import { CapabilityBrowserSpeechRecognition } from '../useCapabilities';
 
 import { AudioRecorderEngine } from './AudioRecorderEngine';
+import { CloudflareSTTEngine } from './CloudflareSTTEngine';
 import { RealtimeSTTEngine } from './RealtimeSTTEngine';
 import { getSpeechRecognitionClass, WebSpeechApiEngine } from './WebSpeechApiEngine';
 
@@ -17,14 +20,23 @@ export const PLACEHOLDER_INTERIM_TRANSCRIPT = 'Listening...';
 // FORCE_REALTIME:   use OpenAI Realtime API (WebRTC) for true word-by-word STT
 //                   requires STT_API_KEY to be an OpenAI key
 //                   set false to fall back to polling-based AudioRecorderEngine
+//
+// Cloudflare STT:   automatically enabled when NEXT_PUBLIC_CLOUDFLARE_STT_WORKER_URL
+//                   is set. No flag needed — presence of the URL is the flag.
 // ─────────────────────────────────────────────────────────────────────────────
 const FORCE_SERVER_STT = true;
 const FORCE_REALTIME = false;
 
+// Set in Vercel env: NEXT_PUBLIC_CLOUDFLARE_STT_WORKER_URL=https://big-agi-stt.YOUR_SUBDOMAIN.workers.dev
+const CLOUDFLARE_STT_WORKER_URL = process.env.NEXT_PUBLIC_CLOUDFLARE_STT_WORKER_URL || '';
+
 function resolveEngineType(requested: RecognitionEngineType): RecognitionEngineType {
-  if (FORCE_SERVER_STT && requested === 'webSpeechApi') {
+  if (CLOUDFLARE_STT_WORKER_URL && requested === 'webSpeechApi')
+    return 'cloudflareStt';
+
+  if (FORCE_SERVER_STT && requested === 'webSpeechApi')
     return FORCE_REALTIME ? 'realtimeStt' : 'audioRecorder';
-  }
+
   return requested;
 }
 
@@ -43,6 +55,11 @@ function hasWebRTCSupport(): boolean {
   return typeof window.RTCPeerConnection !== 'undefined';
 }
 
+function hasCloudflareSTTSupport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return typeof WebSocket !== 'undefined' && !!CLOUDFLARE_STT_WORKER_URL;
+}
+
 
 /// Capability interface
 
@@ -50,9 +67,11 @@ let cachedCapability: CapabilityBrowserSpeechRecognition | null = null;
 
 export const browserSpeechRecognitionCapability = (): CapabilityBrowserSpeechRecognition => {
   if (!cachedCapability) {
-    const isApiAvailable = FORCE_SERVER_STT
-      ? (FORCE_REALTIME ? hasWebRTCSupport() : hasMediaRecorderSupport())
-      : !!getSpeechRecognitionClass();
+    const isApiAvailable = CLOUDFLARE_STT_WORKER_URL
+      ? hasCloudflareSTTSupport()
+      : FORCE_SERVER_STT
+        ? (FORCE_REALTIME ? hasWebRTCSupport() : hasMediaRecorderSupport())
+        : !!getSpeechRecognitionClass();
 
     const isDeviceNotSupported = false;
 
@@ -69,7 +88,7 @@ export const browserSpeechRecognitionCapability = (): CapabilityBrowserSpeechRec
 
 // Interfaces used by Engines
 
-type RecognitionEngineType = 'webSpeechApi' | 'audioRecorder' | 'realtimeStt';
+type RecognitionEngineType = 'webSpeechApi' | 'audioRecorder' | 'realtimeStt' | 'cloudflareStt';
 
 export interface IRecognitionEngine {
   engineType: RecognitionEngineType;
@@ -221,6 +240,16 @@ export const useSpeechRecognition = (
 
       case 'realtimeStt':
         engineRef.current = new RealtimeSTTEngine(
+          preferredLanguageRef.current,
+          softStopTimeoutRef.current,
+          onResultCallbackRef.current,
+          updateState,
+        );
+        break;
+
+      case 'cloudflareStt':
+        engineRef.current = new CloudflareSTTEngine(
+          CLOUDFLARE_STT_WORKER_URL,
           preferredLanguageRef.current,
           softStopTimeoutRef.current,
           onResultCallbackRef.current,
