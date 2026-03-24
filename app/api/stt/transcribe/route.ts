@@ -61,6 +61,8 @@ export async function POST(req: Request) {
     upstreamForm.append('file', file, file.name || 'audio.webm');
     if (language)
       upstreamForm.append('language', language);
+
+    const prompt = process.env.STT_PROMPT;
     if (prompt)
       upstreamForm.append('prompt', prompt);
 
