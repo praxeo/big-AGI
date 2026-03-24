@@ -19,7 +19,7 @@ export const PLACEHOLDER_INTERIM_TRANSCRIPT = 'Listening...';
 //                   set false to fall back to polling-based AudioRecorderEngine
 // ─────────────────────────────────────────────────────────────────────────────
 const FORCE_SERVER_STT = true;
-const FORCE_REALTIME = true;
+const FORCE_REALTIME = false;
 
 function resolveEngineType(requested: RecognitionEngineType): RecognitionEngineType {
   if (FORCE_SERVER_STT && requested === 'webSpeechApi') {
