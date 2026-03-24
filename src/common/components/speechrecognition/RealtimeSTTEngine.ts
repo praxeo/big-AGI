@@ -13,11 +13,12 @@ import {
  * Unified interface flow:
  *   1. Mic acquired in browser
  *   2. RTCPeerConnection + data channel created
- *   3. SDP offer → POST /api/stt/session (server builds multipart, proxies to OpenAI)
+ *   3. SDP offer → POST /api/stt/session (our server proxies to OpenAI)
  *   4. SDP answer returned → WebRTC connected
- *   5. Data channel "oai-events" receives streaming transcription deltas
- *   6. Semantic VAD detects speech automatically
- *   7. On stop: final transcript assembled from all confirmed turns
+ *   5. Session config baked into SDP exchange (multipart form)
+ *   6. Data channel "oai-events" receives streaming transcription deltas
+ *   7. Semantic VAD detects speech automatically
+ *   8. On stop: final transcript assembled from all confirmed turns
  */
 export class RealtimeSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'realtimeStt' as const;
@@ -215,4 +216,81 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       }
 
       case 'conversation.item.input_audio_transcription.failed':
-        console.warn('[RealtimeSTTEngine] transcription failed for
+        console.warn('[RealtimeSTTEngine] transcription failed for turn:', event.item_id, event.error);
+        break;
+
+      case 'conversation.item.added':
+      case 'conversation.item.done':
+        break;
+
+      case 'error':
+        console.error('[RealtimeSTTEngine] server error:', event.error);
+        if (event.error?.type === 'invalid_request_error')
+          this._handleError(event.error?.message ?? 'Transcription error.');
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  // ── Finalize / cleanup ─────────────────────────────────────────────
+
+  private _finalize() {
+    this.withinBeginEnd = false;
+    this.setState({ isActive: false, hasAudio: false, hasSpeech: false });
+
+    const finalText = this._confirmedText
+      ? this._currentDelta
+        ? (this._confirmedText + ' ' + this._currentDelta).trim()
+        : this._confirmedText
+      : this._currentDelta.trim();
+
+    this.results.transcript = finalText;
+    this.results.interimTranscript = '';
+    this.results.done = true;
+    this.results.doneReason = this.results.doneReason ?? 'manual';
+    this.onResultCallback({ ...this.results });
+
+    this._cleanup(false);
+  }
+
+  private _handleError(message: string) {
+    this.withinBeginEnd = false;
+    this.setState({ errorMessage: message, isActive: false, hasAudio: false, hasSpeech: false });
+    this.results.doneReason = 'api-error';
+    this.results.done = true;
+    this.onResultCallback({ ...this.results });
+    this._cleanup(false);
+  }
+
+  private _cleanup(releaseMic: boolean) {
+    if (this._dc) {
+      this._dc.onopen = null;
+      this._dc.onmessage = null;
+      this._dc.onerror = null;
+      this._dc.onclose = null;
+      try { if (this._dc.readyState !== 'closed') this._dc.close(); } catch { /* ignore */ }
+      this._dc = null;
+    }
+    if (this._pc) {
+      try { this._pc.close(); } catch { /* ignore */ }
+      this._pc = null;
+    }
+    if (releaseMic) this._releaseMic();
+  }
+
+  private _releaseMic() {
+    if (this._mediaStream) {
+      this._mediaStream.getTracks().forEach(t => t.stop());
+      this._mediaStream = null;
+    }
+  }
+}
+
+function _normalizeLanguage(lang?: string): string | undefined {
+  if (!lang) return undefined;
+  const trimmed = lang.trim();
+  if (!trimmed) return undefined;
+  return trimmed.split(/[-_]/)[0]?.toLowerCase() || undefined;
+}
