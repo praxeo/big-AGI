@@ -286,6 +286,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         break;
 
       default:
+        console.log('[RealtimeSTTEngine] event:', event.type, JSON.stringify(event).slice(0, 200));
         break;
     }
   }
