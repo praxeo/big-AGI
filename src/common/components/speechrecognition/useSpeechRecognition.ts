@@ -6,32 +6,25 @@ import { useUIPreferencesStore } from '~/common/stores/store-ui';
 import { CapabilityBrowserSpeechRecognition } from '../useCapabilities';
 
 import { AudioRecorderEngine } from './AudioRecorderEngine';
+import { RealtimeSTTEngine } from './RealtimeSTTEngine';
 import { getSpeechRecognitionClass, WebSpeechApiEngine } from './WebSpeechApiEngine';
 
 // configuration
 export const PLACEHOLDER_INTERIM_TRANSCRIPT = 'Listening...';
 
-// ────────────────────────────────────────────────────────────────────────────
-// When true, ALL speech recognition is routed through the server-side
-// transcription endpoint (AudioRecorderEngine → /api/stt/transcribe)
-// instead of the browser's Web Speech API.
-//
-// Set to false to restore the original Web Speech API behaviour.
-// ────────────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// FORCE_SERVER_STT: route all speech through server-side transcription
+// FORCE_REALTIME:   use OpenAI Realtime API (WebRTC) for true word-by-word STT
+//                   requires STT_API_KEY to be an OpenAI key
+//                   set false to fall back to polling-based AudioRecorderEngine
+// ─────────────────────────────────────────────────────────────────────────────
 const FORCE_SERVER_STT = true;
-
-// ────────────────────────────────────────────────────────────────────────────
-// When true (and FORCE_SERVER_STT is also true), the AudioRecorderEngine
-// sends a growing audio blob every ~3 seconds during recording so the user
-// sees interim transcription results progressively.
-//
-// Set to false for the original record → stop → transcribe behaviour.
-// ────────────────────────────────────────────────────────────────────────────
 const FORCE_REALTIME = true;
 
 function resolveEngineType(requested: RecognitionEngineType): RecognitionEngineType {
-  if (FORCE_SERVER_STT && requested === 'webSpeechApi')
-    return 'audioRecorder';
+  if (FORCE_SERVER_STT && requested === 'webSpeechApi') {
+    return FORCE_REALTIME ? 'realtimeStt' : 'audioRecorder';
+  }
   return requested;
 }
 
@@ -45,6 +38,11 @@ function hasMediaRecorderSupport(): boolean {
   );
 }
 
+function hasWebRTCSupport(): boolean {
+  if (typeof window === 'undefined') return false;
+  return typeof window.RTCPeerConnection !== 'undefined';
+}
+
 
 /// Capability interface
 
@@ -53,7 +51,7 @@ let cachedCapability: CapabilityBrowserSpeechRecognition | null = null;
 export const browserSpeechRecognitionCapability = (): CapabilityBrowserSpeechRecognition => {
   if (!cachedCapability) {
     const isApiAvailable = FORCE_SERVER_STT
-      ? hasMediaRecorderSupport()
+      ? (FORCE_REALTIME ? hasWebRTCSupport() : hasMediaRecorderSupport())
       : !!getSpeechRecognitionClass();
 
     const isDeviceNotSupported = false;
@@ -71,7 +69,7 @@ export const browserSpeechRecognitionCapability = (): CapabilityBrowserSpeechRec
 
 // Interfaces used by Engines
 
-type RecognitionEngineType = 'webSpeechApi' | 'audioRecorder';
+type RecognitionEngineType = 'webSpeechApi' | 'audioRecorder' | 'realtimeStt';
 
 export interface IRecognitionEngine {
   engineType: RecognitionEngineType;
@@ -179,7 +177,7 @@ export const useSpeechRecognition = (
     if (engineRef.current?.engineType === resolved)
       return;
 
-    // Dispose old engine (not just stop — releases mic stream)
+    // Dispose old engine — releases mic stream and closes any connections
     if (engineRef.current) {
       engineRef.current.dispose();
       engineRef.current = null;
@@ -217,7 +215,16 @@ export const useSpeechRecognition = (
           softStopTimeoutRef.current,
           onResultCallbackRef.current,
           updateState,
-          FORCE_SERVER_STT && FORCE_REALTIME,
+          false, // realtimeMode off — simple record → stop → transcribe
+        );
+        break;
+
+      case 'realtimeStt':
+        engineRef.current = new RealtimeSTTEngine(
+          preferredLanguageRef.current,
+          softStopTimeoutRef.current,
+          onResultCallbackRef.current,
+          updateState,
         );
         break;
     }
@@ -233,24 +240,24 @@ export const useSpeechRecognition = (
 
   const startRecognition = React.useCallback(() => {
     if (!engineRef.current)
-      return console.error('startRecognition: Speech recognition is not supported or not initialized.');
+      return console.error('startRecognition: not initialized.');
     if (engineRef.current.isBetweenBeginEnd())
-      return console.error('startRecognition: Start recording called while already recording.');
+      return console.error('startRecognition: already recording.');
 
     try {
       updateState({ errorMessage: null });
       engineRef.current.start();
     } catch (error: any) {
-      updateState({ errorMessage: 'Issue starting the speech recognition.' });
-      console.log('Speech recognition error - clicking too quickly?', error?.message);
+      updateState({ errorMessage: 'Issue starting speech recognition.' });
+      console.error('Speech recognition start error:', error?.message);
     }
   }, [updateState]);
 
   const stopRecognition = React.useCallback((sendOnDone: boolean) => {
     if (!engineRef.current)
-      return console.error('stopRecognition: Speech recognition is not supported or not initialized.');
+      return console.error('stopRecognition: not initialized.');
     if (!engineRef.current.isBetweenBeginEnd())
-      return console.error('stopRecognition: Stop recognition called while not recognizing.');
+      return console.error('stopRecognition: not recording.');
     engineRef.current.stop('manual', sendOnDone);
   }, []);
 
