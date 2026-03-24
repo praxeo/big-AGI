@@ -11,18 +11,19 @@ import {
  * Engine which uses the OpenAI Realtime API (WebRTC) for true real-time
  * speech transcription — word-by-word as you speak, ~200ms latency.
  *
- * Flow:
- *   1. POST /api/stt/session → ephemeral token (API key stays server-side)
- *   2. RTCPeerConnection created in browser
- *   3. Mic track added to peer connection
- *   4. SDP offer → POST https://api.openai.com/v1/realtime/calls
- *   5. SDP answer → WebRTC connected
+ * Unified interface flow (no browser → OpenAI HTTP calls):
+ *   1. Mic acquired in browser
+ *   2. RTCPeerConnection + data channel created
+ *   3. SDP offer → POST /api/stt/session (our server)
+ *   4. Server proxies SDP + session config → OpenAI
+ *   5. SDP answer returned → WebRTC connected
  *   6. Data channel "oai-events" receives streaming transcription deltas
- *   7. Server VAD detects speech automatically — no manual chunking
+ *   7. Semantic VAD detects speech automatically
  *   8. On stop: final transcript assembled from all confirmed turns
  *
- * Vercel compatible: only one short REST call hits Vercel.
- * All audio streams directly browser → OpenAI via WebRTC.
+ * The browser only contacts our own domain via HTTP.
+ * Audio streams directly browser → OpenAI via WebRTC (UDP/DTLS,
+ * not blocked by firewalls that block HTTPS to api.openai.com).
  */
 export class RealtimeSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'realtimeStt' as const;
@@ -48,7 +49,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
-    // Note: sampleRate hint only — WebRTC resamples internally to 24kHz
     sampleRate: 24000,
   };
 
@@ -73,22 +73,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     this.onResultCallback(this.results);
 
     try {
-      // ── Step 1: Get ephemeral token from our Vercel function ──────────
-      const lang = _normalizeLanguage(this.preferredLanguage);
-      const sessionRes = await fetch('/api/stt/session', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ language: lang }),
-      });
-
-      if (!sessionRes.ok)
-        throw new Error(`Session creation failed (${sessionRes.status})`);
-
-      const { token } = await sessionRes.json();
-      if (!token) throw new Error('No ephemeral token received');
-      if (this.disposed) return;
-
-      // ── Step 2: Get mic ───────────────────────────────────────────────
+      // ── Step 1: Get mic ───────────────────────────────────────────
       if (!this._mediaStream) {
         this._mediaStream = await navigator.mediaDevices.getUserMedia({
           audio: RealtimeSTTEngine.AUDIO_CONSTRAINTS,
@@ -96,7 +81,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       }
       if (this.disposed) { this._releaseMic(); return; }
 
-      // ── Step 3: Create RTCPeerConnection ──────────────────────────────
+      // ── Step 2: Create RTCPeerConnection ──────────────────────────
       this._pc = new RTCPeerConnection();
 
       // Data channel MUST be created before offer
@@ -107,19 +92,20 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       for (const track of this._mediaStream.getAudioTracks())
         this._pc.addTrack(track, this._mediaStream);
 
-      // ── Step 4: SDP offer ─────────────────────────────────────────────
+      // ── Step 3: SDP offer ─────────────────────────────────────────
       const offer = await this._pc.createOffer();
       await this._pc.setLocalDescription(offer);
 
-      // ── Step 5: Exchange SDP with OpenAI ──────────────────────────────
-      const sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent('gpt-4o-transcribe')}`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/sdp',
+      // ── Step 4: Exchange SDP through our server ───────────────────
+      const lang = _normalizeLanguage(this.preferredLanguage);
+      const sdpRes = await fetch(
+        `/api/stt/session${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/sdp' },
+          body: offer.sdp,
         },
-        body: offer.sdp,
-      });
+      );
 
       if (!sdpRes.ok) {
         const detail = await sdpRes.text().catch(() => sdpRes.statusText);
@@ -173,8 +159,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   private _setupDataChannel(dc: RTCDataChannel) {
     dc.addEventListener('open', () => {
       if (this.disposed) return;
-      // Nothing to send — session was already configured server-side
-      // when we created the client secret
+      // Session already configured server-side during SDP exchange
     });
 
     dc.addEventListener('message', (e: MessageEvent) => {
@@ -217,12 +202,10 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         break;
 
       case 'input_audio_buffer.committed':
-        // VAD committed a turn — transcription will follow
         console.log('[RealtimeSTTEngine] audio buffer committed, item:', event.item_id);
         break;
 
       // ── Transcription streaming ────────────────────────────────────
-      // Streaming delta — word by word as the model transcribes
       case 'conversation.item.input_audio_transcription.delta':
         this._currentDelta += event.delta ?? '';
         this.results.interimTranscript = this._confirmedText
@@ -231,7 +214,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         this.onResultCallback({ ...this.results });
         break;
 
-      // Turn complete — lock this utterance into confirmed text
       case 'conversation.item.input_audio_transcription.completed': {
         const turn = (event.transcript ?? '').trim();
         if (turn) {
@@ -245,12 +227,11 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         break;
       }
 
-      // Transcription failed for a turn — log but don't kill session
       case 'conversation.item.input_audio_transcription.failed':
         console.warn('[RealtimeSTTEngine] transcription failed for turn:', event.item_id, event.error);
         break;
 
-      // ── Conversation item lifecycle (non-critical, log only) ───────
+      // ── Conversation item lifecycle ────────────────────────────────
       case 'conversation.item.added':
       case 'conversation.item.done':
         break;
@@ -258,14 +239,11 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       // ── Errors ─────────────────────────────────────────────────────
       case 'error':
         console.error('[RealtimeSTTEngine] server error:', event.error);
-        // Only treat invalid_request_error as fatal — others may be transient
         if (event.error?.type === 'invalid_request_error')
           this._handleError(event.error?.message ?? 'Transcription error.');
         break;
 
       default:
-        // Uncomment for debugging new/unexpected events:
-        // console.log('[RealtimeSTTEngine] unhandled event:', event.type, event);
         break;
     }
   }
@@ -276,7 +254,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     this.withinBeginEnd = false;
     this.setState({ isActive: false, hasAudio: false, hasSpeech: false });
 
-    // Combine confirmed turns + any in-progress delta
     const finalText = this._confirmedText
       ? this._currentDelta
         ? (this._confirmedText + ' ' + this._currentDelta).trim()
