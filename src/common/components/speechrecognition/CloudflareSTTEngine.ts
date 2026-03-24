@@ -1,4 +1,4 @@
-// src/common/components/speechrecognitionwebspeech/CloudflareSTTEngine.ts
+// src/common/components/speechrecognition/CloudflareSTTEngine.ts
 
 import {
   createSpeechRecognitionResults,
@@ -13,14 +13,12 @@ import {
 export class CloudflareSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'cloudflareStt' as const;
 
-  // Config
   private workerUrl: string;
   private language: string;
   private softStopTimeout: number;
   private onResultCallback: (result: SpeechResult) => void;
   private setState: (state: Partial<SpeechRecognitionState>) => void;
 
-  // Runtime
   private ws: WebSocket | null = null;
   private audioContext: AudioContext | null = null;
   private workletNode: AudioWorkletNode | null = null;
@@ -31,8 +29,9 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   private withinBeginEnd = false;
   private disposed = false;
 
-  // Deepgram sends incremental messages, not cumulative like WebSpeech.
-  // We accumulate finalized segments ourselves.
+  private audioBuffer: ArrayBuffer[] = [];
+  private wsReady = false;
+
   private finalizedSegments: string[] = [];
   private currentInterim = '';
 
@@ -54,19 +53,37 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
-  // ── IRecognitionEngine ─────────────────────────────────────────
-
   start() {
     if (this.disposed || this.withinBeginEnd) return;
 
-    // Reset state
+    // Set IMMEDIATELY so stop() works right away
+    this.withinBeginEnd = true;
+    this.wsReady = false;
+    this.audioBuffer = [];
+
     this.results = createSpeechRecognitionResults();
     this.results.flagSendOnDone = undefined;
     this.onResultCallback(this.results);
     this.finalizedSegments = [];
     this.currentInterim = '';
 
-    // Build WSS URL with language query param
+    this.setState({ isActive: true });
+
+    // Start mic IMMEDIATELY — don't wait for WebSocket
+    this._startMicrophone().catch((err) => {
+      if (this.disposed) return;
+      const msg =
+        err?.name === 'NotAllowedError'
+          ? 'Microphone access blocked. Enable it in browser settings.'
+          : err?.name === 'NotFoundError'
+            ? 'No microphone found on this device.'
+            : `Microphone error: ${err?.message || 'unknown'}`;
+      this.setState({ errorMessage: msg });
+      this.results.doneReason = 'api-error';
+      this._shutdown();
+    });
+
+    // Connect WebSocket in parallel
     const wsUrl = new URL(this.workerUrl);
     wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
     if (!wsUrl.pathname.endsWith('/transcribe'))
@@ -76,22 +93,18 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     this.ws = new WebSocket(wsUrl.toString());
 
     this.ws.onopen = () => {
-      if (this.disposed) return;
-      this.withinBeginEnd = true;
-      this.setState({ isActive: true });
-
-      this._startMicrophone().catch((err) => {
-        if (this.disposed) return;
-        const msg =
-          err?.name === 'NotAllowedError'
-            ? 'Microphone access blocked. Enable it in browser settings.'
-            : err?.name === 'NotFoundError'
-              ? 'No microphone found on this device.'
-              : `Microphone error: ${err?.message || 'unknown'}`;
-        this.setState({ errorMessage: msg });
-        this.results.doneReason = 'api-error';
+      if (this.disposed || !this.withinBeginEnd) {
         this.ws?.close();
-      });
+        return;
+      }
+      this.wsReady = true;
+
+      // Flush buffered audio captured while WS was connecting
+      for (const chunk of this.audioBuffer) {
+        if (this.ws?.readyState === WebSocket.OPEN)
+          this.ws.send(chunk);
+      }
+      this.audioBuffer = [];
     };
 
     this.ws.onmessage = (event) => {
@@ -117,12 +130,10 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
 
   stop(reason: SpeechDoneReason, sendOnDone: boolean) {
+    if (!this.withinBeginEnd) return;
     this.results.doneReason = reason;
     this.results.flagSendOnDone = sendOnDone;
-    this._stopMicrophone();
-    if (this.ws?.readyState === WebSocket.OPEN)
-      this.ws.send(new ArrayBuffer(0)); // Deepgram end-of-stream signal
-    this.ws?.close();
+    this._shutdown();
   }
 
 
@@ -134,8 +145,11 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
       this.withinBeginEnd = false;
       this.results.doneReason = 'react-unmount';
     }
-    this.ws?.close();
-    this.ws = null;
+    if (this.ws) {
+      this.ws.onclose = null;
+      this.ws.close();
+      this.ws = null;
+    }
   }
 
 
@@ -155,55 +169,66 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
+  // ── Shutdown ───────────────────────────────────────────────────
+
+  private _shutdown() {
+    this._clearInactivityTimeout();
+    this._stopMicrophone();
+    this.audioBuffer = [];
+    this.wsReady = false;
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      try { this.ws.send(new ArrayBuffer(0)); } catch { /* ignore */ }
+      this.ws.close();
+      // onclose will call _finalizeResults()
+    } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      // WS hasn't opened yet — force close, onclose will fire
+      this.ws.close();
+    } else {
+      // No WS or already closed — finalize directly
+      this._finalizeResults();
+    }
+  }
+
+
   // ── Deepgram message handling ──────────────────────────────────
-  //
-  //  Nova-3 streaming messages (per the actual schema):
-  //
-  //  { type: "Metadata" }             — connection info, ignore
-  //  { type: "SpeechStarted" }        — vad_events: voice detected
-  //  { type: "UtteranceEnd" }         — utterance_end_ms: speaker done
-  //  { type: "Results", is_final, speech_final,
-  //    channel: { alternatives: [{ transcript, confidence, words }] } }
-  //
-  //  is_final: false  → interim (text still changing)
-  //  is_final: true   → segment locked in, won't change
-  //  speech_final: true → endpointing detected pause
-  //
 
   private _handleDeepgramMessage(data: any) {
 
-    // VAD: speech started
     if (data.type === 'SpeechStarted') {
       this.setState({ hasSpeech: true });
       return;
     }
 
-    // Utterance boundary
     if (data.type === 'UtteranceEnd') {
       this.setState({ hasSpeech: false });
       return;
     }
 
-    // Ignore metadata / other types
     if (data.type === 'Metadata') return;
 
-    // ── Transcript result ──
-    // Schema: data.channel.alternatives[0].transcript
     const alt = data?.channel?.alternatives?.[0];
     if (!alt) return;
 
-    const transcript = (alt.transcript || '').trim();
+    let transcript = (alt.transcript || '').trim();
+    if (!transcript) return; // skip empty results
+
     const isFinal = data.is_final === true;
-    // const speechFinal = data.speech_final === true;
+
+    // Client-side punctuation fallback (in case worker can't pass punctuate param)
+    if (isFinal && transcript.length >= 2) {
+      transcript = transcript.charAt(0).toUpperCase() + transcript.slice(1);
+      if (!/[.!?;:,]$/.test(transcript))
+        transcript += '.';
+    }
 
     if (isFinal) {
-      if (transcript) this.finalizedSegments.push(transcript);
+      this.finalizedSegments.push(transcript);
       this.currentInterim = '';
     } else {
       this.currentInterim = transcript;
     }
 
-    // Build SpeechResult (same shape as WebSpeechApiEngine output)
     this.results.transcript = _chunkExpressionReplaceEN(
       this.finalizedSegments.join(' ') + (this.finalizedSegments.length ? ' ' : ''),
     );
@@ -213,16 +238,14 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
     this.onResultCallback(this.results);
 
-    // Reload soft-stop inactivity timer
     if (this.softStopTimeout > 0)
       this._reloadInactivityTimeout(this.softStopTimeout, 'continuous-deadline');
   }
 
 
-  // ── Finalize on close (same edge case as WebSpeechApiEngine) ──
+  // ── Finalize ───────────────────────────────────────────────────
 
   private _finalizeResults() {
-    // Promote remaining interim → final
     if (this.currentInterim && this.currentInterim !== PLACEHOLDER_INTERIM_TRANSCRIPT) {
       this.results.transcript = _chunkExpressionReplaceEN(
         (this.results.transcript.trim() + ' ' + this.currentInterim).trim() + ' ',
@@ -238,19 +261,30 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
-  // ── Microphone → linear16 PCM @ 16 kHz → WebSocket ────────────
+  // ── Microphone → linear16 PCM @ 16 kHz ────────────────────────
+
+  private _sendOrBuffer(data: ArrayBuffer) {
+    if (this.wsReady && this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(data);
+    } else {
+      this.audioBuffer.push(data);
+    }
+  }
 
   private async _startMicrophone() {
     this.mediaStream = await navigator.mediaDevices.getUserMedia({
       audio: { channelCount: 1 },
     });
+    if (this.disposed || !this.withinBeginEnd) {
+      this.mediaStream.getTracks().forEach((t) => t.stop());
+      this.mediaStream = null;
+      return;
+    }
     this.setState({ hasAudio: true });
 
-    // AudioContext at 16 kHz — resamples from mic's native rate
     this.audioContext = new AudioContext({ sampleRate: 16000 });
     const source = this.audioContext.createMediaStreamSource(this.mediaStream);
 
-    // Prefer AudioWorklet, fall back to ScriptProcessor
     if (this.audioContext.audioWorklet) {
       try {
         await this._setupAudioWorklet(source);
@@ -282,7 +316,7 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
     this.workletNode = new AudioWorkletNode(this.audioContext!, 'pcm');
     this.workletNode.port.onmessage = (e: MessageEvent<ArrayBuffer>) => {
-      if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(e.data);
+      this._sendOrBuffer(e.data);
     };
     source.connect(this.workletNode);
     this.workletNode.connect(this.audioContext!.destination);
@@ -291,12 +325,11 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   private _setupScriptProcessor(source: MediaStreamAudioSourceNode) {
     this.scriptProcessor = this.audioContext!.createScriptProcessor(4096, 1, 1);
     this.scriptProcessor.onaudioprocess = (e) => {
-      if (this.ws?.readyState !== WebSocket.OPEN) return;
       const f = e.inputBuffer.getChannelData(0);
       const b = new Int16Array(f.length);
       for (let i = 0; i < f.length; i++)
         b[i] = Math.max(-32768, Math.min(32767, f[i] * 32768));
-      this.ws.send(b.buffer);
+      this._sendOrBuffer(b.buffer);
     };
     source.connect(this.scriptProcessor);
     this.scriptProcessor.connect(this.audioContext!.destination);
@@ -307,8 +340,9 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     this.workletNode = null;
     this.scriptProcessor?.disconnect();
     this.scriptProcessor = null;
-    if (this.audioContext?.state !== 'closed')
-      this.audioContext?.close().catch(() => {});
+    if (this.audioContext && this.audioContext.state !== 'closed') {
+      this.audioContext.close().catch(() => {});
+    }
     this.audioContext = null;
     this.mediaStream?.getTracks().forEach((t) => t.stop());
     this.mediaStream = null;
@@ -316,7 +350,7 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
-  // ── Inactivity timeout (same pattern as WebSpeechApiEngine) ────
+  // ── Inactivity timeout ────────────────────────────────────────
 
   private _clearInactivityTimeout() {
     if (this.inactivityTimeoutId) {
@@ -331,16 +365,12 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
       if (this.disposed) return;
       this.inactivityTimeoutId = null;
       this.results.doneReason = doneReason;
-      this._stopMicrophone();
-      if (this.ws?.readyState === WebSocket.OPEN)
-        this.ws.send(new ArrayBuffer(0));
-      this.ws?.close();
+      this._shutdown();
     }, timeoutMs);
   }
 }
 
 
-// Same helper as WebSpeechApiEngine — handles spoken punctuation commands
 function _chunkExpressionReplaceEN(fullText: string): string {
   return fullText
     .replaceAll(/\.?\scomma\b/gi, ',')
