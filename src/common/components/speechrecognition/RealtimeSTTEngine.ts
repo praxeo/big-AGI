@@ -6,20 +6,16 @@ import {
   SpeechResult,
 } from './useSpeechRecognition';
 
-/**
- * Engine which uses the OpenAI Realtime API (WebRTC) for true real-time
- * speech transcription — word-by-word as you speak, ~200ms latency.
- *
- * Unified interface flow:
- *   1. Mic acquired in browser
- *   2. RTCPeerConnection + data channel created
- *   3. SDP offer → POST /api/stt/session (our server proxies to OpenAI)
- *   4. SDP answer returned → WebRTC connected
- *   5. Session config baked into SDP exchange (multipart form)
- *   6. Data channel "oai-events" receives streaming transcription deltas
- *   7. Semantic VAD detects speech automatically
- *   8. On stop: final transcript assembled from all confirmed turns
- */
+const DEFAULT_PROMPT =
+  'Emergency department clinical documentation. '
+  + 'Expect medical terminology: cholecystitis, appendicitis, diverticulitis, '
+  + 'cellulitis, sepsis, pneumonia, pyelonephritis, pancreatitis, '
+  + 'hospitalist, CT, MRI, CBC, BMP, CMP, troponin, lactic acid, '
+  + 'DVT, PE, NSTEMI, STEMI, TPA, INR, BNP, procalcitonin, lipase, '
+  + 'IV, IM, PO, PRN, q4h, q6h, mg, mL, mcg. '
+  + 'Physician names are prefixed with Dr. '
+  + 'Use standard medical abbreviations.';
+
 export class RealtimeSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'realtimeStt' as const;
 
@@ -37,6 +33,14 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
 
   private _confirmedText = '';
   private _currentDelta = '';
+
+  // When true, we've sent a commit and are waiting for the final
+  // completed event before calling _finalize()
+  private _pendingFinalize = false;
+  private _pendingFinalizeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // Track whether session.update has been acknowledged
+  private _sessionReady = false;
 
   private static readonly AUDIO_CONSTRAINTS: MediaTrackConstraints = {
     channelCount: 1,
@@ -64,6 +68,8 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     this.withinBeginEnd = false;
     this._confirmedText = '';
     this._currentDelta = '';
+    this._pendingFinalize = false;
+    this._sessionReady = false;
     this.onResultCallback(this.results);
 
     try {
@@ -73,6 +79,10 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
           audio: RealtimeSTTEngine.AUDIO_CONSTRAINTS,
         });
       }
+      // Mute mic until session is ready — prevents lost audio
+      for (const track of this._mediaStream.getAudioTracks())
+        track.enabled = false;
+
       if (this.disposed) { this._releaseMic(); return; }
 
       // ── Step 2: Create RTCPeerConnection ──────────────────────────
@@ -124,6 +134,34 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     if (!this.withinBeginEnd) return;
     this.results.doneReason = reason;
     this.results.flagSendOnDone = sendOnDone;
+
+    // Mute mic immediately so no more audio goes in
+    if (this._mediaStream) {
+      for (const track of this._mediaStream.getAudioTracks())
+        track.enabled = false;
+    }
+
+    // Commit any pending audio and wait for the completed event
+    if (this._dc?.readyState === 'open') {
+      try {
+        this._dc.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
+        this._pendingFinalize = true;
+
+        // Safety timeout — finalize even if completed never arrives
+        this._pendingFinalizeTimer = setTimeout(() => {
+          if (this._pendingFinalize) {
+            console.warn('[RealtimeSTTEngine] finalize timeout — completing with available text');
+            this._pendingFinalize = false;
+            this._finalize();
+          }
+        }, 3000);
+
+        return; // wait for completed event
+      } catch {
+        // data channel send failed — finalize immediately
+      }
+    }
+
     this._finalize();
   }
 
@@ -150,7 +188,24 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   private _setupDataChannel(dc: RTCDataChannel) {
     dc.addEventListener('open', () => {
       if (this.disposed) return;
-      // Session already configured server-side during SDP exchange
+
+      // Send session config over data channel — the multipart SDP
+      // exchange doesn't reliably deliver the transcription block
+      const lang = _normalizeLanguage(this.preferredLanguage) || 'en';
+      dc.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          audio: {
+            input: {
+              transcription: {
+                model: 'gpt-4o-transcribe',
+                language: lang,
+                prompt: DEFAULT_PROMPT,
+              },
+            },
+          },
+        },
+      }));
     });
 
     dc.addEventListener('message', (e: MessageEvent) => {
@@ -175,11 +230,19 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     switch (event.type) {
 
       case 'session.created':
-        console.log('[RealtimeSTTEngine] full session:', JSON.stringify(event.session, null, 2));
+        console.log('[RealtimeSTTEngine] session created, type:', event.session?.type, 'id:', event.session?.id);
         break;
 
       case 'session.updated':
-        console.log('[RealtimeSTTEngine] session updated');
+        console.log('[RealtimeSTTEngine] session updated — transcription ready');
+        // Session config applied — unmute mic so audio flows
+        if (!this._sessionReady) {
+          this._sessionReady = true;
+          if (this._mediaStream) {
+            for (const track of this._mediaStream.getAudioTracks())
+              track.enabled = true;
+          }
+        }
         break;
 
       case 'input_audio_buffer.speech_started':
@@ -212,11 +275,30 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
           this.results.interimTranscript = this._confirmedText;
           this.onResultCallback({ ...this.results });
         }
+
+        // If stop() was called and we were waiting for this, finalize now
+        if (this._pendingFinalize) {
+          this._pendingFinalize = false;
+          if (this._pendingFinalizeTimer) {
+            clearTimeout(this._pendingFinalizeTimer);
+            this._pendingFinalizeTimer = null;
+          }
+          this._finalize();
+        }
         break;
       }
 
       case 'conversation.item.input_audio_transcription.failed':
         console.warn('[RealtimeSTTEngine] transcription failed for turn:', event.item_id, event.error);
+        // If waiting to finalize, don't hang — finalize anyway
+        if (this._pendingFinalize) {
+          this._pendingFinalize = false;
+          if (this._pendingFinalizeTimer) {
+            clearTimeout(this._pendingFinalizeTimer);
+            this._pendingFinalizeTimer = null;
+          }
+          this._finalize();
+        }
         break;
 
       case 'conversation.item.added':
@@ -265,6 +347,12 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   }
 
   private _cleanup(releaseMic: boolean) {
+    if (this._pendingFinalizeTimer) {
+      clearTimeout(this._pendingFinalizeTimer);
+      this._pendingFinalizeTimer = null;
+    }
+    this._pendingFinalize = false;
+
     if (this._dc) {
       this._dc.onopen = null;
       this._dc.onmessage = null;
