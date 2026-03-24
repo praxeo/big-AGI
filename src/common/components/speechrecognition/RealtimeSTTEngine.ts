@@ -175,7 +175,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
     switch (event.type) {
 
       case 'session.created':
-        console.log('[RealtimeSTTEngine] session created, type:', event.session?.type, 'id:', event.session?.id);
+        console.log('[RealtimeSTTEngine] full session:', JSON.stringify(event.session, null, 2));
         break;
 
       case 'session.updated':
