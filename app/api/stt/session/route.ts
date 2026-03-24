@@ -1,17 +1,21 @@
 /**
  * POST /api/stt/session
  *
- * Creates an ephemeral client secret for the OpenAI Realtime
- * transcription API. The browser uses this short-lived token to
- * open a WebRTC connection directly to OpenAI — your API key
- * never touches the browser.
+ * Unified interface for OpenAI Realtime transcription via WebRTC.
+ * The browser sends its SDP offer here; this route combines it with
+ * the session config and proxies it to OpenAI. Returns the SDP answer.
  *
- * Token TTL is ~60 seconds (enough to complete the WebRTC handshake).
+ * The browser NEVER contacts api.openai.com directly — only this
+ * server does. This avoids CORS preflight and firewall issues.
+ *
+ * Request:  Content-Type: application/sdp, body = SDP offer string
+ *           Optional query param: ?lang=en
+ * Response: Content-Type: application/sdp, body = SDP answer string
  *
  * Env vars:
  *   STT_API_KEY  – OpenAI API key
  *   STT_MODEL    – e.g. gpt-4o-transcribe (default)
- *   STT_PROMPT   – optional domain prompt for the transcription model
+ *   STT_PROMPT   – optional domain prompt override
  */
 
 export const runtime = 'nodejs';
@@ -36,69 +40,56 @@ export async function POST(req: Request) {
   const model = process.env.STT_MODEL || 'gpt-4o-transcribe';
   const prompt = process.env.STT_PROMPT || DEFAULT_PROMPT;
 
-  let language: string | undefined;
-  try {
-    const body = await req.json();
-    if (typeof body?.language === 'string' && body.language.trim()) {
-      const tag = body.language.trim().split(/[-_]/)[0]?.toLowerCase();
-      if (tag && /^[a-z]{2,3}$/.test(tag)) language = tag;
-    }
-  } catch { /* no body is fine */ }
+  const contentType = req.headers.get('content-type') || '';
+  if (!contentType.includes('application/sdp'))
+    return Response.json({ error: 'Expected Content-Type: application/sdp' }, { status: 400 });
 
-  const sessionRes = await fetch(
-    'https://api.openai.com/v1/realtime/client_secrets',
-    {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
+  const offerSdp = await req.text();
+  if (!offerSdp.trim())
+    return Response.json({ error: 'Empty SDP offer' }, { status: 400 });
+
+  // Language via query param: /api/stt/session?lang=en
+  const url = new URL(req.url);
+  const langParam = url.searchParams.get('lang');
+  let language = 'en';
+  if (langParam) {
+    const tag = langParam.trim().split(/[-_]/)[0]?.toLowerCase();
+    if (tag && /^[a-z]{2,3}$/.test(tag)) language = tag;
+  }
+
+  const sessionConfig = JSON.stringify({
+    type: 'transcription',
+    audio: {
+      input: {
+        format: { type: 'audio/pcm', rate: 24000 },
+        noise_reduction: { type: 'near_field' },
+        transcription: { model, language, prompt },
+        turn_detection: { type: 'semantic_vad', eagerness: 'medium' },
       },
-      body: JSON.stringify({
-        session: {
-          type: 'transcription',
-          audio: {
-            input: {
-              format: { type: 'audio/pcm', rate: 24000 },
-              noise_reduction: { type: 'near_field' },
-              transcription: {
-                model,
-                language: language || 'en',
-                prompt,
-              },
-              turn_detection: {
-                type: 'semantic_vad',
-                eagerness: 'low',
-              },
-            },
-          },
-        },
-      }),
     },
-  );
+  });
 
-  if (!sessionRes.ok) {
-    const err = await sessionRes.text().catch(() => sessionRes.statusText);
-    console.error('[stt/session] OpenAI error:', err);
+  const fd = new FormData();
+  fd.set('sdp', new Blob([offerSdp], { type: 'application/sdp' }));
+  fd.set('session', new Blob([sessionConfig], { type: 'application/json' }));
+
+  const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: fd,
+  });
+
+  if (!sdpRes.ok) {
+    const err = await sdpRes.text().catch(() => sdpRes.statusText);
+    console.error('[stt/session] OpenAI SDP exchange error:', err);
     return Response.json(
       { error: 'Failed to create transcription session' },
       { status: 502 },
     );
   }
 
-  const data = await sessionRes.json();
-  const token = data?.value;
-
-  if (!token) {
-    console.error('[stt/session] Unexpected response shape:', JSON.stringify(data));
-    return Response.json(
-      { error: 'Unexpected response from OpenAI' },
-      { status: 502 },
-    );
-  }
-
-  return Response.json({
-    token,
-    expires_at: data.expires_at,
-    model,
+  const answerSdp = await sdpRes.text();
+  return new Response(answerSdp, {
+    headers: { 'Content-Type': 'application/sdp' },
   });
 }
