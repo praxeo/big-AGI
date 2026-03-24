@@ -62,7 +62,6 @@ export async function POST(req: Request) {
     if (language)
       upstreamForm.append('language', language);
 
-    const prompt = process.env.STT_PROMPT;
     if (prompt)
       upstreamForm.append('prompt', prompt);
 
