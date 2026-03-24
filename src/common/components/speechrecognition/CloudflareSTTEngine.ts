@@ -10,10 +10,15 @@ import {
 } from './useSpeechRecognition';
 
 
+// AI Gateway config — set these in Vercel env vars
+const CF_ACCOUNT_ID = process.env.NEXT_PUBLIC_CF_ACCOUNT_ID || '';
+const CF_GATEWAY_ID = process.env.NEXT_PUBLIC_CF_GATEWAY_ID || '';
+const CF_API_TOKEN = process.env.NEXT_PUBLIC_CF_API_TOKEN || '';
+
+
 export class CloudflareSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'cloudflareStt' as const;
 
-  private workerUrl: string;
   private language: string;
   private softStopTimeout: number;
   private onResultCallback: (result: SpeechResult) => void;
@@ -37,13 +42,12 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
 
   constructor(
-    workerUrl: string,
+    _workerUrl: string, // kept for interface compat, ignored now
     preferredLanguage: string,
     softStopTimeout: number,
     onResultCallback: (result: SpeechResult) => void,
     setState: (state: Partial<SpeechRecognitionState>) => void,
   ) {
-    this.workerUrl = workerUrl;
     this.language = preferredLanguage;
     this.softStopTimeout = softStopTimeout;
     this.onResultCallback = onResultCallback;
@@ -56,7 +60,6 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   start() {
     if (this.disposed || this.withinBeginEnd) return;
 
-    // Set IMMEDIATELY so stop() works right away
     this.withinBeginEnd = true;
     this.wsReady = false;
     this.audioBuffer = [];
@@ -69,7 +72,7 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
     this.setState({ isActive: true });
 
-    // Start mic IMMEDIATELY — don't wait for WebSocket
+    // Start mic immediately
     this._startMicrophone().catch((err) => {
       if (this.disposed) return;
       const msg =
@@ -83,14 +86,27 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
       this._shutdown();
     });
 
-    // Connect WebSocket in parallel
-    const wsUrl = new URL(this.workerUrl);
-    wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-    if (!wsUrl.pathname.endsWith('/transcribe'))
-      wsUrl.pathname = wsUrl.pathname.replace(/\/$/, '') + '/transcribe';
-    wsUrl.searchParams.set('language', this.language);
+    // Connect DIRECTLY to AI Gateway — no worker relay
+    const gwUrl =
+      'wss://gateway.ai.cloudflare.com/v1/'
+      + CF_ACCOUNT_ID + '/'
+      + CF_GATEWAY_ID
+      + '/workers-ai'
+      + '?model=@cf/deepgram/nova-3'
+      + '&encoding=linear16'
+      + '&sample_rate=16000'
+      + '&language=' + encodeURIComponent(this.language)
+      + '&interim_results=true'
+      + '&endpointing=300'
+      + '&utterance_end_ms=1000'
+      + '&vad_events=true'
+      + '&punctuate=true'
+      + '&smart_format=true';
 
-    this.ws = new WebSocket(wsUrl.toString());
+    // Auth via subprotocol (official docs pattern for browsers)
+    this.ws = new WebSocket(gwUrl, [
+      'cf-aig-authorization.' + CF_API_TOKEN,
+    ]);
 
     this.ws.onopen = () => {
       if (this.disposed || !this.withinBeginEnd) {
@@ -99,7 +115,7 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
       }
       this.wsReady = true;
 
-      // Flush buffered audio captured while WS was connecting
+      // Flush buffered audio
       for (const chunk of this.audioBuffer) {
         if (this.ws?.readyState === WebSocket.OPEN)
           this.ws.send(chunk);
@@ -116,7 +132,7 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
 
     this.ws.onerror = () => {
       if (this.disposed) return;
-      this.setState({ errorMessage: 'Connection to Cloudflare STT worker failed.' });
+      this.setState({ errorMessage: 'Connection to Cloudflare STT failed.' });
       this.results.doneReason = 'api-error';
     };
 
@@ -169,8 +185,6 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
-  // ── Shutdown ───────────────────────────────────────────────────
-
   private _shutdown() {
     this._clearInactivityTimeout();
     this._stopMicrophone();
@@ -180,21 +194,15 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       try { this.ws.send(new ArrayBuffer(0)); } catch { /* ignore */ }
       this.ws.close();
-      // onclose will call _finalizeResults()
     } else if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
-      // WS hasn't opened yet — force close, onclose will fire
       this.ws.close();
     } else {
-      // No WS or already closed — finalize directly
       this._finalizeResults();
     }
   }
 
 
-  // ── Deepgram message handling ──────────────────────────────────
-
   private _handleDeepgramMessage(data: any) {
-
     if (data.type === 'SpeechStarted') {
       this.setState({ hasSpeech: true });
       return;
@@ -210,17 +218,10 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     const alt = data?.channel?.alternatives?.[0];
     if (!alt) return;
 
-    let transcript = (alt.transcript || '').trim();
-    if (!transcript) return; // skip empty results
+    const transcript = (alt.transcript || '').trim();
+    if (!transcript) return;
 
     const isFinal = data.is_final === true;
-
-    // Client-side punctuation fallback (in case worker can't pass punctuate param)
-    if (isFinal && transcript.length >= 2) {
-      transcript = transcript.charAt(0).toUpperCase() + transcript.slice(1);
-      if (!/[.!?;:,]$/.test(transcript))
-        transcript += '.';
-    }
 
     if (isFinal) {
       this.finalizedSegments.push(transcript);
@@ -243,8 +244,6 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
   }
 
 
-  // ── Finalize ───────────────────────────────────────────────────
-
   private _finalizeResults() {
     if (this.currentInterim && this.currentInterim !== PLACEHOLDER_INTERIM_TRANSCRIPT) {
       this.results.transcript = _chunkExpressionReplaceEN(
@@ -260,8 +259,6 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     this.setState({ isActive: false, hasAudio: false, hasSpeech: false });
   }
 
-
-  // ── Microphone → linear16 PCM @ 16 kHz ────────────────────────
 
   private _sendOrBuffer(data: ArrayBuffer) {
     if (this.wsReady && this.ws?.readyState === WebSocket.OPEN) {
@@ -349,8 +346,6 @@ export class CloudflareSTTEngine implements IRecognitionEngine {
     this.setState({ hasAudio: false });
   }
 
-
-  // ── Inactivity timeout ────────────────────────────────────────
 
   private _clearInactivityTimeout() {
     if (this.inactivityTimeoutId) {
