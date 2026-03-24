@@ -195,6 +195,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       dc.send(JSON.stringify({
         type: 'session.update',
         session: {
+          type: 'transcription',    
           audio: {
             input: {
               transcription: {
