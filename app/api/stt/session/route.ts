@@ -1,10 +1,14 @@
 /**
  * POST /api/stt/session
  *
- * Unified SDP proxy for OpenAI Realtime transcription.
- * Browser sends SDP offer here, server combines it with session
- * config in a hand-built multipart body and proxies to OpenAI.
- * Returns the SDP answer.
+ * Two-step server-side proxy:
+ *   1. Creates an ephemeral token with full session config
+ *   2. Uses that token to exchange SDP with OpenAI
+ *
+ * The browser sends its SDP offer here and gets an SDP answer back.
+ * Session config (model, prompt, VAD) is baked into the ephemeral
+ * token so the session starts fully configured — no data channel
+ * setup needed.
  *
  * Env vars:
  *   STT_API_KEY  – OpenAI API key
@@ -54,46 +58,59 @@ export async function POST(req: Request) {
     ? url.searchParams.get('eagerness')!
     : 'medium';
 
-  const sessionConfig = JSON.stringify({
-    type: 'transcription',
-    audio: {
-      input: {
-        format: { type: 'audio/pcm', rate: 24000 },
-        noise_reduction: { type: 'near_field' },
-        transcription: { model, language, prompt },
-        turn_detection: { type: 'semantic_vad', eagerness },
-      },
-    },
-  });
-
-  // Build multipart body manually — Vercel's Node.js FormData
-  // doesn't produce what OpenAI expects
-  const boundary = '----SdpBoundary' + Math.random().toString(36).slice(2);
-  const body =
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="sdp"\r\n` +
-    `Content-Type: application/sdp\r\n\r\n` +
-    `${offerSdp}\r\n` +
-    `--${boundary}\r\n` +
-    `Content-Disposition: form-data; name="session"\r\n` +
-    `Content-Type: application/json\r\n\r\n` +
-    `${sessionConfig}\r\n` +
-    `--${boundary}--\r\n`;
-
-  const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+  // ── Step 1: Create ephemeral token with full session config ──────
+  const secretRes = await fetch('https://api.openai.com/v1/realtime/client_secrets', {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${apiKey}`,
-      'Content-Type': `multipart/form-data; boundary=${boundary}`,
+      'Content-Type': 'application/json',
     },
-    body,
+    body: JSON.stringify({
+      session: {
+        type: 'transcription',
+        audio: {
+          input: {
+            format: { type: 'audio/pcm', rate: 24000 },
+            noise_reduction: { type: 'near_field' },
+            transcription: { model, language, prompt },
+            turn_detection: { type: 'semantic_vad', eagerness },
+          },
+        },
+      },
+    }),
+  });
+
+  if (!secretRes.ok) {
+    const err = await secretRes.text().catch(() => secretRes.statusText);
+    console.error('[stt/session] Token creation error:', err);
+    return Response.json(
+      { error: 'Failed to create session token', details: err },
+      { status: 502 },
+    );
+  }
+
+  const secretData = await secretRes.json();
+  const ephemeralToken = secretData?.value;
+  if (!ephemeralToken) {
+    console.error('[stt/session] No token in response:', JSON.stringify(secretData));
+    return Response.json({ error: 'No token received' }, { status: 502 });
+  }
+
+  // ── Step 2: SDP exchange using ephemeral token ───────────────────
+  const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${ephemeralToken}`,
+      'Content-Type': 'application/sdp',
+    },
+    body: offerSdp,
   });
 
   if (!sdpRes.ok) {
     const err = await sdpRes.text().catch(() => sdpRes.statusText);
-    console.error('[stt/session] OpenAI SDP exchange error:', err);
+    console.error('[stt/session] SDP exchange error:', err);
     return Response.json(
-      { error: 'Failed to create transcription session', details: err },
+      { error: 'Failed to exchange SDP', details: err },
       { status: 502 },
     );
   }
