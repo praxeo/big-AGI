@@ -6,24 +6,29 @@ import {
   SpeechResult,
 } from './useSpeechRecognition';
 
+const DEFAULT_PROMPT =
+  'Emergency department clinical documentation. '
+  + 'Expect medical terminology: cholecystitis, appendicitis, diverticulitis, '
+  + 'cellulitis, sepsis, pneumonia, pyelonephritis, pancreatitis, '
+  + 'hospitalist, CT, MRI, CBC, BMP, CMP, troponin, lactic acid, '
+  + 'DVT, PE, NSTEMI, STEMI, TPA, INR, BNP, procalcitonin, lipase, '
+  + 'IV, IM, PO, PRN, q4h, q6h, mg, mL, mcg. '
+  + 'Physician names are prefixed with Dr. '
+  + 'Use standard medical abbreviations.';
 
 /**
  * Engine which uses the OpenAI Realtime API (WebRTC) for true real-time
  * speech transcription — word-by-word as you speak, ~200ms latency.
  *
- * Unified interface flow (no browser → OpenAI HTTP calls):
+ * Unified interface flow:
  *   1. Mic acquired in browser
  *   2. RTCPeerConnection + data channel created
- *   3. SDP offer → POST /api/stt/session (our server)
- *   4. Server proxies SDP + session config → OpenAI
- *   5. SDP answer returned → WebRTC connected
+ *   3. SDP offer → POST /api/stt/session (our server proxies to OpenAI)
+ *   4. SDP answer returned → WebRTC connected
+ *   5. Session config sent over data channel on open
  *   6. Data channel "oai-events" receives streaming transcription deltas
  *   7. Semantic VAD detects speech automatically
  *   8. On stop: final transcript assembled from all confirmed turns
- *
- * The browser only contacts our own domain via HTTP.
- * Audio streams directly browser → OpenAI via WebRTC (UDP/DTLS,
- * not blocked by firewalls that block HTTPS to api.openai.com).
  */
 export class RealtimeSTTEngine implements IRecognitionEngine {
   public readonly engineType = 'realtimeStt' as const;
@@ -40,7 +45,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   private disposed = false;
   private withinBeginEnd = false;
 
-  // Accumulate turns — each VAD-detected utterance is one turn
   private _confirmedText = '';
   private _currentDelta = '';
 
@@ -84,11 +88,9 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       // ── Step 2: Create RTCPeerConnection ──────────────────────────
       this._pc = new RTCPeerConnection();
 
-      // Data channel MUST be created before offer
       this._dc = this._pc.createDataChannel('oai-events');
       this._setupDataChannel(this._dc);
 
-      // Add mic track
       for (const track of this._mediaStream.getAudioTracks())
         this._pc.addTrack(track, this._mediaStream);
 
@@ -97,15 +99,11 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       await this._pc.setLocalDescription(offer);
 
       // ── Step 4: Exchange SDP through our server ───────────────────
-      const lang = _normalizeLanguage(this.preferredLanguage);
-      const sdpRes = await fetch(
-        `/api/stt/session${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/sdp' },
-          body: offer.sdp,
-        },
-      );
+      const sdpRes = await fetch('/api/stt/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/sdp' },
+        body: offer.sdp,
+      });
 
       if (!sdpRes.ok) {
         const detail = await sdpRes.text().catch(() => sdpRes.statusText);
@@ -117,7 +115,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
 
       await this._pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
 
-      // Active — data channel onopen will fire shortly
       this.withinBeginEnd = true;
       this.setState({ isActive: true, hasAudio: true, hasSpeech: false });
 
@@ -159,7 +156,27 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   private _setupDataChannel(dc: RTCDataChannel) {
     dc.addEventListener('open', () => {
       if (this.disposed) return;
-      // Session already configured server-side during SDP exchange
+
+      // Configure session over data channel
+      const lang = _normalizeLanguage(this.preferredLanguage) || 'en';
+      dc.send(JSON.stringify({
+        type: 'session.update',
+        session: {
+          type: 'transcription',
+          audio: {
+            input: {
+              format: { type: 'audio/pcm', rate: 24000 },
+              noise_reduction: { type: 'near_field' },
+              transcription: {
+                model: 'gpt-4o-transcribe',
+                language: lang,
+                prompt: DEFAULT_PROMPT,
+              },
+              turn_detection: { type: 'semantic_vad', eagerness: 'medium' },
+            },
+          },
+        },
+      }));
     });
 
     dc.addEventListener('message', (e: MessageEvent) => {
@@ -183,7 +200,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
   private _handleEvent(event: any) {
     switch (event.type) {
 
-      // ── Session lifecycle ──────────────────────────────────────────
       case 'session.created':
         console.log('[RealtimeSTTEngine] session created, type:', event.session?.type, 'id:', event.session?.id);
         break;
@@ -192,7 +208,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         console.log('[RealtimeSTTEngine] session updated');
         break;
 
-      // ── VAD events ─────────────────────────────────────────────────
       case 'input_audio_buffer.speech_started':
         this.setState({ hasSpeech: true });
         break;
@@ -205,7 +220,6 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         console.log('[RealtimeSTTEngine] audio buffer committed, item:', event.item_id);
         break;
 
-      // ── Transcription streaming ────────────────────────────────────
       case 'conversation.item.input_audio_transcription.delta':
         this._currentDelta += event.delta ?? '';
         this.results.interimTranscript = this._confirmedText
@@ -231,12 +245,10 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
         console.warn('[RealtimeSTTEngine] transcription failed for turn:', event.item_id, event.error);
         break;
 
-      // ── Conversation item lifecycle ────────────────────────────────
       case 'conversation.item.added':
       case 'conversation.item.done':
         break;
 
-      // ── Errors ─────────────────────────────────────────────────────
       case 'error':
         console.error('[RealtimeSTTEngine] server error:', event.error);
         if (event.error?.type === 'invalid_request_error')
