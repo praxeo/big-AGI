@@ -112,7 +112,7 @@ export class RealtimeSTTEngine implements IRecognitionEngine {
       await this._pc.setLocalDescription(offer);
 
       // ── Step 5: Exchange SDP with OpenAI ──────────────────────────────
-      const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
+      const sdpRes = await fetch(`https://api.openai.com/v1/realtime?model=${encodeURIComponent('gpt-4o-transcribe')}`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
