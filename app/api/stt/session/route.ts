@@ -70,8 +70,8 @@ export async function POST(req: Request) {
   });
 
   const fd = new FormData();
-  fd.set('sdp', new Blob([offerSdp], { type: 'application/sdp' }));
-  fd.set('session', new Blob([sessionConfig], { type: 'application/json' }));
+fd.set('sdp', new Blob([offerSdp], { type: 'application/sdp' }), 'offer.sdp');
+fd.set('session', new Blob([sessionConfig], { type: 'application/json' }), 'session.json');
 
   const sdpRes = await fetch('https://api.openai.com/v1/realtime/calls', {
     method: 'POST',
