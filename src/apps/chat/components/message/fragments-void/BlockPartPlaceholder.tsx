@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { SxProps } from '@mui/joy/styles/types';
-import { Box, Chip } from '@mui/joy';
+import { Box, Chip, ColorPaletteProp } from '@mui/joy';
 import BrushRoundedIcon from '@mui/icons-material/BrushRounded';
 import CodeIcon from '@mui/icons-material/Code';
 import HourglassEmptyIcon from '@mui/icons-material/HourglassEmpty';
@@ -47,7 +47,7 @@ const _styles = {
   opChip: {
     maxWidth: '100%', // fundamental for the ellipsize to work
     // width: '100%', // would have way less 'jumpy-ness'
-    // minWidth: 200, // would work on mobile, but no clear advantage
+    minWidth: 200, // would work on mobile, but no clear advantage
     // fontWeight: 500,
     minHeight: '2rem',
     // replaced by Box with px: 2
@@ -64,15 +64,16 @@ const _styles = {
 } as const satisfies Record<string, SxProps>;
 
 
-const modelOperationConfig = {
+const modelOperationConfig: Record<DVoidPlaceholderModelOp['mot'], { Icon: React.ElementType, color: ColorPaletteProp }> = {
   'search-web': { Icon: SearchRoundedIcon, color: 'neutral' },
   'gen-image': { Icon: BrushRoundedIcon, color: 'success' },
   'code-exec': { Icon: CodeIcon, color: 'primary' },
+  'flow-cont': { Icon: SearchRoundedIcon, color: 'warning' },
 } as const;
 
 
 function ModelOperationChip(props: {
-  mot: 'search-web' | 'gen-image' | 'code-exec',
+  mot: DVoidPlaceholderModelOp['mot'],
   cts: number,
   text: string,
   contentScaling: ContentScaling,
