@@ -43,7 +43,7 @@ export class AudioRecorderEngine implements IRecognitionEngine {
     channelCount: 1,
     echoCancellation: true,
     noiseSuppression: true,
-    autoGainControl: true,
+    autoGainControl: false,
   };
 
   private static readonly INTERIM_INTERVAL_MS = 4000;
