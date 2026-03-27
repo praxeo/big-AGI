@@ -34,7 +34,7 @@ export function aixClassifyStreamingError(error: any, isUserAbort: boolean, hasF
   if (AIX_CLIENT_DEV_ASSERTS) console.error('[DEV] Aix streaming Error:', { error });
 
 
-  // Browser-level network connection drops (TypeError, happens below tRPC error wrapping layer)
+  // Browser-level network connection drops (TypeError, happens below tRPC error wrapping layer), such as terminating the `npm run dev` process while streaming
   // Network errors - when the client is disconnected (Vercel 5min timeout, Mobile timeout / disconnect, etc) - they show up as TypeErrors
   // IMPORTANT: we will differentiate between the 2 'net-disconnected' cases in the UI, checking for the errorMessage '**network error**' vs '**connection terminated**'
   if (error instanceof TypeError && error.message === 'network error')
@@ -50,6 +50,13 @@ export function aixClassifyStreamingError(error: any, isUserAbort: boolean, hasF
   // Initial connection failures, HTTP errors, or text responses that blow up tRPC's JSON parser
   if (error instanceof TRPCClientError) {
     switch (error.cause?.message) {
+      /**
+       * When network is disconnected while a request hasn't started (is queued by the browser).
+       * - repro: queue up > 6 connections, then turn WiFi off (no CSF).
+       */
+      case 'Failed to Fetch':
+        return { errorType: 'net-disconnected', errorMessage: 'An issue occurred: **network error**' };
+
       /**
        * The body of the response was "Request Entity Too Large".
        * - this caused trpc, in ...stream/jsonl.ts, function createConsumerStream, to throw an error due to parsing the line as JSON

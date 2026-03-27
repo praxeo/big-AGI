@@ -664,7 +664,8 @@ export namespace AixWire_Particles {
   // | { cg: 'start' } // not really used for now
     | { cg: 'end', terminationReason: CGEndReason /* we know why we're sending 'end' */, tokenStopReason?: GCTokenStopReason /* we may or not have gotten a logical token stop reason from the dispatch */ }
     | { cg: 'issue', issueId: CGIssueId, issueText: string }
-    | { cg: 'retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rShallClear: boolean, reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string }
+    | { cg: 'aix-info', ait: 'flow-cont', text: string }
+    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rShallClear: boolean, reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string }
     | { cg: 'set-metrics', metrics: CGSelectMetrics }
     | { cg: 'set-model', name: string }
     | { cg: 'set-provider-infra', label: string }
@@ -744,9 +745,15 @@ export namespace AixWire_Particles {
     | { p: 'cei', id: string, language: string, code: string, author: 'gemini_auto_inline' | 'code_interpreter' }
     | { p: 'cer', id: string, error: DMessageToolResponsePart['error'], result: string, executor: 'gemini_auto_inline' | 'code_interpreter', environment: DMessageToolResponsePart['environment'] }
     | { p: 'ia', mimeType: string, a_b64: string, label?: string, generator?: string, durationMs?: number } // inline audio, complete
-    | { p: 'ii', mimeType: string, i_b64: string, label?: string, generator?: string, prompt?: string } // inline image, complete
+    | { p: 'ii', mimeType: string, i_b64: string, label?: string, generator?: string, prompt?: string, hintSkipResize?: boolean } // inline image, complete
+    /**
+     * Model Operation - tracks instant model's operation(s) state, primarily for hosted tools.
+     * - state is 'active' unless specified otherwise, 'error' is done too
+     * - shall be called 'mos' but for legacy/compatibility it's still 'vp' (backwards comp to simple void placeholder particles)
+     */
+    | { p: /*'mo'*/ 'vp', opId: string, text: string, mot: 'search-web' | 'gen-image' | 'code-exec', state?: 'done' | 'error', parentOpId?: string, iTexts?: string[], oTexts?: string[] }
     | { p: 'urlc', title: string, url: string, num?: number, from?: number, to?: number, text?: string, pubTs?: number } // url citation - pubTs: publication timestamp
     | { p: 'svs', vendor: string, state: Record<string, unknown> } // set vendor state - applies to the last emitted part (opaque protocol state)
-    | { p: 'vp', text: string, mot: 'search-web' | 'gen-image' | 'code-exec' | 'flow-cont' }; // void placeholder - temporary status text that gets wiped when real content arrives
+    ;
 
 }
