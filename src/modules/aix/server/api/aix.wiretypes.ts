@@ -27,7 +27,6 @@ export type AixParts_MetaInReferenceToPart = z.infer<typeof AixWire_Parts.MetaIn
 
 export type AixMessages_SystemMessage = z.infer<typeof AixWire_Content.SystemInstruction_schema>;
 export type AixMessages_ModelMessage = z.infer<typeof AixWire_Content.ModelMessage_schema>;
-export type AixMessages_ToolMessage = z.infer<typeof AixWire_Content.ToolMessage_schema>;
 export type AixMessages_UserMessage = z.infer<typeof AixWire_Content.UserMessage_schema>;
 export type AixMessages_ChatMessage = z.infer<typeof AixWire_Content.ChatMessage_schema>;
 
@@ -179,7 +178,7 @@ export namespace AixWire_Parts {
 
   const _FunctionCallInvocation_schema = z.object({
     type: z.literal('function_call'),
-    name: z.string(),
+    name: z.string(), // function name
     args: z.string(), //.nullable(), // 2024-11-03: disabled .nullable(), as we'll use '' for no args (which some APIs weirdly don't support so we'll mock downstream as '{}')
     // _description: z.string().optional(),
     // _args_schema: z.object({}).optional(),
@@ -206,7 +205,12 @@ export namespace AixWire_Parts {
   const _FunctionCallResponse_schema = z.object({
     type: z.literal('function_call'),
     result: z.string(),
-    _name: z.string().optional(),
+    /**
+     * Function name of the response
+     * - for Gemini this must match the _FunctionCallDeclaration.name
+     * - other APIs usually match the id (of the parent ToolResponsePart) to the ID of the call
+     */
+    name: z.string(),
   });
 
   const _CodeExecutionResponse_schema = z.object({
@@ -289,15 +293,8 @@ export namespace AixWire_Content {
       AixWire_Parts.InlineAudioPart_schema,
       AixWire_Parts.InlineImagePart_schema,
       AixWire_Parts.ToolInvocationPart_schema,
-      AixWire_Parts.ModelAuxPart_schema,
-      AixWire_Parts.MetaCacheControl_schema,
-    ])),
-  });
-
-  export const ToolMessage_schema = z.object({
-    role: z.literal('tool'),
-    parts: z.array(z.discriminatedUnion('pt', [
       AixWire_Parts.ToolResponsePart_schema,
+      AixWire_Parts.ModelAuxPart_schema,
       AixWire_Parts.MetaCacheControl_schema,
     ])),
   });
@@ -305,7 +302,6 @@ export namespace AixWire_Content {
   export const ChatMessage_schema = z.discriminatedUnion('role', [
     UserMessage_schema,
     ModelMessage_schema,
-    ToolMessage_schema,
   ]);
 
 }
@@ -314,7 +310,7 @@ export namespace AixWire_Tooling {
 
   /// Function Call Tool Definition
 
-  const _FunctionCall_schema = z.object({
+  const _FunctionCallDeclaration_schema = z.object({
     /**
      * The name of the function to call. Up to 64 characters long, and can only contain letters, numbers, underscores, and hyphens.
      */
@@ -349,7 +345,7 @@ export namespace AixWire_Tooling {
 
   const _FunctionCallTool_schema = z.object({
     type: z.literal('function_call'),
-    function_call: _FunctionCall_schema,
+    function_call: _FunctionCallDeclaration_schema,
     // domain: z.enum(['server', 'client']).optional(),
   });
 

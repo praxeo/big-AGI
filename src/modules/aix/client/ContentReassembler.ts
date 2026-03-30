@@ -21,8 +21,17 @@ import { aixClassifyReassemblyError } from './aix.client.errors';
 // configuration
 const GENERATED_IMAGES_CONVERT_TO_COMPRESSED = true; // converts PNG to WebP or JPEG to save IndexedDB space
 const GENERATED_IMAGES_COMPRESSION_QUALITY = 0.98;
-const ELLIPSIZE_DEV_ISSUE_MESSAGES = 4096;
+const ELLIPSIZE_DEV_ISSUE_MESSAGES = 4096; // for _appendReassemblyDevError
 const MERGE_ISSUES_INTO_TEXT_PART_IF_OPEN = false; // 2025-10-10: put errors in the dedicated part
+const VP_PERSISTENCE_DELAY = 500; // persistence of vision for voidPlaceholders
+
+
+// Future: Reassembly Policies
+// type ReassemblyPolicyVoidPlaceholder =
+//   | 'ephemeral-log' // (default) when message content arrives (reasoning, text, tool calls, images, etc..), remove the last VP
+//   | 'single-log-end' // move the VP to the end to have a single large log of operations
+//   | 'interleaved-log' // batch VP OPs, but interleave them with the other content
+//   ;
 
 
 /**
@@ -99,18 +108,20 @@ export class ContentReassembler {
 
     // - remove placeholders for clean exists, leave them for issues or client-aborts
     if (this._terminationReason === 'done-dialect')
-      while (this.removeLastVoidPlaceholder()) {} // [PH-LIFECYCLE]
+      this._removeAllVoidPlaceholders(); // [PH-LIFECYCLE]
 
     // - mark as completed or errored
     for (const fragment of this.accumulator.fragments)
       if (isVoidPlaceholderFragment(fragment) && fragment.part.opLog?.length)
         for (const entry of fragment.part.opLog) {
           if (entry.text?.endsWith('...')) entry.text = entry.text.slice(0, -3);
-          if (entry.state === 'active') entry.state = 'error';
-          entry.oTexts = [...(entry.oTexts || []), `Terminated with reason: ${this._terminationReason ?? 'unknown'}`];
+          if (entry.state === 'active') {
+            entry.state = 'error';
+            entry.oTexts = [...(entry.oTexts || []), `Terminated with reason: ${this._terminationReason ?? 'unknown'}`];
+          }
         }
 
-    
+
     // Metrics
     const hadIssues = !!this.accumulator.legacyGenTokenStopReason;
     metricsFinishChatGenerateLg(this.accumulator.genMetricsLg, hadIssues);
@@ -238,7 +249,7 @@ export class ContentReassembler {
 
       // TextParticleOp
       case 't' in op:
-        this.removeLastVoidPlaceholder();
+        await this._removeLastVoidPlaceholderDelayed();
         this.onAppendText(op);
         break;
 
@@ -246,7 +257,7 @@ export class ContentReassembler {
       case 'p' in op:
         // heuristics to remove the placeholder if real user-destined content arrives
         if (op.p !== '❤' && op.p !== 'vp' && op.p !== 'urlc' && op.p !== 'svs')
-          this.removeLastVoidPlaceholder();
+          await this._removeLastVoidPlaceholderDelayed();
         switch (op.p) {
           case '❤':
             // ignore the heartbeats
@@ -312,10 +323,12 @@ export class ContentReassembler {
             this.onCGIssue(op);
             break;
           case 'aix-info':
-            this.onAixInfo(op);
+            await this._removeLastVoidPlaceholderDelayed();
+            this.onAixInfo(op); // creates a voidPlaceholder
             break;
           case 'aix-retry-reset':
-            this.onAixRetryReset(op);
+            await this._removeLastVoidPlaceholderDelayed();
+            this.onAixRetryReset(op); // creates a voidPlaceholder
             break;
           case 'set-metrics':
             this.onMetrics(op);
@@ -696,15 +709,37 @@ export class ContentReassembler {
     };
   }
 
-  private removeLastVoidPlaceholder(): boolean {
+  private _removeAllVoidPlaceholders(): void {
+    const fragments = this.accumulator.fragments;
+    for (let i = fragments.length - 1; i >= 0; i--)
+      if (isVoidPlaceholderFragment(fragments[i])) {
+        fragments.splice(i, 1);
+        if (this.currentTextFragmentIndex !== null && this.currentTextFragmentIndex > i)
+          this.currentTextFragmentIndex--;
+      }
+  }
+
+  private async _removeLastVoidPlaceholderDelayed(): Promise<boolean> {
     const fragments = this.accumulator.fragments;
     const idx = fragments.findLastIndex(isVoidPlaceholderFragment);
     if (idx < 0) return false;
+    // delay before removal
+    await new Promise(resolve => setTimeout(resolve, VP_PERSISTENCE_DELAY));
     fragments.splice(idx, 1);
     if (this.currentTextFragmentIndex !== null && this.currentTextFragmentIndex > idx)
       this.currentTextFragmentIndex--;
     return true;
   }
+
+  // private removeLastVoidPlaceholder(): boolean {
+  //   const fragments = this.accumulator.fragments;
+  //   const idx = fragments.findLastIndex(isVoidPlaceholderFragment);
+  //   if (idx < 0) return false;
+  //   fragments.splice(idx, 1);
+  //   if (this.currentTextFragmentIndex !== null && this.currentTextFragmentIndex > idx)
+  //     this.currentTextFragmentIndex--;
+  //   return true;
+  // }
 
 
   /// Rest of the data ///
@@ -807,7 +842,6 @@ export class ContentReassembler {
 
   private onAixInfo({ ait, text }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'aix-info' }>): void {
     // -> ph: show info
-    this.removeLastVoidPlaceholder();
     this.accumulator.fragments.push(createPlaceholderVoidFragment(text, undefined, {
       ctl: 'ac-info',
       ait: ait,
@@ -831,7 +865,6 @@ export class ContentReassembler {
 
     // -> ph: show retry status
     const retryMessage = `Retrying [${attempt}/${maxAttempts}] in ${Math.round(delayMs / 100) / 10}s - ${reason}`;
-    this.removeLastVoidPlaceholder();
     this.accumulator.fragments.push(createPlaceholderVoidFragment(retryMessage, undefined, {
       ctl: 'ec-retry',
       rScope: rScope,
