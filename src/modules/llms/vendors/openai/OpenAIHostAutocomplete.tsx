@@ -1,10 +1,17 @@
 import * as React from 'react';
 
-import { Autocomplete, AutocompleteOption, Box, FormControl, FormHelperText, FormLabel, Typography } from '@mui/joy';
+import { Autocomplete, AutocompleteOption, Box, FormControl, FormHelperText, FormLabel, ListItemDecorator, Typography } from '@mui/joy';
 import InfoIcon from '@mui/icons-material/Info';
 
 import { GoodTooltip } from '~/common/components/GoodTooltip';
 import { Link } from '~/common/components/Link';
+
+import { ArceeAIIcon } from '~/common/components/icons/vendors/ArceeAIIcon';
+import { ChutesAIIcon } from '~/common/components/icons/vendors/ChutesAIIcon';
+import { FireworksAIIcon } from '~/common/components/icons/vendors/FireworksAIIcon';
+import { CloudflareIcon } from '~/common/components/icons/vendors/CloudflareIcon';
+import { HeliconeIcon } from '~/common/components/icons/vendors/HeliconeIcon';
+import { NovitaAIIcon } from '~/common/components/icons/vendors/NovitaAIIcon';
 
 
 /**
@@ -25,17 +32,19 @@ interface VerifiedProvider {
   category: 'Example Proxies' | 'Example Providers';
   docsUrl?: string; // optional link to provider docs
   hostMatch?: string; // substring to match against current host (defaults to host)
+  icon?: React.ComponentType<{ sx?: object }>; // optional icon component
 }
 
 const OPENAI_COMPATIBLE_PROVIDERS: VerifiedProvider[] = [
   // Example Providers
-  { id: 'chutes', label: 'Chutes AI', host: 'https://llm.chutes.ai', hostMatch: '.chutes.ai', category: 'Example Providers', description: 'GPU marketplace for AI inference', docsUrl: 'https://chutes.ai/docs' },
-  { id: 'fireworks', label: 'Fireworks AI', host: 'https://api.fireworks.ai/inference', hostMatch: 'fireworks.ai', category: 'Example Providers', description: 'Fast inference for open models', docsUrl: 'https://docs.fireworks.ai/getting-started/quickstart' },
+  { id: 'arcee', label: 'Arcee AI', host: 'https://api.arcee.ai/api', hostMatch: 'arcee.ai', category: 'Example Providers', description: 'High-performance open AI models', docsUrl: 'https://docs.arcee.ai/', icon: ArceeAIIcon },
+  { id: 'chutes', label: 'Chutes AI', host: 'https://llm.chutes.ai', hostMatch: '.chutes.ai', category: 'Example Providers', description: 'GPU marketplace for AI inference', docsUrl: 'https://chutes.ai/docs', icon: ChutesAIIcon },
+  { id: 'fireworks', label: 'Fireworks AI', host: 'https://api.fireworks.ai/inference', hostMatch: 'fireworks.ai', category: 'Example Providers', description: 'Fast inference for open models', docsUrl: 'https://docs.fireworks.ai/getting-started/quickstart', icon: FireworksAIIcon },
   { id: 'llmapi', label: 'LLM API', host: 'https://api.llmapi.ai', hostMatch: 'llmapi.ai', category: 'Example Providers', description: 'Multi-model API gateway', docsUrl: 'https://llmapi.ai' },
-  { id: 'novita', label: 'Novita AI', host: 'https://api.novita.ai/openai', hostMatch: 'novita.ai', category: 'Example Providers', description: 'OpenAI-compatible inference', docsUrl: 'https://novita.ai/docs' },
+  { id: 'novita', label: 'Novita AI', host: 'https://api.novita.ai/openai', hostMatch: 'novita.ai', category: 'Example Providers', description: 'OpenAI-compatible inference', docsUrl: 'https://novita.ai/docs', icon: NovitaAIIcon },
   // Example Proxies
-  { id: 'helicone', label: 'Helicone', host: 'https://oai.hconeai.com', hostMatch: 'hconeai.com', category: 'Example Proxies', description: 'OpenAI observability and caching proxy', docsUrl: 'https://docs.helicone.ai/getting-started/quick-start' },
-  { id: 'cloudflare', label: 'Cloudflare AI Gateway', host: 'https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai', hostMatch: 'gateway.ai.cloudflare.com', category: 'Example Proxies', description: 'AI Gateway with caching and analytics', docsUrl: 'https://developers.cloudflare.com/ai-gateway/' },
+  { id: 'helicone', label: 'Helicone', host: 'https://oai.hconeai.com', hostMatch: 'hconeai.com', category: 'Example Proxies', description: 'OpenAI observability and caching proxy', docsUrl: 'https://docs.helicone.ai/getting-started/quick-start', icon: HeliconeIcon },
+  { id: 'cloudflare', label: 'Cloudflare AI Gateway', host: 'https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai', hostMatch: 'gateway.ai.cloudflare.com', category: 'Example Proxies', description: 'AI Gateway with caching and analytics', docsUrl: 'https://developers.cloudflare.com/ai-gateway/', icon: CloudflareIcon },
 ];
 
 // Find matching provider based on current host value
@@ -130,9 +139,12 @@ export function OpenAIHostAutocomplete(props: {
         renderOption={(optionProps, option) => {
           const { key, ...rest } = optionProps as any;
           return (
-            <AutocompleteOption key={key} {...rest} sx={{ display: 'block', py: 1 }}>
-              <Typography level='title-sm'>{option.label}</Typography>
-              <Typography level='body-xs' textColor='text.tertiary' className='agi-ellipsize' mt={0.25}>{option.description}</Typography>
+            <AutocompleteOption key={key} {...rest} sx={{ display: 'flex', alignItems: 'center', gap: 1.5, py: 1 }}>
+              <ListItemDecorator>{option.icon && <option.icon />}</ListItemDecorator>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography level='title-sm'>{option.label}</Typography>
+                <Typography level='body-xs' textColor='text.tertiary' className='agi-ellipsize' mt={0.25}>{option.description}</Typography>
+              </Box>
             </AutocompleteOption>
           );
         }}

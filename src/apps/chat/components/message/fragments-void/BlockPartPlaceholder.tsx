@@ -71,7 +71,7 @@ const _styles = {
   opChip: {
     maxWidth: '100%', // fundamental for the ellipsize to work
     // width: '100%', // would have way less 'jumpy-ness'
-    minWidth: 200, // would work on mobile, but no clear advantage
+    minWidth: 100, // safety floor, constant across active/done states
     // fontWeight: 500,
     minHeight: '1.75rem',
     // replaced by Box with px: 2
@@ -85,7 +85,6 @@ const _styles = {
     },
   },
   opChipDone: {
-    minWidth: undefined, // reset
     boxShadow: undefined, // reset
     color: 'text.tertiary',
     background: 'transparent',
@@ -144,15 +143,15 @@ function RenderChipAixControl({ aixControl, text }: {
       size='sm'
       color={color}
       variant='soft'
-      startDecorator={!startText ? undefined : <div style={{ opacity: 0.75, textWrap: 'nowrap' }}>{startText}</div>}
-      endDecorator={!Icon ? undefined : <Icon style={{ opacity: 0.5 }} />}
+      startDecorator={startText ? <div style={{ opacity: 0.75, textWrap: 'nowrap' }}>{startText}</div> : Icon ? <Icon style={{ opacity: 0.75 }} /> : undefined}
       sx={{
         mx: 1.5, // usual, esp for the looks into Beam
         gap: 1.5,
         px: 1.5,
         py: 0.375,
         my: '1px', // to not crop the outline on mobile, or on beam
-        boxShadow: `1px 2px 4px -3px var(--joy-palette-${color}-solidBg)`,
+        boxShadow: `inset 1px 2px 2px -1px var(--joy-palette-${color}-outlinedBorder)`,
+        // outline: `1px solid var(--joy-palette-${color}-outlinedBorder)`,
         // wrap text if needed - introduced for retry error messages
         whiteSpace: 'normal',
         wordBreak: 'break-word',
@@ -300,7 +299,11 @@ function ModelOperationChip(props: {
     >
       <span className='agi-ellipsize'>
         {text}
-        {elapsedSeconds >= MODELOP_TIMEOUT_DELAY && <span style={{ opacity: 0.6 }}> · {elapsedSeconds}s</span>}
+        {elapsedSeconds >= MODELOP_TIMEOUT_DELAY && (
+          <span style={{ opacity: 0.6 }}>
+            {' · '}<span style={{ display: 'inline-block', minWidth: elapsedSeconds >= 100 ? '3.5ch' : '2.5ch' }}>{elapsedSeconds}s</span>
+          </span>
+        )}
       </span>
     </Chip>
   );
