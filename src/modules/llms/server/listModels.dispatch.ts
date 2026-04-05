@@ -40,6 +40,7 @@ import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription
 import { fastAPIHeuristic, fastAPIModels } from './openai/models/fastapi.models';
 import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
 import { groqModelFilter, groqModelSortFn, groqModelToModelDescription, groqValidateModelDefs_DEV } from './openai/models/groq.models';
+import { minimaxHardcodedModelDescriptions, minimaxHeuristic } from './openai/models/minimax.models';
 import { llmapiHeuristic, llmapiModelsToModelDescriptions } from './openai/models/llmapi.models';
 import { novitaHeuristic, novitaModelsToModelDescriptions } from './openai/models/novita.models';
 import { lmStudioFetchModels, lmStudioModelsToModelDescriptions } from './openai/models/lmstudio.models';
@@ -388,13 +389,26 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
     case 'openpipe':
     case 'openrouter':
     case 'togetherai':
+ 
+      // Effective URL and headers - respects OPENAI_API_HOST server env and default hosts
+      const { headers: oaiHeaders, url: oaiUrl } = openAIAccess(access, null, OPENAI_API_PATHS.models);
+
       return createListModelsDispatch({
 
         // [OpenAI-compatible dialects]: openAI-style fetch models list
         fetchModels: async () => {
-          const { headers, url } = openAIAccess(access, null, OPENAI_API_PATHS.models);
-          _wire?.logRequest('GET', url, headers);
-          const wireModels = await fetchJsonOrTRPCThrow<OpenAIWire_API_Models_List.Response>({ url, headers, name: `OpenAI/${_capitalize(dialect)}`, signal });
+
+          // Bypass fetch for providers that do NOT have the /v1/models API yet - works in conjunction with the hardcoded models below
+          const bypassFetch = (dialect === 'openai' && minimaxHeuristic(oaiUrl)); // [MiniMax]
+          if (bypassFetch) return { data: [] }; // dummy response
+
+          _wire?.logRequest('GET', oaiUrl, oaiHeaders);
+          const wireModels = await fetchJsonOrTRPCThrow<OpenAIWire_API_Models_List.Response>({ 
+            url: oaiUrl, 
+            headers: oaiHeaders, 
+            name: `OpenAI/${_capitalize(dialect)}`, 
+            signal,
+          });
           _wire?.logResponse(wireModels);
           return wireModels;
         },
@@ -471,26 +485,29 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
                 .sort(moonshotModelSortFn);
 
             case 'openai':
-              const oaiHost = access.oaiHost;
 
               // [Arcee AI] special case for model enumeration
-              if (arceeAIHeuristic(oaiHost))
+              if (arceeAIHeuristic(oaiUrl))
                 return arceeAIModelsToModelDescriptions(openAIWireModelsResponse);
 
               // [ChutesAI] special case for model enumeration
-              if (chutesAIHeuristic(oaiHost))
+              if (chutesAIHeuristic(oaiUrl))
                 return chutesAIModelsToModelDescriptions(maybeModels);
 
               // [FireworksAI] special case for model enumeration
-              if (fireworksAIHeuristic(oaiHost))
+              if (fireworksAIHeuristic(oaiUrl))
                 return fireworksAIModelsToModelDescriptions(maybeModels);
 
+              // [MiniMax] hardcoded models (no /v1/models API yet)
+              if (minimaxHeuristic(oaiUrl))
+                return minimaxHardcodedModelDescriptions();
+
               // [Novita] special case for model enumeration
-              if (novitaHeuristic(oaiHost))
+              if (novitaHeuristic(oaiUrl))
                 return novitaModelsToModelDescriptions(openAIWireModelsResponse);
 
               // [LLM API] OpenAI-compatible gateway with rich model metadata
-              if (llmapiHeuristic(oaiHost))
+              if (llmapiHeuristic(oaiUrl))
                 return llmapiModelsToModelDescriptions(openAIWireModelsResponse);
 
               // [FastChat] make the best of the little info
@@ -498,7 +515,8 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
                 return fastAPIModels(maybeModels);
 
               // [OpenAI or OpenAI-compatible]: chat-only models, custom sort, manual mapping
-              const isNotOpenai = !!(oaiHost && !llmsHostnameMatches(oaiHost, 'api.openai.com')); // empty host (uses default) or explicitly api.openai.com
+              const oaiClientHost = access.oaiHost;
+              const isNotOpenai = !!(oaiClientHost && !llmsHostnameMatches(oaiClientHost, 'api.openai.com')); // empty host (uses default) or explicitly api.openai.com
               const models = maybeModels
                 // limit to only 'gpt' and 'non instruct' models
                 .filter(openAIModelFilter)
