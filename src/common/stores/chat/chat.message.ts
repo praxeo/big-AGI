@@ -280,44 +280,18 @@ export function messageWasInterruptedAtStart(message: Pick<DMessage, 'generator'
 
 // helpers - generators
 
-export function messageSetGenerator(message: Pick<DMessage, 'generator'>, generator: undefined | DMessageGenerator): void {
-  if (generator !== undefined)
-    message.generator = generator;
-  else
-    delete message.generator;
-}
-
 export function messageSetGeneratorNamed(message: Pick<DMessage, 'generator'>, label: 'web' | 'issue' | 'help' | string): void {
-  message.generator = {
-    mgt: 'named',
-    name: label,
-  };
-}
-
-function _messageSetGeneratorAIX(message: Pick<DMessage, 'generator'>, modelLabel: string, modelVendorId: ModelVendorId, modelId: DLLMId): void {
-  message.generator = {
-    mgt: 'aix',
-    name: modelLabel,
-    aix: {
-      vId: modelVendorId,
-      mId: modelId,
-    },
-  };
+  message.generator = { mgt: 'named', name: label };
 }
 
 export function messageSetGeneratorAIX_AutoLabel(message: Pick<DMessage, 'generator'>, modelVendorId: ModelVendorId, modelId: DLLMId): void {
-
-  // Strip the serviceId prefix: 'vendor-' or 'vendor-N-' (when multiple providers of same vendor)
-  const heuristicLabel = modelId.includes('-') ? modelId.replace(/^[^-]+-(\d-)?/, '') : modelId;
-
-  _messageSetGeneratorAIX(message, heuristicLabel, modelVendorId, modelId);
+  message.generator = createGeneratorAIX_AutoLabel(modelVendorId, modelId);
 }
 
-/*export function messageUpdateGeneratorInfo(message: Pick<DMessage, 'generator'>, metrics?: DMetricsChatGenerate_Md, tokenStopReason?: DMessageGenerator['tokenStopReason']): void {
-  if (!message.generator) return;
-  if (metrics) message.generator.metrics = metrics;
-  if (tokenStopReason) message.generator.tokenStopReason = tokenStopReason;
-}*/
+export function createGeneratorAIX_AutoLabel(modelVendorId: ModelVendorId, modelId: DLLMId): DMessageGenerator {
+  const heuristicLabel = modelId.includes('-') ? modelId.replace(/^[^-]+-(\d-)?/, '') : modelId;
+  return { mgt: 'aix', name: heuristicLabel, aix: { vId: modelVendorId, mId: modelId } };
+}
 
 
 // helpers - user flags
