@@ -347,6 +347,12 @@ export class ChatGenerateTransmitter implements IParticleTransmitter {
     this._queueParticleS();
   }
 
+  /** Appends a hosted resource (e.g. Anthropic container file) - inline content between text fragments */
+  appendHostedResource(hres: Extract<AixWire_Particles.PartParticleOp, { p: 'hres' }>) {
+    this.endMessagePart();
+    this.transmissionQueue.push(hres);
+  }
+
 
   /**
    * Undocumented, internal, as the IPartTransmitter callers will call setDialectTerminatingIssue instead
@@ -487,13 +493,9 @@ export class ChatGenerateTransmitter implements IParticleTransmitter {
    * Sends vendor-specific state modifier for the last emitted part.
    * This attaches opaque protocol state (e.g., Gemini thoughtSignature) without polluting core part schemas.
    */
-  sendSetVendorState(vendor: string, state: Record<string, unknown>) {
+  sendSetVendorState(svs: Extract<AixWire_Particles.PartParticleOp, { p: 'svs' }>) {
     // queue vendor state particle immediately after the content part has been queued (and if text, it will be emitted sooner anyway)
-    this.transmissionQueue.push({
-      p: 'svs',
-      vendor,
-      state,
-    } satisfies Extract<AixWire_Particles.PartParticleOp, { p: 'svs' }>);
+    this.transmissionQueue.push(svs);
   }
 
   /** Communicates the model name to the client */

@@ -101,6 +101,13 @@ export namespace AixWire_Parts {
       gemini: z.object({
         thoughtSignature: z.string().optional(),
       }).optional(),
+      // NOTE: we do NOT use this mechanism for per-vendor customization/ALT for parts
+      // anthropic: z.object({
+      //   containerUpload: z.object({
+      //     fileId: z.string(),
+      //     containerId: z.string().optional(),
+      //   }).optional(),
+      // }).optional(),
     }).optional(),
     // _vnd: z.record(z.string(), z.unknown()).optional(),
 
@@ -473,10 +480,12 @@ export namespace AixWire_API {
 
     // Anthropic
     vndAnt1MContext: z.boolean().optional(),
+    vndAntContainerId: z.string().optional(),
     vndAntInfSpeed: z.enum(['fast']).optional(),
     vndAntSkills: z.string().optional(),
     vndAntThinkingBudget: z.number().or(z.literal('adaptive')).nullable().optional(),
     vndAntToolSearch: z.enum(['regex', 'bm25']).optional(), // Tool Search Tool variant
+    vndAntTransformInlineFiles: z.enum(['inline-file', 'inline-file-and-delete']).optional(),
     vndAntWebDynamic: z.boolean().optional(),
     vndAntWebFetch: z.enum(['auto']).optional(),
     vndAntWebFetchMaxUses: z.number().int().min(1).max(50).optional(),
@@ -748,7 +757,14 @@ export namespace AixWire_Particles {
      */
     | { p: /*'mo'*/ 'vp', opId: string, text: string, mot: 'search-web' | 'gen-image' | 'code-exec', state?: 'done' | 'error', parentOpId?: string, iTexts?: string[], oTexts?: string[] }
     | { p: 'urlc', title: string, url: string, num?: number, from?: number, to?: number, text?: string, pubTs?: number } // url citation - pubTs: publication timestamp
-    | { p: 'svs', vendor: string, state: Record<string, unknown> } // set vendor state - applies to the last emitted part (opaque protocol state)
+    | { p: 'hres' } & ( // hosted resource - provider-hosted resource
+      | { kind: 'vnd.ant.file', fileId: string, containerId?: string }
+      )
+    | { p: 'svs' } & ( // set vendor state - vendor-specific opaque protocol state
+      | { vendor: 'anthropic', state: { container: { id: string; expiresAt: string } } } // message-level
+      | { vendor: 'gemini', state: { thoughtSignature: string } } // fragment-level
+      // | { vendor: string, state: Record<string, unknown> } // disable catch-all becasue it forces casts in type discriminations
+      )
     ;
 
 }

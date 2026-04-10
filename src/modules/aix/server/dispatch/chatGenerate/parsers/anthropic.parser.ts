@@ -130,18 +130,10 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
         if (isFirstMessage)
           pt.setModelName(responseMessage.model);
 
-        // -> Container metadata (for Skills)
+        // -> Container metadata (for Skills) - propagate to client via svs for cross-turn reuse
         if (responseMessage.container) {
-          // TODO: [PRIORITY] Accumulate in DMessage.sessionMetadata:
-          //   pt.setSessionMetadata('anthropic.container.id', container.id)
-          //   pt.setSessionMetadata('anthropic.container.expiresAt', Date.parse(container.expires_at))
-          // Request builder will find latest values and reuse container across turns for file access.
-
-          console.log('[Anthropic] Container active:', {
-            id: responseMessage.container.id,
-            expires_at: responseMessage.container.expires_at,
-            skills: responseMessage.container.skills,
-          });
+          _emitContainerState(pt, responseMessage.container);
+          if (ANTHROPIC_DEBUG_EVENT_SEQUENCE) console.log(`ant message_start: container=${responseMessage.container.id}`);
         }
 
         if (responseMessage.usage) {
@@ -405,6 +397,10 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
 
         Object.assign(responseMessage, delta);
 
+        // -> Container state update - arrives here when container was created mid-stream
+        if (delta.container)
+          _emitContainerState(pt, delta.container);
+
         // -> Token Stop Reason
         const tokenStopReason = _fromAnthropicStopReason(delta.stop_reason, 'message_delta');
         if (tokenStopReason !== null)
@@ -521,6 +517,10 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
     // -> Model
     if (model)
       pt.setModelName(model);
+
+    // -> Container metadata (for Skills) - propagate to client via svs for cross-turn reuse
+    if (container)
+      _emitContainerState(pt, container);
 
     // -> Content Blocks - Non-Streaming
     for (let i = 0; i < content.length; i++) {
@@ -658,9 +658,7 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
 }
 
 
-// --- Shared server tool result handlers (used by both S and NS parsers) ---
-
-type _ContentBlock = AnthropicWire_API_Message_Create.Response['content'][number];
+// --- Shared helpers (used by both S and NS parsers) ---
 
 /** Ellipsize long strings for iTexts/oTexts display (keeps start + end, shows byte count in the middle) */
 function _ellipsizeContext(text: string, maxBytes = 512): string {
@@ -669,6 +667,24 @@ function _ellipsizeContext(text: string, maxBytes = 512): string {
   const half = Math.floor((maxBytes - ellipsis.length) / 2);
   return text.slice(0, half) + ellipsis + text.slice(-half);
 }
+
+/**
+ * Emit container state via svs particle - reassembler promotes this to generator.upstreamContainer.
+ * NOTE: DMessage.sessionMetadata was designed for this (see chat.message.ts) but we use generator
+ * fields instead - simpler plumbing, no new persistence/migration, and ephemeral containers fit well.
+ */
+function _emitContainerState(pt: IParticleTransmitter, container: { id: string; expires_at: string }): void {
+  pt.sendSetVendorState({
+    p: 'svs',
+    vendor: 'anthropic',
+    state: { container: { id: container.id, expiresAt: container.expires_at } },
+  });
+}
+
+
+// --- Shared server tool result handlers (used by both S and NS parsers) ---
+
+type _ContentBlock = AnthropicWire_API_Message_Create.Response['content'][number];
 
 function _handleCBS_ServerToolUse(pt: IParticleTransmitter, block: Extract<_ContentBlock, { type: 'server_tool_use' }>): void {
   // Server-side tool execution (e.g., web_search, web_fetch, Skills API tools)
@@ -695,12 +711,12 @@ function _handleCBS_ServerToolUse(pt: IParticleTransmitter, block: Extract<_Cont
     case 'code_execution':
       // input: { code: string } - Python code for sandbox execution
       const pyCode = typeof inputObj?.code === 'string' ? inputObj.code : undefined;
-      pt.sendOperationState('code-exec', pyCode ? 'Running code...' : 'Writing code...', { ...srvOp, ...(pyCode ? { iTexts: [_ellipsizeContext(pyCode)] } : undefined) });
+      pt.sendOperationState('code-exec', !pyCode ? 'Writing code...' : 'Running code...', { ...srvOp, ...(pyCode ? { iTexts: [_ellipsizeContext(pyCode)] } : undefined) });
       break;
     case 'bash_code_execution':
       // input: { command: string } - bash command for sandbox execution
       const bashCmd = typeof inputObj?.command === 'string' ? inputObj.command : undefined;
-      pt.sendOperationState('code-exec', bashCmd ? 'Running bash...' : 'Writing bash...', { ...srvOp, ...(bashCmd ? { iTexts: [_ellipsizeContext(bashCmd)] } : undefined) });
+      pt.sendOperationState('code-exec', !bashCmd ? 'Writing bash...' : 'Running bash...', { ...srvOp, ...(bashCmd ? { iTexts: [_ellipsizeContext(bashCmd)] } : undefined) });
       break;
     case 'text_editor_code_execution':
       // input: { command: 'view'|'create'|'str_replace'|'insert'|'undo_edit', path: string, file_text?: string, old_str?: string, new_str?: string, ... }
@@ -710,13 +726,19 @@ function _handleCBS_ServerToolUse(pt: IParticleTransmitter, block: Extract<_Cont
       if (tePath)
         iTexts.push(tePath);
       switch (teCommand) {
-        case 'view':
-          if (inputObj?.view_range) iTexts.push(`lines: ${JSON.stringify(inputObj.view_range)}`);
-          pt.sendOperationState('code-exec', `Viewing ${tePath || 'file'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
+        default:
+          console.log('[DEV] Anthropic: server_tool_use(content_block_start): unrecognized text editor command', { teCommand, inputObj });
+        // fallthrough
+        case undefined: // EXPECTED in Streaming: we don't know the command yet, the input object is empty - in NS, we have the details upfront (cases below)
+          pt.sendOperationState('code-exec', `Text editor: ${teCommand || 'working'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
           break;
         case 'create':
           if (typeof inputObj?.file_text === 'string') iTexts.push(_ellipsizeContext(inputObj.file_text));
           pt.sendOperationState('code-exec', `Creating ${tePath || 'file'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'view':
+          if (inputObj?.view_range) iTexts.push(`lines: ${JSON.stringify(inputObj.view_range)}`);
+          pt.sendOperationState('code-exec', `Viewing ${tePath || 'file'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
           break;
         case 'str_replace':
           if (typeof inputObj?.old_str === 'string') iTexts.push(`- ${_ellipsizeContext(inputObj.old_str, 256)}`);
@@ -729,9 +751,6 @@ function _handleCBS_ServerToolUse(pt: IParticleTransmitter, block: Extract<_Cont
           break;
         case 'undo_edit':
           pt.sendOperationState('code-exec', `Undoing edit in ${tePath || 'file'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
-          break;
-        default:
-          pt.sendOperationState('code-exec', `Text editor: ${teCommand || 'working'}...`, { ...srvOp, ...iTexts.length ? { iTexts } : undefined });
           break;
       }
       break;
@@ -764,7 +783,8 @@ function _handleCBE_ServerToolUse_S(pt: IParticleTransmitter, opId: string, name
   let input: Record<string, any> | undefined;
   try {
     input = typeof inputStr === 'string' ? JSON.parse(inputStr) : inputStr;
-  } catch { /* ignore parse errors */ }
+  } catch { /* ignore parse errors */
+  }
   if (typeof input !== 'object') {
     // No parseable input - still update state so UI doesn't stay on "Writing..."
     pt.sendOperationState('code-exec', 'Executing...', { opId });
@@ -774,26 +794,44 @@ function _handleCBE_ServerToolUse_S(pt: IParticleTransmitter, opId: string, name
   switch (name) {
     case 'code_execution': {
       const code = typeof input.code === 'string' ? input.code : undefined;
-      pt.sendOperationState('code-exec', 'Executing code...', { opId, ...code && { iTexts: [_ellipsizeContext(code)] } });
+      pt.sendOperationState('code-exec', 'Executing code...', { opId, ...code && { iTexts: [_ellipsizeContext('input code:\n' + code)] } });
       break;
     }
     case 'bash_code_execution': {
       const cmd = typeof input.command === 'string' ? input.command : undefined;
-      pt.sendOperationState('code-exec', 'Executing bash...', { opId, ...cmd && { iTexts: [_ellipsizeContext(cmd)] } });
+      pt.sendOperationState('code-exec', 'Executing bash...', { opId, ...cmd && { iTexts: [_ellipsizeContext('bash command:\n' + cmd)] } });
       break;
     }
     case 'text_editor_code_execution': {
       const path = typeof input.path === 'string' ? input.path : 'file';
-      const verb = input.command === 'view' ? 'Viewing' : input.command === 'create' ? 'Creating' : input.command === 'str_replace' ? 'Editing' : input.command === 'insert' ? 'Inserting in' : 'Editing';
       const iTexts: string[] = [];
-      if (path !== 'file') iTexts.push(path);
-      if (input.command === 'str_replace') {
-        if (typeof input.old_str === 'string') iTexts.push(`- ${_ellipsizeContext(input.old_str, 256)}`);
-        if (typeof input.new_str === 'string') iTexts.push(`+ ${_ellipsizeContext(input.new_str, 256)}`);
-      } else if (input.command === 'create' && typeof input.file_text === 'string') {
-        iTexts.push(_ellipsizeContext(input.file_text));
+      if (path !== 'file') iTexts.push(`path: ${path}`);
+      switch (input.command) {
+        default: // not expected: the input shall be valid here
+          console.log('[DEV] Anthropic: server_tool_use(content_block_stop): unrecognized text editor command', { command: input.command, input });
+          pt.sendOperationState('code-exec', `Text editor: ${input.command || 'working'}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'create':
+          if (typeof input.file_text === 'string') iTexts.push(_ellipsizeContext('file contents:\n' + input.file_text));
+          pt.sendOperationState('code-exec', `Creating ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'view':
+          if (input.view_range) iTexts.push(`lines: ${JSON.stringify(input.view_range)}`);
+          pt.sendOperationState('code-exec', `Viewing ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'str_replace':
+          if (typeof input.old_str === 'string') iTexts.push(`- ${_ellipsizeContext(input.old_str, 256)}`);
+          if (typeof input.new_str === 'string') iTexts.push(`+ ${_ellipsizeContext(input.new_str, 256)}`);
+          pt.sendOperationState('code-exec', `Editing ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'insert':
+          if (typeof input.insert_text === 'string') iTexts.push(_ellipsizeContext(input.insert_text, 256));
+          pt.sendOperationState('code-exec', `Inserting in ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
+        case 'undo_edit':
+          pt.sendOperationState('code-exec', `Undoing edit in ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
+          break;
       }
-      pt.sendOperationState('code-exec', `${verb} ${path}...`, { opId, ...iTexts.length ? { iTexts } : undefined });
       break;
     }
     default:
@@ -871,14 +909,11 @@ function _handleCBS_CodeExecutionToolResult(pt: IParticleTransmitter, block: Ext
       const codeExecFailed = block.content.return_code !== 0;
       pt.sendOperationState('code-exec', codeExecFailed ? `Code executed` /* was: failed */ : 'Code executed', { opId, state: codeExecFailed ? 'error' : 'done', ...oTexts.length ? { oTexts } : undefined });
 
-      // add text if there are generated files in content array (e.g. generated from a skill)
-      const fileIds: string[] = [];
+      // emit structured hosted resource references for generated files (e.g. from a skill)
       if (Array.isArray(block.content?.content))
         for (const ob of block.content.content)
           if (ob.type === 'code_execution_output' && ob.file_id)
-            fileIds.push(ob.file_id);
-      if (fileIds.length > 0)
-        pt.appendText(`\n\n⚡ Code executed by Skill\n${fileIds.map(id => `\n📎 File: \`${id}\``).join('')}\n`);
+            pt.appendHostedResource({ p: 'hres', kind: 'vnd.ant.file', fileId: ob.file_id });
       break;
     }
 
@@ -906,14 +941,11 @@ function _handleCBS_BashCodeExecutionToolResult(pt: IParticleTransmitter, block:
       const bashFailed = block.content.return_code !== 0;
       pt.sendOperationState('code-exec', bashFailed ? `Bash executed` /* was: failed */ : 'Bash executed', { opId, state: bashFailed ? 'error' : 'done', ...oTexts.length ? { oTexts } : undefined });
 
-      // add text if there are generated files in content array
-      const fileIds: string[] = [];
+      // emit structured hosted resource references for generated files
       if (Array.isArray(block.content.content))
         for (const ob of block.content.content)
           if (ob.type === 'bash_code_execution_output' && ob.file_id)
-            fileIds.push(ob.file_id);
-      if (fileIds.length > 0)
-        pt.appendText(`\n\n⚡ Bash executed by Skill\n${fileIds.map(id => `\n📎 File: \`${id}\``).join('')}\n`);
+            pt.appendHostedResource({ p: 'hres', kind: 'vnd.ant.file', fileId: ob.file_id });
       break;
 
     case 'bash_code_execution_tool_result_error':
@@ -930,15 +962,15 @@ function _handleCBS_TextEditorCodeExecutionToolResult(pt: IParticleTransmitter, 
   const opId = block.tool_use_id;
   const oTexts: string[] = [];
   switch (block.content.type) {
+    case 'text_editor_code_execution_create_result':
+      pt.sendOperationState('code-exec', block.content.is_file_update ? 'File updated' : 'File created', { opId, state: 'done' });
+      break;
     case 'text_editor_code_execution_view_result':
       if (block.content.total_lines != null) oTexts.push(`${block.content.total_lines} lines total`);
       // only include text content in oTexts - image/pdf would be base64 noise
-      if (block.content.file_type === 'text' && block.content.content)
-        oTexts.push(_ellipsizeContext(block.content.content));
-      pt.sendOperationState('code-exec', `Viewed file (${block.content.file_type})`, { opId, state: 'done', ...oTexts.length ? { oTexts } : undefined });
-      break;
-    case 'text_editor_code_execution_create_result':
-      pt.sendOperationState('code-exec', block.content.is_file_update ? 'File updated' : 'File created', { opId, state: 'done' });
+      if (block.content.file_type === 'text')
+        oTexts.push(_ellipsizeContext(block.content.content || 'content: (not provided)'));
+      pt.sendOperationState('code-exec', `Viewed file${block.content.file_type !== 'text' ? ` (${block.content.file_type})` : ''}`, { opId, state: 'done', ...oTexts.length ? { oTexts } : undefined });
       break;
     case 'text_editor_code_execution_str_replace_result':
       if (block.content.old_start != null && block.content.old_lines != null)
@@ -956,9 +988,8 @@ function _handleCBS_TextEditorCodeExecutionToolResult(pt: IParticleTransmitter, 
 }
 
 function _handleCBS_ContainerUpload(pt: IParticleTransmitter, block: Extract<_ContentBlock, { type: 'container_upload' }>, containerId: string | undefined): void {
-  // Container upload - this is when a Skill has generated a file - file_id can be used with the Files API to download the file
-  pt.appendText(`\n\n⚡ File uploaded to container (${containerId || 'none'})\n\n📎 File: \`${block.file_id}\`\n\n`);
-  // TODO: Future enhancement - could trigger automatic file download here using the Files API with content_block.file_id, or offer an UI way to do so through a dedicated part/block?
+  // Container upload - Skill has generated a file, emit as a downloadable hosted resource
+  pt.appendHostedResource({ p: 'hres', kind: 'vnd.ant.file', fileId: block.file_id, ...(containerId ? { containerId } : {}) });
 }
 
 function _handleCBS_ToolSearchToolResult(pt: IParticleTransmitter, block: Extract<_ContentBlock, { type: 'tool_search_tool_result' }>): void {
@@ -1055,7 +1086,7 @@ function _fromAnthropicStopReason(stopReason: AnthropicWire_API_Message_Create.R
 
     default:
       const _exhaustiveCheck: never = stopReason;
-      // fallthrough
+    // fallthrough
     case null:
       console.warn(`_fromAnthropicStopReason(${debugCaller}): unexpected stop_reason: ${stopReason}`);
       return null;

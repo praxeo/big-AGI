@@ -258,7 +258,7 @@ function ModelOperationChip(props: {
   const isError = state === 'error';
   const isFinished = isDone || isError;
 
-  const iText = iTexts?.join('\n').trimStart() ?? null;
+  const iText = iTexts?.join('\n\n').trimStart() ?? null;
   const oText = oTexts?.join('\n') ?? null;
   const hasDetails = !!iText || !!oText;
 
@@ -301,7 +301,7 @@ function ModelOperationChip(props: {
         {text}
         {elapsedSeconds >= MODELOP_TIMEOUT_DELAY && (
           <span style={{ opacity: 0.6 }}>
-            {' · '}<span style={{ display: 'inline-block', minWidth: elapsedSeconds >= 100 ? '3.5ch' : '2.5ch' }}>{elapsedSeconds}s</span>
+            {' · '}<span style={{ display: 'inline-block', minWidth: elapsedSeconds >= 100 ? '4ch' : '3ch' }}>{elapsedSeconds}s</span>
           </span>
         )}
       </span>
@@ -325,7 +325,11 @@ function ModelOperationChip(props: {
 
         {!!iTexts?.length && !!oTexts?.length && <Divider sx={{ my: 2 }} />}
 
-        {!!oTexts?.length && oTexts.join('\n')}
+        {!!oTexts?.length && oTexts.map((t, i) => (
+          <span key={i} style={t.startsWith('exit code:') ? { color: 'var(--joy-palette-warning-plainColor)', fontWeight: 600 } : undefined}>
+            {i > 0 && '\n'}{t}
+          </span>
+        ))}
       </div>
     }>
       {chipElement}

@@ -24,6 +24,8 @@ export type GlobalOverlayId = // string - disabled so we keep an orderliness
   | 'chat-reset-confirmation'
   | 'chat-message-delete-confirmation'
   | 'chat-message-delete-aux'
+  | 'chat-message-delete-hosted-resource'
+  | 'chat-message-auto-embed-notice'
   | 'chat-message-inline-aux'
   | 'livefile-overwrite'
   | 'shortcuts-confirm-close'

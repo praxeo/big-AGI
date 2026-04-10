@@ -63,14 +63,13 @@ export interface ChatActions {
 
 type ConversationsStore = ChatState & ChatActions;
 
-const defaultConversations: DConversation[] = [createDConversation()];
 
 export const useChatStore = create<ConversationsStore>()(/*devtools(*/
   persist(
     (_set, _get) => ({
 
       // default state
-      conversations: defaultConversations,
+      conversations: [], // we used to have a default conversation here for zero-state, but we moved it to the merge function
 
       prependNewConversation: (personaId: SystemPurposeId | undefined, isIncognito: boolean): DConversationId => {
         const newConversation = createDConversation(personaId);
@@ -484,13 +483,17 @@ export const useChatStore = create<ConversationsStore>()(/*devtools(*/
        */
       merge: (persistedState, currentState: ConversationsStore): ConversationsStore => {
 
-        // concatenate-merge conversations reloaded from storage
+        // insert all stored conversations [ current (if any), ...stored ]
         const mergedConversations = [...(currentState?.conversations || [])];
         if (persistedState && typeof persistedState === 'object' && 'conversations' in persistedState) {
           const storedConversations = persistedState.conversations as ChatState['conversations'];
-          if (storedConversations.length)
+          if (storedConversations?.length)
             mergedConversations.push(...storedConversations);
         }
+
+        // zero-state: prepend an empty conversations if there are none
+        if (!mergedConversations.length)
+          mergedConversations.unshift(createDConversation(undefined));
 
         return {
           // default shallow merge
