@@ -129,6 +129,13 @@ const _styles = {
     display: 'flex',
     flexDirection: 'column',
   },
+
+  streamingPlainPre: {
+    m: 0,
+    overflowX: 'auto',
+    whiteSpace: 'pre',
+    fontFamily: 'monospace',
+  },
 } as const satisfies Record<string, SxProps>;
 
 const overlayGridSx: SxProps = {
@@ -204,33 +211,35 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const lcBlockTitle = blockTitle.trim().toLowerCase();
 
   const isHTMLCode = heuristicIsBlockPureHTML(code);
-  const renderHTML = isHTMLCode && showHTML;
+  const renderHTML = isHTMLCode && showHTML && !blockIsPartial;
 
   const isMermaidCode = lcBlockTitle === 'mermaid' && !blockIsPartial;
   const renderMermaid = isMermaidCode && showMermaid;
 
   const isPlantUMLCode = heuristicIsCodePlantUML(code.trim());
-  let renderPlantUML = isPlantUMLCode && showPlantUML;
+  let renderPlantUML = isPlantUMLCode && showPlantUML && !blockIsPartial;
   const { data: plantUmlSvgData, error: plantUmlError } = usePlantUmlSvg(renderPlantUML, code);
   renderPlantUML = renderPlantUML && (!!plantUmlSvgData || !!plantUmlError);
 
   const isSVGCode = heuristicIsSVGCode(code);
-  const renderSVG = isSVGCode && showSVG;
+  const renderSVG = isSVGCode && showSVG && !blockIsPartial;
   const canScaleSVG = renderSVG && code.includes('viewBox="');
 
   const renderSyntaxHighlight = !renderHTML && !renderMermaid && !renderPlantUML && !renderSVG;
-  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap;
+  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || blockIsPartial;
   const renderLineNumbers = !cannotRenderLineNumbers && ((showLineNumbers && uiComplexityMode !== 'minimal') || isFullscreen);
 
 
   // Language & Highlight (2-stages)
   const inferredCodeLanguage = React.useMemo(() => {
+    if (blockIsPartial)
+      return null;
     // shortcut - this mimics a similar path in inferCodeLanguage
     if (isHTMLCode)
       return 'html';
     // workhorse - could be slow, hence the memo
     return inferCodeLanguage(blockTitle, code);
-  }, [blockTitle, code, inferCodeLanguage, isHTMLCode]);
+  }, [blockIsPartial, blockTitle, code, inferCodeLanguage, isHTMLCode]);
 
 
   // Optimization 1: highlight decimation: max 6.6Hz throttle during large partial streams, as skipped intermediates are harmless.
@@ -249,11 +258,14 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const deferredCodeForHighlight = React.useDeferredValue(throttledCodeForHighlight);
 
   const codeSyntaxHtml = React.useMemo(() => {
+    // hard-off during streaming: render plain text only until settled
+    if (blockIsPartial)
+      return null;
     // fast-off
     if (!renderSyntaxHighlight || !deferredCodeForHighlight)
       return null;
     return highlightCode(inferredCodeLanguage, deferredCodeForHighlight, renderLineNumbers);
-  }, [deferredCodeForHighlight, highlightCode, inferredCodeLanguage, renderLineNumbers, renderSyntaxHighlight]);
+  }, [blockIsPartial, deferredCodeForHighlight, highlightCode, inferredCodeLanguage, renderLineNumbers, renderSyntaxHighlight]);
 
 
   // Title
@@ -277,7 +289,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     // style
     p: isBorderless ? 0 : 1.5, // this block gets a thicker border (but we 'fullscreen' html in case there's no title)
     overflowX: 'auto', // ensure per-block x-scrolling
-    whiteSpace: showSoftWrap ? 'break-spaces' : 'pre',
+    whiteSpace: blockIsPartial ? 'pre' : (showSoftWrap ? 'break-spaces' : 'pre'),
 
     // layout
     display: 'flex',
@@ -296,7 +308,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     // patch the min height if we have the second row
     // ...(hasExternalButtons ? { minHeight: '5.25rem' } : {}),
 
-  }), [isBorderless, isFullscreen, isRenderingDiagram, props.sx, showSoftWrap]);
+  }), [blockIsPartial, isBorderless, isFullscreen, isRenderingDiagram, props.sx, showSoftWrap]);
 
 
   return (
@@ -335,7 +347,15 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
             : renderMermaid ? <RenderCodeMermaid mermaidCode={code} fitScreen={fitScreen} />
               : renderSVG ? <RenderCodeSVG svgCode={code} fitScreen={fitScreen} />
                 : (renderPlantUML && (plantUmlSvgData || plantUmlError)) ? <RenderCodePlantUML svgCode={plantUmlSvgData ?? null} error={plantUmlError} fitScreen={fitScreen} />
-                  : <RenderCodeSyntax highlightedSyntaxAsHtml={codeSyntaxHtml} presenterMode={isFullscreen} />}
+                  : blockIsPartial ? (
+                    <Box component='pre' sx={_styles.streamingPlainPre}>
+                      <Box component='code'>
+                        {code}
+                      </Box>
+                    </Box>
+                  ) : (
+                    <RenderCodeSyntax highlightedSyntaxAsHtml={codeSyntaxHtml} presenterMode={isFullscreen} />
+                  )}
         </span>
 
       </Box>
@@ -404,14 +424,14 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
               </OverlayButton>
 
               {/* Soft Wrap toggle */}
-              {renderSyntaxHighlight && (
+              {renderSyntaxHighlight && !blockIsPartial && (
                 <OverlayButton tooltip={noTooltips ? null : 'Wrap Lines'} disabled={!renderSyntaxHighlight} variant={(showSoftWrap && renderSyntaxHighlight) ? 'solid' : 'outlined'} onClick={() => setShowSoftWrap(!showSoftWrap)}>
                   <WrapTextIcon />
                 </OverlayButton>
               )}
 
               {/* Line Numbers toggle */}
-              {renderSyntaxHighlight && uiComplexityMode !== 'minimal' && (
+              {renderSyntaxHighlight && !blockIsPartial && uiComplexityMode !== 'minimal' && (
                 <OverlayButton tooltip={noTooltips ? null : 'Line Numbers'} disabled={cannotRenderLineNumbers} variant={(renderLineNumbers && renderSyntaxHighlight) ? 'solid' : 'outlined'} onClick={() => setShowLineNumbers(!showLineNumbers)}>
                   <NumbersRoundedIcon />
                 </OverlayButton>
