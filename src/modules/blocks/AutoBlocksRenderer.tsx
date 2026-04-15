@@ -89,8 +89,15 @@ export function AutoBlocksRenderer(props: {
 
   // handlers
   const { setText } = props;
+
+  // Perf: stabilize text alteration callbacks. During streaming, `text` changes every packet, and we don't want to
+  // re-render completed non-last Code/Markdown blocks.
+  const curTextRef = React.useRef(text);
+  curTextRef.current = text;
+
   const handleReplaceCode = React.useCallback((search: string, replace: string): boolean => {
     if (setText) {
+      const text = curTextRef.current;
       const newText = text.replace(search, replace);
       if (newText !== text) {
         setText(newText);
@@ -98,7 +105,7 @@ export function AutoBlocksRenderer(props: {
       }
     }
     return false;
-  }, [setText, text]);
+  }, [setText]);
 
 
   // Memo the styles, to minimize re-renders
@@ -121,6 +128,8 @@ export function AutoBlocksRenderer(props: {
 
         // Optimization: only memo the non-currently-rendered components, if the message is still in flux
         const optimizeMemoBeforeLastBlock = props.optiAllowSubBlocksMemo === true && index < (autoBlocksStable.length - 1);
+        // Optimization: Code being written won't get tooltips or snap to page
+        const optimizeLightweightLastBlock = props.optiAllowSubBlocksMemo === true && index === (autoBlocksStable.length - 1);
         // Optimization: disable the markdown preprocessor on the last block, only do it at the end not while in progress
         const optimizeDisableProcessorsOnLast = DISABLE_MARKDOWN_PROGRESSIVE_PREPROCESS && props.optiAllowSubBlocksMemo === true && index === (autoBlocksStable.length - 1);
 
@@ -168,7 +177,7 @@ export function AutoBlocksRenderer(props: {
                 initialShowHTML={props.showUnsafeHtmlCode}
                 initialIsCollapsed={enhancedStartCollapsed}
                 noCopyButton={props.blocksProcessor === 'diagram' || isTextCollapsed}
-                optimizeLightweight={optimizeMemoBeforeLastBlock}
+                optimizeLightweight={optimizeLightweightLastBlock}
                 onReplaceInCode={(!setText || isTextCollapsed) ? undefined : handleReplaceCode}
                 codeSx={scaledCodeSx}
               />
@@ -180,7 +189,7 @@ export function AutoBlocksRenderer(props: {
                 fitScreen={props.fitScreen}
                 initialShowHTML={props.showUnsafeHtmlCode /* && !bkInput.isPartial NOTE: with this, it would be only auto-rendered at the end, preventing broken renders */}
                 noCopyButton={props.blocksProcessor === 'diagram' || isTextCollapsed}
-                optimizeLightweight={optimizeMemoBeforeLastBlock}
+                optimizeLightweight={optimizeLightweightLastBlock}
                 onReplaceInCode={(!setText || isTextCollapsed) ? undefined : handleReplaceCode}
                 sx={scaledCodeSx}
               />
