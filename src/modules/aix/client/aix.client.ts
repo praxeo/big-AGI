@@ -21,10 +21,11 @@ import { webGeolocationCached } from '~/common/util/webGeolocationUtils';
 import type { AixAPI_Access, AixAPI_ConnectionOptions_ChatGenerate, AixAPI_Context_ChatGenerate, AixAPI_Model, AixAPIChatGenerate_Request, AixWire_Particles } from '../server/api/aix.wiretypes';
 
 import { AixStreamRetry } from './aix.client.retry';
-import { ContentReassembler } from './ContentReassembler';
+import { ReassemblerParticleTransforms, ContentReassembler } from './ContentReassembler';
 import { aixCGR_ChatSequence_FromDMessagesOrThrow, aixCGR_FromSimpleText, aixCGR_SystemMessage_FromDMessageOrThrow, AixChatGenerate_TextMessages, clientHotFixGenerateRequest_ApplyAll } from './aix.client.chatGenerateRequest';
 import { aixClassifyStreamingError } from './aix.client.errors';
 import { aixClientDebuggerGetRBO, getAixDebuggerNoStreaming } from './debugger/memstore-aix-client-debugger';
+import { createClientAnthropicFileInlineTransform } from './aix.client.transform-antFileInline';
 import { withDecimator } from './withDecimator';
 
 
@@ -739,19 +740,28 @@ async function _aixChatGenerateContent_LL(
     }
 
 
+  // Client-side particle transforms:
+  // - CSF mode: server-side transforms tagged csfUnsafe are stripped; we add these to re-transform here via tRPC
+  // - in tRPC mode the server-side transforms handle everything elegantly - but we still add failsafes in case the server has a transform issue
+  const particleTransforms: ReassemblerParticleTransforms[] = [];
+  if (aixAccess.dialect === 'anthropic' && aixModel.vndAntTransformInlineFiles /* && clientSideChatGenerate */)
+    particleTransforms.push(createClientAnthropicFileInlineTransform(aixAccess, aixModel.vndAntTransformInlineFiles === 'inline-file-and-delete'));
+
+
   // Particles Reassembler - owns the accumulator, reused across Client-side retries
   const reassembler = new ContentReassembler(
     initialGenerator,
     inspectorTransport,
     inspectorContext,
+    particleTransforms,
     getLabsLosslessImages(),
-    abortSignal,
     (audio) => {
       const audioUrl = URL.createObjectURL(audio.blob);
       void AudioPlayer.playUrl(audioUrl)
-        .catch(error => console.log('[AIX] Failed to play audio:', { error }))
+        .catch((error) => console.log('[AIX] Failed to play audio:', { error }))
         .finally(() => URL.revokeObjectURL(audioUrl));
     },
+    abortSignal,
   );
   const accumulator_LL = reassembler.S; // stable ref - readonly, same object throughout
 

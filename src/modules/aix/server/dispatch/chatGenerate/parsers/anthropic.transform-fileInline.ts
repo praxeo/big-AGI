@@ -86,7 +86,7 @@ function _isInlineableImageMimeType(mimeType: string): boolean {
  */
 export function createAnthropicFileInlineTransform(fileApiRequest: ReturnType<typeof anthropicAccess>, deleteAfterInline: boolean): ChatGenerateParticleTransformFunction {
 
-  return async (particle) => {
+  const transform: ChatGenerateParticleTransformFunction = async (particle) => {
     // pass-through any non-Anthropic-file particle
     if (!('p' in particle) || particle.p !== 'hres' || particle.kind !== 'vnd.ant.file')
       return particle;
@@ -149,8 +149,14 @@ export function createAnthropicFileInlineTransform(fileApiRequest: ReturnType<ty
 
     // 4. Fire-and-forget delete if policy requires (raw fetch - we don't care about result/errors)
     if (deleteAfterInline)
-      fetchResponseOrTRPCThrow({ url: fileUrl, headers, method: 'DELETE', name: 'Anthropic.fileInline.delete', throwWithoutName: true }).catch(error => console.log(`[AnthropicFileInlineTransform] Failed to delete file ${fileId} after inlining:`, { error }));
+      fetchResponseOrTRPCThrow({ url: fileUrl, headers, method: 'DELETE', name: 'Anthropic.fileInline.delete', throwWithoutName: true })
+        .catch(error => console.log(`[AnthropicFileInlineTransform] Failed to delete file ${fileId} after inlining:`, { error }));
 
     return particle;
   };
+
+  // Tag: this transform fetches from the Anthropic File API which blocks browser CORS
+  transform.csfUnsafe = true;
+
+  return transform;
 }

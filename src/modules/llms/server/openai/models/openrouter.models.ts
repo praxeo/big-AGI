@@ -30,6 +30,8 @@ const orModelFamilyOrder = [
   'mistralai/', 'meta-llama/', 'amazon/', 'cohere/',
   // Specialized/AI companies
   'perplexity/', 'inflection/',
+  // Chinese majors (now surfaced on OpenRouter directly)
+  'alibaba/', 'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'baidu/', 'stepfun/',
   // Research/open models
   'nvidia/', 'microsoft/', 'nousresearch/', 'openchat/', // 'huggingfaceh4/',
   // Community/other providers
@@ -194,7 +196,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
         DEV_DEBUG_OPENROUTER_MODELS && console.log(`[DEV] openRouterModelToModelDescription: unexpected ${antLookup ? 'KNOWN' : 'unknown'} Anthropic reasoning model:`, model.id);
         parameterSpecs.push({ paramId: 'llmVndAntThinkingBudget' }); // configurable thinking budget
         if (!parameterSpecs.some(p => p.paramId === 'llmVndAntEffort'))
-          parameterSpecs.push({ paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high'] }); // 'max' is Opus 4.6-only and not available through OpenRouter
+          parameterSpecs.push({ paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] }); // tunneled via OpenRouter's `verbosity` field
       }
       break;
 
