@@ -1,38 +1,72 @@
-import { LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
+import { LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
 
 import { fromManualMapping, ManualMappings } from '../../models.mappings';
 
 
-const IF_3 = [LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json];
+const IF_4 = [LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn];
 
+// [DeepSeek, 2026-04-24] V4 release - https://api-docs.deepseek.com/news/news260424
+// - V4-Pro: 1.6T total / 49B active params; V4-Flash: 284B total / 13B active params (Novel Attention: token-wise compression + DSA)
+// - Model IDs listed by /models: deepseek-v4-flash, deepseek-v4-pro
+// - 1M context is the default across services; text-only (no vision/multimodal)
+// - Legacy aliases still accepted until 2026-07-24: deepseek-chat -> v4-flash (thinking disabled), deepseek-reasoner -> v4-flash (thinking enabled)
+// - Reasoning control: object `thinking: { type: 'enabled'|'disabled', reasoning_effort?: 'high'|'max' }`
+//   (the live API also accepts type: 'adaptive', but it is undocumented and empirically behaves the same as 'enabled'
+//    on current builds -- deliberately not exposed here; add it once docs + semantics stabilize)
+// - V3.2 endpoints no longer accessible via direct model ID (API returns only v4-flash/v4-pro)
 const _knownDeepseekChatModels: ManualMappings = [
-  // [Models and Pricing](https://api-docs.deepseek.com/quick_start/pricing)
-  // [List Models](https://api-docs.deepseek.com/api/list-models)
-  // [Release Notes - V3.2](https://api-docs.deepseek.com/news/news251201) - Released 2025-12-01
+  {
+    idPrefix: 'deepseek-v4-pro',
+    label: 'DeepSeek V4 Pro',
+    pubDate: '20260424',
+    description: 'Premium reasoning model with 1M context. Supports extended thinking modes, JSON output, and function calling.',
+    contextWindow: 1_048_576, // 1M
+    interfaces: [...IF_4, LLM_IF_OAI_Reasoning],
+    parameterSpecs: [
+      { paramId: 'llmVndMiscEffort', enumValues: ['none', 'high', 'max'] },
+    ],
+    maxCompletionTokens: 65536, // conservative default; docs advertise up to 384K
+    chatPrice: { input: 1.74, output: 3.48, cache: { cType: 'oai-ac', read: 0.145 } },
+    benchmark: { cbaElo: 1463 }, // lmarena: deepseek-v4-pro (thinking variant 1462, near-tied)
+  },
+  {
+    idPrefix: 'deepseek-v4-flash',
+    label: 'DeepSeek V4 Flash',
+    pubDate: '20260424',
+    description: 'Fast general-purpose model with 1M context. Supports extended thinking modes, JSON output, and function calling.',
+    contextWindow: 1_048_576, // 1M
+    interfaces: [...IF_4, LLM_IF_OAI_Reasoning],
+    parameterSpecs: [
+      { paramId: 'llmVndMiscEffort', enumValues: ['none', 'high', 'max'] },
+    ],
+    maxCompletionTokens: 65536, // conservative default; docs advertise up to 384K
+    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.028 } },
+    benchmark: { cbaElo: 1439 }, // lmarena: deepseek-v4-flash-thinking (non-thinking variant 1433)
+  },
+  // Legacy aliases - API routes both to deepseek-v4-flash with thinking pre-set
   {
     idPrefix: 'deepseek-reasoner',
-    label: 'DeepSeek V3.2 (Reasoner)',
-    description: 'Reasoning model with Chain-of-Thought capabilities, 128K context length. Supports JSON output and function calling.',
-    contextWindow: 131072, // 128K
-    interfaces: [...IF_3, LLM_IF_OAI_Reasoning],
-    // parameterSpecs: [
-    //   { paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] }, // not supported: this model is reasoning only
-    // ],
-    maxCompletionTokens: 32768, // default, max: 65536
-    chatPrice: { input: 0.28, output: 0.42, cache: { cType: 'oai-ac', read: 0.028 } },
-    benchmark: { cbaElo: 1412 }, //deepseek-v3.2-exp-thinking
+    label: 'DeepSeek Reasoner (legacy)',
+    description: 'Legacy alias: routes to DeepSeek V4 Flash with thinking enabled. Retires 2026-07-24.',
+    contextWindow: 1_048_576,
+    interfaces: [...IF_4, LLM_IF_OAI_Reasoning],
+    maxCompletionTokens: 65536,
+    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.028 } },
+    benchmark: { cbaElo: 1439 }, // lmarena: deepseek-v4-flash-thinking
+    isLegacy: true,
   },
   {
     idPrefix: 'deepseek-chat',
-    label: 'DeepSeek V3.2',
-    description: 'General-purpose model with 128K context length. Supports JSON output and function calling.',
-    contextWindow: 131072, // 128K
-    interfaces: IF_3,
-    maxCompletionTokens: 8192, // default is 4096, max is 8192
-    chatPrice: { input: 0.28, output: 0.42, cache: { cType: 'oai-ac', read: 0.028 } },
-    benchmark: { cbaElo: 1420 }, // deepseek-v3.2
+    label: 'DeepSeek Chat (legacy)',
+    description: 'Legacy alias: routes to DeepSeek V4 Flash with thinking disabled. Retires 2026-07-24.',
+    contextWindow: 1_048_576,
+    interfaces: IF_4,
+    maxCompletionTokens: 65536,
+    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.028 } },
+    benchmark: { cbaElo: 1433 }, // lmarena: deepseek-v4-flash (non-thinking)
+    isLegacy: true,
   },
 ];
 

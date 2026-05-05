@@ -137,9 +137,10 @@ export const ModelDescription_schema = z.object({
   label: z.string(),
   created: z.int().optional(),
   updated: z.int().optional(),
+  pubDate: z.string().regex(/^\d{8}$/).optional(), // editorial: model's official public release date 'YYYYMMDD'. Required for editorial entries (KnownModelEditorial) and for 0-day-fillable paths (Anthropic placeholder, Gemini unknown-model fallback). Omitted for dynamic-only vendors and unknown variants where we have no reliable signal.
   description: z.string(),
   contextWindow: z.int().nullable(),
-  interfaces: z.array(z.union([z.enum(LLMS_ALL_INTERFACES), z.string()])), // backward compatibility: to not Break client-side interface parsing on newer server
+  interfaces: z.array(z.enum(LLMS_ALL_INTERFACES).or(z.string())), // backward compatibility: to not Break client-side interface parsing on newer server
   parameterSpecs: z.array(ModelParameterSpec_schema).optional(),
   maxCompletionTokens: z.int().optional(), // initial parameter value for 'llmResponseTokens'
   // rateLimits: rateLimitsSchema.optional(),
@@ -155,6 +156,7 @@ export const ModelDescription_schema = z.object({
 // Each vendor's lookup filters to only what works through OpenRouter's OAI-compatible API.
 // OpenRouter merges these with its own auto-detected interfaces and params.
 export type OrtVendorLookupResult = {
+  pubDate?: ModelDescriptionSchema['pubDate'];
   interfaces?: ModelDescriptionSchema['interfaces'];
   parameterSpecs?: ModelDescriptionSchema['parameterSpecs'];
   initialTemperature?: number; // vendor-specific default (e.g. Gemini 1.0); undefined = use global fallback (0.5)

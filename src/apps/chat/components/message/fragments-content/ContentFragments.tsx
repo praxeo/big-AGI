@@ -149,6 +149,10 @@ export function ContentFragments(props: {
           //   return null;
 
           case 'ma':
+            // skip rendering empty reasoning fragments (created as vehicles for vendor state / reasoning continuity)
+            const isActivelyStreaming = isLastFragment && !!props.messagePendingIncomplete;
+            if (!part.aText && !part.redactedData?.length && !isActivelyStreaming)
+              return null;
             const BlockPartModelAuxMemoOrNot = optimizeMemoBeforeLastBlock ? BlockPartModelAuxMemo : BlockPartModelAux;
             return (
               <BlockPartModelAuxMemoOrNot
@@ -339,6 +343,7 @@ export function ContentFragments(props: {
               // renderWordsDiff={wordsDiff || undefined}
               showUnsafeHtmlCode={props.showUnsafeHtmlCode}
               optiAllowSubBlocksMemo={!!props.optiAllowSubBlocksMemo}
+              optiStreamingLastFragment={!!props.optiAllowSubBlocksMemo && isLastFragment && props.uiComplexityMode === 'minimal'}
               onContextMenu={props.onContextMenu}
               onDoubleClick={props.onDoubleClick}
             />

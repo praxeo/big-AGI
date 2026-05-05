@@ -15,7 +15,7 @@ import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 
 import { type DPricingChatGenerate, isLLMChatFree_cached, llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
 import type { ModelOptionsContext } from '~/common/layout/optima/store-layout-optima';
-import { DLLMId, DModelInterfaceV1, getLLMContextTokens, getLLMLabel, getLLMMaxOutputTokens, isLLMVisible, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
+import { DLLMId, DModelInterfaceV1, getLLMContextTokens, getLLMLabel, getLLMMaxOutputTokens, getLLMPubDate, isLLMVisible, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
 import { FormLabelStart } from '~/common/components/forms/FormLabelStart';
 import { GoodModal } from '~/common/components/modals/GoodModal';
 import { LLMImplicitParametersRuntimeFallback } from '~/common/stores/llms/llms.parameters';
@@ -280,6 +280,7 @@ export function LLMOptionsModal(props: { id: DLLMId, context?: ModelOptionsConte
 
   // cache
   const adjChatPricing = llmChatPricing_adjusted(llm);
+  const pubDate = getLLMPubDate(llm);
 
 
   return (
@@ -502,7 +503,8 @@ export function LLMOptionsModal(props: { id: DLLMId, context?: ModelOptionsConte
             id: {llm.id}<br />
             context: <b>{getLLMContextTokens(llm)?.toLocaleString() ?? 'not provided'}</b> tokens{` · `}
             max output: <b>{getLLMMaxOutputTokens(llm)?.toLocaleString() ?? 'not provided'}</b><br />
-            {!!llm.created && <>created: <TimeAgo date={new Date(llm.created * 1000)} /><br /></>}
+            {!!pubDate && <>published: <b>{pubDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</b> · <TimeAgo date={pubDate} /><br /></>}
+            {!!llm.created && <>indexed: <TimeAgo date={new Date(llm.created * 1000)} /><br /></>}
             {/*· tags: {llm.tags.join(', ')}*/}
             {!!adjChatPricing && prettyPricingComponent(adjChatPricing)}
             {/*{!!llm.benchmark && <>benchmark: <b>{llm.benchmark.cbaElo?.toLocaleString() || '(unk) '}</b> CBA Elo<br /></>}*/}

@@ -32,6 +32,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-5',
     label: 'GLM-5',
+    pubDate: '20260211',
     description: 'Z.ai flagship foundation model (744B MoE, 40B activated). Designed for Agentic Engineering with SOTA coding and agent capabilities. 200K context, thinking mode.',
     contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
@@ -43,6 +44,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-5-code',
     label: 'GLM-5 Code',
+    // pubDate: UNCONFIRMED - 'glm-5-code' not in Z.ai pricing table or release-notes; Z.ai's coding plan documents GLM-5.1 / GLM-5-Turbo / GLM-4.7 / GLM-4.5-Air, no 'glm-5-code'
     description: 'GLM-5 optimized for coding tasks. Uses the dedicated Coding endpoint. 200K context, thinking mode.',
     contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
@@ -58,6 +60,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.7',
     label: 'GLM-4.7',
+    pubDate: '20251222',
     description: 'Latest-gen GLM model with 128K context. Thinking mode activated by default.',
     contextWindow: 131072, // 128K
     interfaces: _IF_Reasoning,
@@ -69,6 +72,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.7-flashx',
     label: 'GLM-4.7 FlashX', // fast, low cost
+    pubDate: '20260119',
     description: 'Fast GLM-4.7 variant with priority routing and higher concurrency. Same model as Flash, better infrastructure.',
     contextWindow: 131072,
     interfaces: _IF_Reasoning,
@@ -80,6 +84,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.7-flash',
     label: 'GLM-4.7 Flash (Free)',
+    pubDate: '20260119',
     description: 'Free GLM-4.7 variant. Same model as FlashX but with limited concurrency (1 concurrent request) and lower priority.',
     contextWindow: 131072,
     interfaces: _IF_Reasoning,
@@ -94,6 +99,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.6v-flashx',
     label: 'GLM-4.6 V FlashX',
+    pubDate: '20251208',
     description: 'Fast vision GLM-4.6 with priority routing and higher concurrency. Image/video/file inputs, 32K output.',
     contextWindow: 131072,
     interfaces: _IF_Vision_Reasoning,
@@ -106,6 +112,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.6v-flash',
     label: 'GLM-4.6 V Flash (Free)',
+    pubDate: '20251208',
     description: 'Free vision GLM-4.6. Same model as FlashX but with limited concurrency (1 concurrent request). Image/video/file inputs, 32K output.',
     contextWindow: 131072,
     interfaces: _IF_Vision_Reasoning,
@@ -117,6 +124,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.6v',
     label: 'GLM-4.6 V',
+    pubDate: '20251208',
     description: 'Vision-enabled GLM-4.6 model. Supports image/video/file inputs, 32K output, hybrid thinking.',
     contextWindow: 131072,
     interfaces: _IF_Vision_Reasoning,
@@ -131,6 +139,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.6',
     label: 'GLM-4.6',
+    pubDate: '20250930',
     description: 'GLM-4.6 model with 128K context/output. Hybrid thinking: auto-determines whether to engage deep reasoning.',
     contextWindow: 131072,
     interfaces: _IF_Reasoning,
@@ -144,6 +153,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-ocr',
     label: 'GLM-OCR (Vision, OCR)',
+    pubDate: '20260203',
     description: 'Specialized OCR model for text extraction from images and documents.',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_HOTFIX_NoWebP],
@@ -158,6 +168,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5v',
     label: 'GLM-4.5 V',
+    pubDate: '20250811',
     description: 'Vision-enabled GLM-4.5 model. 96K context, 16K output, interleaved thinking.',
     contextWindow: 98304, // 96K
     interfaces: _IF_Vision_Reasoning,
@@ -173,6 +184,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5-flash',
     label: 'GLM-4.5 Flash (Free)',
+    pubDate: '20250728',
     description: 'Free GLM-4.5 variant with limited concurrency. Prior-gen, superseded by GLM-4.7 Flash.',
     contextWindow: 98304,
     interfaces: _IF_Reasoning,
@@ -185,6 +197,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5-airx',
     label: 'GLM-4.5 AirX',
+    pubDate: '20250728',
     description: 'Extended lightweight GLM-4.5 variant. Interleaved thinking.',
     contextWindow: 98304,
     interfaces: _IF_Reasoning,
@@ -197,6 +210,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5-air',
     label: 'GLM-4.5 Air',
+    pubDate: '20250728',
     description: 'Lightweight GLM-4.5 variant. Interleaved thinking.',
     contextWindow: 98304,
     interfaces: _IF_Reasoning,
@@ -209,6 +223,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5-x',
     label: 'GLM-4.5 X',
+    pubDate: '20250728',
     description: 'Extended GLM-4.5 model. Interleaved thinking.',
     contextWindow: 98304,
     interfaces: _IF_Reasoning,
@@ -221,6 +236,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4.5',
     label: 'GLM-4.5',
+    pubDate: '20250728',
     description: 'Prior-gen GLM-4.5 model with 96K context/output. Interleaved thinking.',
     contextWindow: 98304,
     interfaces: _IF_Reasoning,
@@ -234,6 +250,7 @@ const _knownZAIModels: ManualMappings = [
   {
     idPrefix: 'glm-4-32b-0414-128k',
     label: 'GLM-4 32B (0414) 128K',
+    pubDate: '20250414',
     description: 'GLM-4 32B model with 128K context, 16K output.',
     contextWindow: 131072,
     interfaces: _IF_Chat,

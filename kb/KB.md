@@ -17,6 +17,10 @@ Architecture and system documentation is available in the `/kb/` knowledge base,
 #### CSF - Client-Side Fetch
 - **[CSF.md](systems/client-side-fetch.md)** - Direct browser-to-API communication for LLM requests
 
+#### LLM - Language Model Metadata
+- **[LLM-editorial-control.md](modules/LLM-editorial-pubdate.md)** - Where we have editorial control over per-model metadata vs dynamic discovery; `pubDate` field semantics, propagation chain, resolution rules, per-vendor matrix
+- **[LLM-models-catalog-pipeline.md](modules/LLM-models-catalog-pipeline.md)** - Forward-looking pipeline: extraction script, snapshot artifact, website consumption, future schema extensions
+
 ### Systems Documentation
 
 #### Core Platform Systems

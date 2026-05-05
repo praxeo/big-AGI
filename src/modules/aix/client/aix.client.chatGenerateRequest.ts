@@ -409,14 +409,22 @@ export async function aixCGR_ChatSequence_FromDMessagesOrThrow(
             break;
 
           case 'ma':
-            // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#why-thinking-blocks-must-be-preserved
-            // [Anthropic] special case: despite being Void, we send the DVoidModelAuxPart which has signed Thinking blocks and Redacted data,
-            //             which may be instrumental for the model to execute tools-result follow-up actions/text.
-            const isAntModelAux = aPart.textSignature || aPart.redactedData?.length;
-            if (isAntModelAux) {
+            // Preserve reasoning continuity across turns. Three channels, any one is sufficient:
+            // - Anthropic: part.textSignature / part.redactedData (bespoke fields, see Anthropic extended thinking docs)
+            // - OpenAI Responses / Gemini: _vnd sidecar (reasoningItem.* / thoughtSignature, opaque continuity handle)
+            // - DeepSeek V4 (OpenAI chat-completions): plain reasoning text in aText is the payload itself
+            const oaiReasoning = _vnd?.openai?.reasoningItem;
+            const hasReasoningHandle =
+              (aPart.textSignature || aPart.redactedData?.length)
+              || (oaiReasoning?.encryptedContent || oaiReasoning?.id)
+              || (aPart.aText && aPart.aType === 'reasoning'); // DeepSeek V4 reasoning in plain text - NOTE: will send LOTS of 'ma' parts (e.g. to Gemini, which doesn't even need them)
+            if (hasReasoningHandle) {
               const aModelAuxPart = aPart as AixParts_ModelAuxPart; // NOTE: this is a forced cast from readonly string[] to string[], but not a big deal here
-              // modelMessage.parts.push(_vnd ? { ...aModelAuxPart, _vnd } : aModelAuxPart);
-              modelMessage.parts.push(aModelAuxPart);
+              modelMessage.parts.push(_vnd ? { ...aModelAuxPart, _vnd } : aModelAuxPart);
+            } else {
+              // If none are present (e.g. summary-only reasoning from a vendor with no signed handle), drop the ma part silently;
+              // - passing a bare reasoning reference errors out on some providers (e.g. OpenAI stateless returns "Item with id rs_... not found. ... remove this item from your input.")
+              // console.log('[DEV] aixCGR_FromDMessages: dropping ma part from Assistant message as it has no reasoning handle', { aPart });
             }
             break;
 
@@ -649,7 +657,7 @@ function _clientCreateAixMetaInReferenceToPart(items: DMetaReferenceItem[]): Aix
 
 
 export async function clientHotFixGenerateRequest_ApplyAll(llmInterfaces: DLLM['interfaces'], aixChatGenerate: AixAPIChatGenerate_Request, modelName: string): Promise<{
-  shallDisableStreaming: boolean;
+  hotfixNoStream: boolean;
   workaroundsCount: number;
 }> {
 
@@ -672,12 +680,12 @@ export async function clientHotFixGenerateRequest_ApplyAll(llmInterfaces: DLLM['
     workaroundsCount += await clientHotFixGenerateRequest_ConvertWebP(aixChatGenerate, 'image/jpeg');
 
   // Disable streaming for select chat models that don't support it (e.g. o1-preview (old) and o1-2024-12-17)
-  const shallDisableStreaming = llmInterfaces.includes(LLM_IF_HOTFIX_NoStream);
+  const hotfixNoStream = llmInterfaces.includes(LLM_IF_HOTFIX_NoStream);
 
   if (workaroundsCount > 0)
     console.warn(`[DEV] Working around '${modelName}' model limitations: client-side applied ${workaroundsCount} workarounds`);
 
-  return { shallDisableStreaming, workaroundsCount };
+  return { hotfixNoStream, workaroundsCount };
 
 }
 

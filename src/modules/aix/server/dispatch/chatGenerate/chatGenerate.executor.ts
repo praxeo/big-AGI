@@ -26,7 +26,6 @@ import { heartbeatsWhileAwaiting } from '../heartbeatsWhileAwaiting';
  */
 export async function* executeChatGenerateDispatch(
   dispatchCreatorFn: () => Promise<ChatGenerateDispatch>,
-  streaming: boolean,
   intakeAbortSignal: AbortSignal,
   _d: AixDebugObject,
   parseContext?: { retriesAvailable: boolean },
@@ -51,7 +50,7 @@ export async function* executeChatGenerateDispatch(
     dispatch.request.body = { ...dispatch.request.body, ..._d.requestBodyOverride };
 
   // Connect to the dispatch (yields debug echo particles directly, bypasses particle transforms)
-  const dispatchResponse = yield* _connectToDispatch(dispatch.request, intakeAbortSignal, chatGenerateTx, _d);
+  const dispatchResponse = yield* _connectToDispatch(dispatch.request, dispatch.customConnect, intakeAbortSignal, chatGenerateTx, _d);
   if (!dispatchResponse)
     return; // exit: error already handled
 
@@ -59,7 +58,7 @@ export async function* executeChatGenerateDispatch(
   const innerStream = (async function* () {
 
     // Consume dispatch response
-    if (!streaming)
+    if (dispatch.demuxerFormat === null /* NS */)
       yield* _consumeDispatchUnified(dispatchResponse, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
     else
       yield* _consumeDispatchStream(dispatchResponse, dispatch.bodyTransform ?? null, dispatch.demuxerFormat, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
@@ -103,6 +102,7 @@ export async function* executeChatGenerateDispatch(
  */
 async function* _connectToDispatch(
   request: ChatGenerateDispatchRequest,
+  customConnect: ((signal: AbortSignal) => Promise<Response>) | undefined,
   intakeAbortSignal: AbortSignal,
   chatGenerateTx: ChatGenerateTransmitter,
   _d: AixDebugObject,
@@ -122,7 +122,8 @@ async function* _connectToDispatch(
 
     // Blocking fetch with heartbeats - combats timeouts, for instance with long Anthropic requests (>25s on large requests for Opus 3 models)
     _d.profiler?.measureStart('connect');
-    const connectionOperationCreator = () => fetchResponseOrTRPCThrow({
+    // [customConnect] dialects that need multi-step I/O (e.g. Gemini Interactions poll loop) own the connection
+    const connectionOperationCreator = customConnect ? () => customConnect(intakeAbortSignal) : () => fetchResponseOrTRPCThrow({
       ...request,
       signal: intakeAbortSignal,
       name: `Aix.${_d.prettyDialect}`,

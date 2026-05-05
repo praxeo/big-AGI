@@ -162,8 +162,11 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   // -- Vendor parameter & interface inheritance --
   const llmRef = model.id.replace(/^[^/]+\//, '');
   let initialTemperature: number | undefined;
+  let pubDate: string | undefined;
 
   const _mergeLookup = (lookup: OrtVendorLookupResult | undefined) => {
+    if (lookup?.pubDate !== undefined)
+      pubDate = lookup.pubDate;
     if (lookup?.interfaces)
       for (const iface of lookup.interfaces)
         if (!interfaces.includes(iface))
@@ -246,7 +249,10 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek models get default reasoning effort if not inherited
       if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndMiscEffort')) {
         // console.log('[DEV] openRouterModelToModelDescription: unexpected xAI/Grok/DeepSeek reasoning model:', model.id);
-        parameterSpecs.push({ paramId: 'llmVndMiscEffort' }); // binary thinking for these vendors
+        // Binary thinking only: OpenRouter's unified reasoning API currently rejects 'max' (see openai.chatCompletions.ts).
+        // We pin enumValues here so the shared llmVndMiscEffort registry (which also includes 'max' for native DeepSeek V4)
+        // does not surface 'max' in the UI for OR-routed models that can't honor it.
+        parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
       }
       break;
 
@@ -267,6 +273,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
     idPrefix: model.id,
     // latest: ...
     label,
+    ...(pubDate !== undefined && { pubDate }),
     description: model.description?.length > 280 ? model.description.slice(0, 277) + '...' : model.description,
     contextWindow,
     maxCompletionTokens,

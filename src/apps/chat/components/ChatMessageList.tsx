@@ -15,7 +15,7 @@ import { DConversationId, excludeSystemMessages } from '~/common/stores/chat/cha
 import { ShortcutKey, useGlobalShortcuts } from '~/common/components/shortcuts/useGlobalShortcuts';
 import { clipboardInterceptCtrlCForCleanup } from '~/common/util/clipboardUtils';
 import { convertFilesToDAttachmentFragments } from '~/common/attachment-drafts/attachment.pipeline';
-import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageId, DMessageUserFlag, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, messageHasUserFlag } from '~/common/stores/chat/chat.message';
+import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, messageHasUserFlag } from '~/common/stores/chat/chat.message';
 import { createTextContentFragment, DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import { openFileForAttaching } from '~/common/components/ButtonAttachFiles';
 import { optimaOpenPreferences } from '~/common/layout/optima/useOptima';
@@ -122,6 +122,61 @@ export function ChatMessageList(props: {
       await onConversationExecuteHistory(conversationId);
     }
   }, [conversationHandler, conversationId, onConversationExecuteHistory]);
+
+  const handleMessageUpstreamResume = React.useCallback(async (generator: DMessageGenerator, messageId: DMessageId) => {
+    if (!conversationId || !conversationHandler) return;
+    if (!generator.upstreamHandle) throw new Error('No upstream handle on generator');
+
+    // For AIX generators the DLLMId is at .aix.mId
+    const llmId = generator.mgt === 'aix' ? generator.aix.mId : undefined;
+    if (!llmId) throw new Error('No model id on generator');
+
+    const { aixCreateChatGenerateContext, aixReattachContent_DMessage_orThrow } = await import('~/modules/aix/client/aix.client');
+    const result = await aixReattachContent_DMessage_orThrow(
+      llmId,
+      generator,
+      aixCreateChatGenerateContext('conversation', conversationId),
+      { abortSignal: 'NON_ABORTABLE', throttleParallelThreads: 0 },
+      async (update, isDone) => {
+        conversationHandler.messageEdit(messageId, {
+          fragments: update.fragments,
+          generator: update.generator,
+          pendingIncomplete: update.pendingIncomplete,
+        }, isDone, isDone); // remove the pending state and updte only when done
+      },
+    );
+
+    // Manual reattach is one-shot: on failure (e.g. upstream 404 from expired or already-consumed handle),
+    // drop the upstreamHandle so the Resume button doesn't keep luring the user into the same error.
+    // On 'aborted' we keep it so the user can try again later; on 'completed' the reassembler already cleared it.
+    // 2026-04-22: disabled; it was removing the connect button on a connection error (e.g. wifi drop)
+    // if (result.outcome === 'failed' && result.generator?.upstreamHandle)
+    //   conversationHandler.messageEdit(messageId, {
+    //     generator: { ...result.generator, upstreamHandle: undefined },
+    //   }, false /* messageComplete */, true /* touch */);
+  }, [conversationHandler, conversationId]);
+
+  const handleMessageUpstreamDelete = React.useCallback(async (generator: DMessageGenerator, messageId: DMessageId) => {
+    if (!conversationId || !conversationHandler) return;
+    if (!generator.upstreamHandle) throw new Error('No upstream handle on generator');
+
+    // For AIX generators the DLLMId is at .aix.mId
+    const llmId = generator.mgt === 'aix' ? generator.aix.mId : undefined;
+    if (!llmId) throw new Error('No model id on generator');
+
+    const { aixDeleteUpstreamContent_orThrow } = await import('~/modules/aix/client/aix.client');
+    const result = await aixDeleteUpstreamContent_orThrow(llmId, generator);
+
+    // On success (or 404 already-gone), clear the handle locally so the buttons disappear
+    if (result.ok) {
+      conversationHandler.messageEdit(messageId, {
+        generator: { ...generator, upstreamHandle: undefined },
+      }, false /* messageComplete */, true /* touch */);
+      return;
+    }
+    // On failure: surface to the button's error UI
+    throw new Error(result.message || `Delete failed${result.httpStatus ? ` (HTTP ${result.httpStatus})` : ''}`);
+  }, [conversationHandler, conversationId]);
 
 
   // message menu methods proxy
@@ -371,6 +426,8 @@ export function ChatMessageList(props: {
               onMessageBeam={handleMessageBeam}
               onMessageBranch={handleMessageBranch}
               onMessageContinue={handleMessageContinue}
+              onMessageUpstreamResume={handleMessageUpstreamResume}
+              onMessageUpstreamDelete={handleMessageUpstreamDelete}
               onMessageDelete={handleMessageDelete}
               onMessageFragmentAppend={handleMessageAppendFragment}
               onMessageFragmentDelete={handleMessageDeleteFragment}

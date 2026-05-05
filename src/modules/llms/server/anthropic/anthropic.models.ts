@@ -6,7 +6,7 @@ import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../llm.server.types';
 import { createVariantInjector, ModelVariantMap } from '../llm.server.variants';
-import { llmDevCheckModels_DEV } from '../models.mappings';
+import { formatPubDate, llmDevCheckModels_DEV } from '../models.mappings';
 
 
 // Note: these model definitions are shared across Anthropic API, OpenRouter, and AWS Bedrock.
@@ -77,7 +77,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] },
       ...ANT_TOOLS_DYNAMIC,
     ],
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1504 }, // claude-opus-4-7-thinking
   },
 
   // Claude 4.6 models with thinking variants
@@ -92,7 +92,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntInfSpeed' },
       ...ANT_TOOLS_DYNAMIC,
     ],
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1502 }, // claude-opus-4-6-thinking
   },
 
   'claude-sonnet-4-6': {
@@ -105,7 +105,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'max'] },
       ...ANT_TOOLS_DYNAMIC,
     ],
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1463 + 1 }, // 1 (thinking) + claude-sonnet-4-6
   },
 
   // Claude 4.5 models with thinking variants
@@ -119,7 +119,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high'] },
       ...ANT_TOOLS,
     ],
-    benchmark: { cbaElo: 1468 }, // claude-opus-4-5-20251101-thinking-32k
+    benchmark: { cbaElo: 1473 }, // claude-opus-4-5-20251101-thinking-32k
     maxCompletionTokens: 32000,
   },
 
@@ -134,7 +134,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAnt1MContext' },
       ...ANT_TOOLS,
     ],
-    benchmark: { cbaElo: 1450 }, // claude-sonnet-4-5-20250929-thinking-32k
+    benchmark: { cbaElo: 1452 }, // claude-sonnet-4-5-20250929-thinking-32k
   },
 
   'claude-haiku-4-5-20251001': {
@@ -147,6 +147,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntThinkingBudget' },
       ...ANT_TOOLS,
     ],
+    benchmark: { cbaElo: 1408 + 1 }, // 1 (thinking) + claude-haiku-4-5-20251001
   },
 
   // Claude 4.1 models with thinking variants
@@ -160,7 +161,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntThinkingBudget' },
       ...ANT_TOOLS,
     ],
-    benchmark: { cbaElo: 1448 }, // claude-opus-4-1-20250805-thinking-16k
+    benchmark: { cbaElo: 1449 }, // claude-opus-4-1-20250805-thinking-16k
   },
 
   // Claude 4 models with thinking variants
@@ -189,7 +190,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAnt1MContext' },
       ...ANT_TOOLS,
     ],
-    benchmark: { cbaElo: 1400 }, // claude-sonnet-4-20250514-thinking-32k
+    benchmark: { cbaElo: 1399 }, // claude-sonnet-4-20250514-thinking-32k
   },
 
   // Changes to the thinking variant (same model ID) for the Claude Sonnet 3.7 model
@@ -203,7 +204,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       { paramId: 'llmVndAntThinkingBudget' },
       ...ANT_TOOLS,
     ],
-    benchmark: { cbaElo: 1389 }, // claude-3-7-sonnet-20250219-thinking-32k
+    benchmark: { cbaElo: 1387 }, // claude-3-7-sonnet-20250219-thinking-32k
   },
 
 } as const;
@@ -213,12 +214,13 @@ export function llmsAntInjectVariants(acc: ModelDescriptionSchema[], model: Mode
 }
 
 
-export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: boolean })[] = [
+export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: boolean, pubDate: string /* make it required for the defs */ })[] = [
 
   // Claude 4.7 models
   {
     id: 'claude-opus-4-7', // Active - 2026-04-16
     label: 'Claude Opus 4.7',
+    pubDate: '20260416',
     description: 'Most capable generally available model for complex reasoning and agentic coding',
     contextWindow: 1_000_000, // 1M GA at standard pricing (no opt-in required)
     maxCompletionTokens: 128000,
@@ -231,13 +233,14 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
     // Breaking changes vs 4.6: extended thinking budgets removed (adaptive-only), temperature/top_p/top_k rejected,
     // thinking content omitted by default, new tokenizer (~1x to 1.35x tokens for same text), no prefill.
     chatPrice: { input: 5, output: 25, cache: { cType: 'ant-bp', read: 0.50, write: 6.25, duration: 300 } },
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1497 }, // claude-opus-4-7
   },
 
   // Claude 4.6 models
   {
     id: 'claude-opus-4-6', // Active
     label: 'Claude Opus 4.6',
+    pubDate: '20260205',
     description: 'Previous most intelligent model for complex agents and coding, with adaptive thinking',
     contextWindow: 1_000_000, // 1M GA at standard pricing since 2026-03-13 (no opt-in required)
     maxCompletionTokens: 128000,
@@ -249,11 +252,12 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
     ],
     // Opus 4.6: flat $5/$25 pricing (1M context GA at standard pricing since 2026-03-13, no opt-in required)
     chatPrice: { input: 5, output: 25, cache: { cType: 'ant-bp', read: 0.50, write: 6.25, duration: 300 } },
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1496 }, // claude-opus-4-6
   },
   {
     id: 'claude-sonnet-4-6', // Active
     label: 'Claude Sonnet 4.6',
+    pubDate: '20260217',
     description: 'Best combination of speed and intelligence for everyday tasks',
     contextWindow: 1_000_000, // 1M GA at standard pricing since 2026-03-13 (no opt-in required)
     maxCompletionTokens: 128000, // docs say 64000, API reports 128000
@@ -264,13 +268,14 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
     ],
     // Sonnet 4.6: flat $3/$15 pricing (1M context GA at standard pricing since 2026-03-13, no opt-in required)
     chatPrice: { input: 3, output: 15, cache: { cType: 'ant-bp', read: 0.30, write: 3.75, duration: 300 } },
-    // benchmark: { cbaElo: ... }, // TBD
+    benchmark: { cbaElo: 1463 }, // claude-sonnet-4-6
   },
 
   // Claude 4.5 models
   {
     id: 'claude-opus-4-5-20251101', // Active
     label: 'Claude Opus 4.5',
+    pubDate: '20251124',
     description: 'Previous most intelligent model with advanced reasoning for complex agentic workflows',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
@@ -280,11 +285,12 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
       ...ANT_TOOLS,
     ],
     chatPrice: { input: 5, output: 25, cache: { cType: 'ant-bp', read: 0.50, write: 6.25, duration: 300 } },
-    benchmark: { cbaElo: 1466 }, // claude-opus-4-5-20251101
+    benchmark: { cbaElo: 1469 }, // claude-opus-4-5-20251101
   },
   {
     id: 'claude-sonnet-4-5-20250929', // Active
     label: 'Claude Sonnet 4.5',
+    pubDate: '20250929',
     description: 'Previous best combination of speed and intelligence for complex agents and coding',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
@@ -305,31 +311,33 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
         duration: 300,
       },
     },
-    benchmark: { cbaElo: 1450 }, // claude-sonnet-4-5-20250929
+    benchmark: { cbaElo: 1452 }, // claude-sonnet-4-5-20250929
   },
   {
     id: 'claude-haiku-4-5-20251001', // Active
     label: 'Claude Haiku 4.5',
+    pubDate: '20251015',
     description: 'Fastest model with exceptional speed and performance',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
     interfaces: IF_4,
     parameterSpecs: ANT_TOOLS,
     chatPrice: { input: 1, output: 5, cache: { cType: 'ant-bp', read: 0.10, write: 1.25, duration: 300 } },
-    benchmark: { cbaElo: 1403 }, // claude-haiku-4-5-20251001
+    benchmark: { cbaElo: 1408 }, // claude-haiku-4-5-20251001
   },
 
   // Claude 4.1 models
   {
     id: 'claude-opus-4-1-20250805', // Active
     label: 'Claude Opus 4.1',
+    pubDate: '20250805',
     description: 'Exceptional model for specialized complex tasks requiring advanced reasoning',
     contextWindow: 200000,
     maxCompletionTokens: 32000,
     interfaces: IF_4,
     parameterSpecs: ANT_TOOLS,
     chatPrice: { input: 15, output: 75, cache: { cType: 'ant-bp', read: 1.50, write: 18.75, duration: 300 } },
-    benchmark: { cbaElo: 1445 }, // claude-opus-4-1-20250805
+    benchmark: { cbaElo: 1447 }, // claude-opus-4-1-20250805
   },
 
   // Claude 4 models
@@ -337,19 +345,21 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
     hidden: true, // Deprecated: April 14, 2026 | Retiring: June 15, 2026 | Replacement: claude-opus-4-7
     id: 'claude-opus-4-20250514', // Deprecated
     label: 'Claude Opus 4 [Deprecated]',
+    pubDate: '20250522',
     description: 'Previous flagship model. Deprecated April 14, 2026, retiring June 15, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 32000,
     interfaces: IF_4,
     parameterSpecs: ANT_TOOLS,
     chatPrice: { input: 15, output: 75, cache: { cType: 'ant-bp', read: 1.50, write: 18.75, duration: 300 } },
-    benchmark: { cbaElo: 1414 }, // claude-opus-4-20250514
+    benchmark: { cbaElo: 1412 }, // claude-opus-4-20250514
     isLegacy: true,
   },
   {
     hidden: true, // Deprecated: April 14, 2026 | Retiring: June 15, 2026 | Replacement: claude-sonnet-4-6
     id: 'claude-sonnet-4-20250514', // Deprecated
     label: 'Claude Sonnet 4 [Deprecated]',
+    pubDate: '20250522',
     description: 'High-performance model. Deprecated April 14, 2026, retiring June 15, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
@@ -370,7 +380,7 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
         duration: 300,
       },
     },
-    benchmark: { cbaElo: 1390 }, // claude-sonnet-4-20250514
+    benchmark: { cbaElo: 1389 }, // claude-sonnet-4-20250514
     isLegacy: true,
   },
 
@@ -378,13 +388,14 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
   {
     id: 'claude-3-7-sonnet-20250219', // Retired | Deprecated: October 28, 2025 | Retired: February 19, 2026 | Replacement: claude-opus-4-6
     label: 'Claude Sonnet 3.7 [Retired]',
+    pubDate: '20250224',
     description: 'High-performance model with early extended thinking. Retired February 19, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
     interfaces: IF_4,
     parameterSpecs: ANT_TOOLS,
     chatPrice: { input: 3, output: 15, cache: { cType: 'ant-bp', read: 0.30, write: 3.75, duration: 300 } },
-    benchmark: { cbaElo: 1372 }, // claude-3-7-sonnet-20250219
+    benchmark: { cbaElo: 1371 }, // claude-3-7-sonnet-20250219
     hidden: true, // retired
     isLegacy: true,
   },
@@ -395,13 +406,14 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
   {
     id: 'claude-3-5-haiku-20241022', // Retired | Deprecated: December 19, 2025 | Retired: February 19, 2026
     label: 'Claude Haiku 3.5 [Retired]',
+    pubDate: '20241104',
     description: 'Intelligence at blazing speeds. Retired February 19, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 8192,
     interfaces: IF_4,
     parameterSpecs: ANT_TOOLS,
     chatPrice: { input: 0.80, output: 4.00, cache: { cType: 'ant-bp', read: 0.08, write: 1.00, duration: 300 } },
-    benchmark: { cbaElo: 1324 }, // claude-3-5-haiku-20241022
+    benchmark: { cbaElo: 1323 }, // claude-3-5-haiku-20241022
     hidden: true, // retired
     isLegacy: true,
   },
@@ -412,12 +424,13 @@ export const hardcodedAnthropicModels: (ModelDescriptionSchema & { isLegacy?: bo
     hidden: true, // deprecated
     id: 'claude-3-haiku-20240307', // Deprecated | Deprecated: February 19, 2026 | Retiring: April 20, 2026 | Replacement: claude-haiku-4-5-20251001
     label: 'Claude Haiku 3 [Deprecated]',
+    pubDate: '20240313',
     description: 'Fast and compact model for near-instant responsiveness. Deprecated February 19, 2026, retiring April 20, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 4096,
     interfaces: IF_4,
     chatPrice: { input: 0.25, output: 1.25, cache: { cType: 'ant-bp', read: 0.03, write: 0.30, duration: 300 } },
-    benchmark: { cbaElo: 1262 }, // claude-3-haiku-20240307
+    benchmark: { cbaElo: 1260 }, // claude-3-haiku-20240307
     isLegacy: true,
   },
 
@@ -594,11 +607,13 @@ export function llmsAntCreatePlaceholderModel(model: AnthropicWire_API_Models_Li
   parameterSpecs.push(...ANT_TOOLS);
 
   const maxInputTokens = model.max_input_tokens;
+  const createdAt = model.created_at ? new Date(model.created_at) : undefined;
   return {
     id: model.id,
     idVariant: '::placeholder',
     label: model.display_name,
-    created: Math.round(new Date(model.created_at).getTime() / 1000),
+    created: createdAt ? Math.round(createdAt.getTime() / 1000) : undefined,
+    pubDate: formatPubDate(createdAt), // 0-day: use Anthropic API's created_at, or today if unset
     description: 'Newest model, description not available yet.',
     contextWindow: maxInputTokens ?? 200_000, // report API value as-is (no cap for unknown models)
     maxCompletionTokens: model.max_tokens || 32768,
@@ -754,5 +769,5 @@ export function llmOrtAntLookup_ThinkingVariants(orModelName: string): OrtVendor
     .map((spec) => ({ ...spec }));
 
   // initialTemperature: not set - Anthropic models use the global fallback (0.5)
-  return { interfaces, parameterSpecs };
+  return { pubDate: model.pubDate, interfaces, parameterSpecs };
 }

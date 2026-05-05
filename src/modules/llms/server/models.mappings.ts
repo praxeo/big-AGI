@@ -111,6 +111,28 @@ export function llmDevValidateParameterSpecs_DEV(model: ModelDescriptionSchema):
 }
 
 
+// -- pubDate helpers --
+
+/**
+ * Format an epoch / Date / nothing as 'YYYYMMDD'.
+ * Accepts either a Unix epoch (seconds), a Date, or undefined (-> today).
+ */
+export function formatPubDate(input?: number | Date): string {
+  let date: Date;
+  if (input instanceof Date && Number.isFinite(input.getTime()))
+    date = input;
+  else if (typeof input === 'number' && Number.isFinite(input) && input > 0) {
+    const candidate = new Date(input * 1000);
+    date = Number.isFinite(candidate.getTime()) ? candidate : new Date();
+  } else
+    date = new Date();
+  const y = date.getUTCFullYear();
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+  const d = String(date.getUTCDate()).padStart(2, '0');
+  return `${y}${m}${d}`;
+}
+
+
 // -- Manual model mappings: types and helper --
 
 export type ManualMappings = (KnownModel | KnownLink)[];
@@ -224,6 +246,7 @@ export function fromManualMapping(mappings: (KnownModel | KnownLink)[], upstream
   };
 
   // apply optional fields
+  if (m.pubDate) md.pubDate = m.pubDate;
   if (m.parameterSpecs) md.parameterSpecs = m.parameterSpecs;
   if (m.maxCompletionTokens) md.maxCompletionTokens = m.maxCompletionTokens;
   if (m.benchmark) md.benchmark = m.benchmark;

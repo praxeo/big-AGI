@@ -23,6 +23,7 @@ const _knownGroqModels: ManualMappings = [
     isPreview: true,
     idPrefix: 'meta-llama/llama-4-scout-17b-16e-instruct',
     label: 'Llama 4 Scout · 17B × 16E (Preview)',
+    pubDate: '20250405',
     description: 'Llama 4 Scout 17B MoE with 16 experts (109B total params), native multimodal with vision support. 131K context, 8K max output. ~750 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 8192,
@@ -33,6 +34,7 @@ const _knownGroqModels: ManualMappings = [
     isPreview: true,
     idPrefix: 'qwen/qwen3-32b',
     label: 'Qwen 3 · 32B (Preview)',
+    pubDate: '20250428',
     description: 'Qwen3 32B by Alibaba Cloud. Supports thinking/non-thinking modes, 100+ languages. 131K context, 40K max output. ~400 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 40960,
@@ -43,6 +45,7 @@ const _knownGroqModels: ManualMappings = [
     isPreview: true,
     idPrefix: 'moonshotai/kimi-k2-instruct-0905',
     label: 'Kimi K2 Instruct 0905 (Preview)',
+    pubDate: '20250905',
     description: 'Kimi K2 1T MoE model (32B active, 384 experts). Advanced agentic coding. 262K context, 16K max output. ~200 t/s on Groq.',
     contextWindow: 262144,
     maxCompletionTokens: 16384,
@@ -53,6 +56,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'moonshotai/kimi-k2-instruct',
     label: 'Kimi K2 Instruct (Deprecated)',
+    pubDate: '20250711',
     symLink: 'moonshotai/kimi-k2-instruct-0905',
     contextWindow: 131072, // API returns 131K (vs 262K for the 0905 version)
     maxCompletionTokens: 16384,
@@ -69,6 +73,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'groq/compound',
     label: 'Compound (Agentic System)',
+    pubDate: '20250904',
     description: 'Groq agentic AI with web search, code execution, browser automation. Uses GPT-OSS 120B, Llama 4 Scout, Llama 3.3 70B. Pricing based on underlying model usage.',
     contextWindow: 131072,
     maxCompletionTokens: 8192,
@@ -78,6 +83,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'groq/compound-mini',
     label: 'Compound Mini (Agentic System)',
+    pubDate: '20250904',
     description: 'Lighter Groq agentic AI with web search, code execution. Pricing based on underlying model usage.',
     contextWindow: 131072,
     maxCompletionTokens: 8192,
@@ -89,6 +95,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'openai/gpt-oss-120b',
     label: 'GPT OSS 120B',
+    pubDate: '20250805',
     description: 'OpenAI flagship open-weight MoE (120B total, 5.1B active). Reasoning, browser search, code execution. 131K context, 65K max output. ~500 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 65536,
@@ -99,6 +106,7 @@ const _knownGroqModels: ManualMappings = [
     isPreview: true,
     idPrefix: 'openai/gpt-oss-safeguard-20b',
     label: 'GPT OSS Safeguard 20B (Preview)',
+    pubDate: '20251029',
     description: 'OpenAI safety classification model (20B MoE). Purpose-built for content moderation with Harmony response format. 131K context, 65K max output. ~1000 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 65536,
@@ -108,6 +116,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'openai/gpt-oss-20b',
     label: 'GPT OSS 20B',
+    pubDate: '20250805',
     description: 'OpenAI efficient open-weight MoE (20B total, 3.6B active). Tool use, browser search, code execution. 131K context, 65K max output. ~1000 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 65536,
@@ -120,6 +129,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'llama-3.3-70b-versatile',
     label: 'Llama 3.3 · 70B Versatile',
+    pubDate: '20241206',
     description: 'Meta Llama 3.3 (70B params) with GQA. Strong reasoning, coding, multilingual. 131K context, 32K max output. ~280 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 32768,
@@ -129,6 +139,7 @@ const _knownGroqModels: ManualMappings = [
   {
     idPrefix: 'llama-3.1-8b-instant',
     label: 'Llama 3.1 · 8B Instant',
+    pubDate: '20240723',
     description: 'Meta Llama 3.1 (8B params). Fast, cost-effective for high-volume tasks. 131K context and max output. ~560 t/s on Groq.',
     contextWindow: 131072,
     maxCompletionTokens: 131072,

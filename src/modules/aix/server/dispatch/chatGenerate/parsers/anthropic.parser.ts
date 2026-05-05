@@ -404,7 +404,7 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
         // -> Token Stop Reason
         const tokenStopReason = _fromAnthropicStopReason(delta.stop_reason, 'message_delta');
         if (tokenStopReason !== null)
-          pt.setTokenStopReason(tokenStopReason);
+          pt.setTokenStopReason(tokenStopReason, _formatAnthropicStopError(delta.stop_details));
 
         // NOTE: we have more fields we're not parsing yet - https://platform.claude.com/docs/en/api/typescript/messages#message_delta_usage
         if (usage?.output_tokens && messageStartTime) {
@@ -511,6 +511,7 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
       content,
       container,
       stop_reason,
+      stop_details,
       usage,
     } = AnthropicWire_API_Message_Create.Response_schema.parse(JSON.parse(fullData));
 
@@ -653,7 +654,7 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
     // -> Token Stop Reason (pause_turn already thrown above)
     const tokenStopReason = _fromAnthropicStopReason(stop_reason, 'parser_NS');
     if (tokenStopReason !== null)
-      pt.setTokenStopReason(tokenStopReason);
+      pt.setTokenStopReason(tokenStopReason, _formatAnthropicStopError(stop_details));
   };
 }
 
@@ -679,6 +680,19 @@ function _emitContainerState(pt: IParticleTransmitter, container: { id: string; 
     vendor: 'anthropic',
     state: { container: { id: container.id, expiresAt: container.expires_at } },
   });
+}
+
+/** Compose a human-readable error string from Anthropic's stop_details. Returns undefined when nothing useful to surface. */
+function _formatAnthropicStopError(stopDetails: { type: string; category?: string | null; explanation?: string | null } | null | undefined): string | undefined {
+  if (!stopDetails) return undefined;
+  if (stopDetails.type !== 'refusal') {
+    aixResilientUnknownValue('Anthropic', 'stopDetailsType', stopDetails.type);
+    return undefined;
+  }
+  const parts: string[] = [];
+  if (stopDetails.category) parts.push(`[${stopDetails.category}]`);
+  if (stopDetails.explanation) parts.push(stopDetails.explanation);
+  return parts.length ? `Refusal: ${parts.join(' ')}` : undefined;
 }
 
 

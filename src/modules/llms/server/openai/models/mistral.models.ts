@@ -19,80 +19,81 @@ const DEV_DEBUG_MISTRAL_MODELS = Release.IsNodeDevBuild; // not in staging to re
 
 const _knownMistralModelDetails: Record<string, {
   label?: string; // override the API-provided name
+  pubDate?: string; // YYYYMMDD - earliest public availability (announcement / La Plateforme / HF upload)
   chatPrice?: { input: number; output: number };
   benchmark?: { cbaElo: number };
   hidden?: boolean;
 }> = {
 
   // Premier models - Mistral 3 (Dec 2025)
-  'mistral-large-2512': { chatPrice: { input: 0.5, output: 1.5 }, benchmark: { cbaElo: 1414 } }, // Mistral Large 3 - MoE 41B active / 675B total
-  'mistral-large-2411': { chatPrice: { input: 2, output: 6 }, benchmark: { cbaElo: 1305 }, hidden: true }, // older version
-  'mistral-large-latest': { chatPrice: { input: 0.5, output: 1.5 }, hidden: true }, // → 2512
+  'mistral-large-2512': { pubDate: '20251202', chatPrice: { input: 0.5, output: 1.5 }, benchmark: { cbaElo: 1415 } }, // Mistral Large 3 - MoE 41B active / 675B total
+  'mistral-large-2411': { pubDate: '20241118', chatPrice: { input: 2, output: 6 }, benchmark: { cbaElo: 1305 }, hidden: true }, // older version
+  'mistral-large-latest': { pubDate: '20251202', chatPrice: { input: 0.5, output: 1.5 }, hidden: true }, // → 2512
 
-  'mistral-medium-2508': { chatPrice: { input: 0.4, output: 2 }, benchmark: { cbaElo: 1412 } }, // Mistral Medium 3
-  'mistral-medium-2505': { chatPrice: { input: 0.4, output: 2 }, benchmark: { cbaElo: 1384 }, hidden: true }, // older version
-  'mistral-medium-latest': { chatPrice: { input: 0.4, output: 2 }, hidden: true }, // → 2508
-  'mistral-medium': { chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink
+  'mistral-medium-2508': { pubDate: '20250812', chatPrice: { input: 0.4, output: 2 }, benchmark: { cbaElo: 1410 } }, // Mistral Medium 3.1
+  'mistral-medium-2505': { pubDate: '20250507', chatPrice: { input: 0.4, output: 2 }, benchmark: { cbaElo: 1387 }, hidden: true }, // Mistral Medium 3
+  'mistral-medium-latest': { pubDate: '20250812', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // → 2508
+  'mistral-medium': { pubDate: '20231211', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink (legacy: original Mistral Medium prototype on La Plateforme beta)
 
-  'magistral-medium-2509': { chatPrice: { input: 2, output: 5 }, benchmark: { cbaElo: 1305 } }, // reasoning
-  'magistral-medium-latest': { chatPrice: { input: 2, output: 5 }, hidden: true }, // symlink
+  'magistral-medium-2509': { pubDate: '20250917', chatPrice: { input: 2, output: 5 }, benchmark: { cbaElo: 1304 } }, // reasoning (leaderboard: magistral-medium-2506 = 1304)
+  'magistral-medium-latest': { pubDate: '20250917', chatPrice: { input: 2, output: 5 }, hidden: true }, // symlink
 
-  'devstral-2512': { label: 'Devstral 2 (2512)', chatPrice: { input: 0.4, output: 2 } }, // Devstral 2 - 123B coding agents (API returns "Mistral Vibe Cli")
-  'devstral-latest': { label: 'Devstral 2 (latest)', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink
-  'devstral-medium-latest': { label: 'Devstral 2 (latest)', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink
-  'mistral-vibe-cli-latest': { label: 'Devstral 2 (latest)', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // alternate ID for devstral-latest
-  'devstral-medium-2507': { chatPrice: { input: 0.4, output: 2 }, hidden: true }, // older version
+  'devstral-2512': { label: 'Devstral 2 (2512)', pubDate: '20251209', chatPrice: { input: 0.4, output: 2 } }, // Devstral 2 - 123B coding agents (API returns "Mistral Vibe Cli")
+  'devstral-latest': { label: 'Devstral 2 (latest)', pubDate: '20251209', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink
+  'devstral-medium-latest': { label: 'Devstral 2 (latest)', pubDate: '20251209', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // symlink
+  'mistral-vibe-cli-latest': { label: 'Devstral 2 (latest)', pubDate: '20251209', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // alternate ID for devstral-latest
+  'devstral-medium-2507': { pubDate: '20250710', chatPrice: { input: 0.4, output: 2 }, hidden: true }, // older version
 
-  'mistral-large-pixtral-2411': { chatPrice: { input: 2, output: 6 } }, // Pixtral Large (alternate ID)
-  'pixtral-large-2411': { chatPrice: { input: 2, output: 6 }, hidden: true }, // symlink
-  'pixtral-large-latest': { chatPrice: { input: 2, output: 6 }, hidden: true }, // symlink
+  'mistral-large-pixtral-2411': { pubDate: '20241118', chatPrice: { input: 2, output: 6 } }, // Pixtral Large (alternate ID)
+  'pixtral-large-2411': { pubDate: '20241118', chatPrice: { input: 2, output: 6 }, hidden: true }, // symlink
+  'pixtral-large-latest': { pubDate: '20241118', chatPrice: { input: 2, output: 6 }, hidden: true }, // symlink
 
-  'codestral-2508': { chatPrice: { input: 0.3, output: 0.9 } }, // code generation
-  'codestral-latest': { chatPrice: { input: 0.3, output: 0.9 }, hidden: true }, // symlink
+  'codestral-2508': { pubDate: '20250730', chatPrice: { input: 0.3, output: 0.9 } }, // code generation (Codestral 25.08)
+  'codestral-latest': { pubDate: '20250730', chatPrice: { input: 0.3, output: 0.9 }, hidden: true }, // symlink
 
-  'voxtral-small-2507': { chatPrice: { input: 0.1, output: 0.3 } }, // voice (text tokens)
-  'voxtral-small-latest': { chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // symlink
+  'voxtral-small-2507': { pubDate: '20250715', chatPrice: { input: 0.1, output: 0.3 } }, // voice (text tokens)
+  'voxtral-small-latest': { pubDate: '20250715', chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // symlink
 
-  'voxtral-mini-2507': { chatPrice: { input: 0.04, output: 0.04 } }, // voice (text tokens)
-  'voxtral-mini-latest': { chatPrice: { input: 0.04, output: 0.04 }, hidden: true }, // symlink
+  'voxtral-mini-2507': { pubDate: '20250715', chatPrice: { input: 0.04, output: 0.04 } }, // voice (text tokens)
+  'voxtral-mini-latest': { pubDate: '20250715', chatPrice: { input: 0.04, output: 0.04 }, hidden: true }, // symlink
 
   // Ministral 3 family (Dec 2025) - multimodal, multilingual, Apache 2.0
-  'ministral-14b-2512': { chatPrice: { input: 0.2, output: 0.2 } }, // Ministral 3 14B
-  'ministral-14b-latest': { chatPrice: { input: 0.2, output: 0.2 }, hidden: true }, // symlink
+  'ministral-14b-2512': { pubDate: '20251202', chatPrice: { input: 0.2, output: 0.2 } }, // Ministral 3 14B
+  'ministral-14b-latest': { pubDate: '20251202', chatPrice: { input: 0.2, output: 0.2 }, hidden: true }, // symlink
 
-  'ministral-8b-2512': { chatPrice: { input: 0.15, output: 0.15 } }, // Ministral 3 8B
-  'ministral-8b-2410': { chatPrice: { input: 0.1, output: 0.1 }, benchmark: { cbaElo: 1237 }, hidden: true }, // older version
-  'ministral-8b-latest': { chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
+  'ministral-8b-2512': { pubDate: '20251202', chatPrice: { input: 0.15, output: 0.15 } }, // Ministral 3 8B
+  'ministral-8b-2410': { pubDate: '20241016', chatPrice: { input: 0.1, output: 0.1 }, benchmark: { cbaElo: 1237 }, hidden: true }, // older version
+  'ministral-8b-latest': { pubDate: '20251202', chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
 
-  'ministral-3b-2512': { chatPrice: { input: 0.1, output: 0.1 } }, // Ministral 3 3B
-  'ministral-3b-2410': { chatPrice: { input: 0.04, output: 0.04 }, hidden: true }, // older version
-  'ministral-3b-latest': { chatPrice: { input: 0.1, output: 0.1 }, hidden: true }, // symlink
+  'ministral-3b-2512': { pubDate: '20251202', chatPrice: { input: 0.1, output: 0.1 } }, // Ministral 3 3B
+  'ministral-3b-2410': { pubDate: '20241016', chatPrice: { input: 0.04, output: 0.04 }, hidden: true }, // older version
+  'ministral-3b-latest': { pubDate: '20251202', chatPrice: { input: 0.1, output: 0.1 }, hidden: true }, // symlink
 
   // Open models
-  'mistral-small-2603': { chatPrice: { input: 0.15, output: 0.6 } }, // Mistral Small 4 - 119B hybrid (instruct+reasoning+coding), 256k ctx
-  'mistral-small-2506': { chatPrice: { input: 0.1, output: 0.3 }, benchmark: { cbaElo: 1356 }, hidden: true }, // Mistral Small 3.2
-  'mistral-small-latest': { chatPrice: { input: 0.15, output: 0.6 }, hidden: true }, // → 2603
+  'mistral-small-2603': { pubDate: '20260316', chatPrice: { input: 0.15, output: 0.6 } }, // Mistral Small 4 - 119B hybrid (instruct+reasoning+coding), 256k ctx
+  'mistral-small-2506': { pubDate: '20250620', chatPrice: { input: 0.1, output: 0.3 }, benchmark: { cbaElo: 1357 }, hidden: true }, // Mistral Small 3.2
+  'mistral-small-latest': { pubDate: '20260316', chatPrice: { input: 0.15, output: 0.6 }, hidden: true }, // → 2603
 
-  'labs-mistral-small-creative': { label: 'Mistral Small Creative', chatPrice: { input: 0.1, output: 0.3 } }, // creative writing, roleplay (Labs)
+  'labs-mistral-small-creative': { label: 'Mistral Small Creative', pubDate: '20251211', chatPrice: { input: 0.1, output: 0.3 } }, // creative writing, roleplay (Labs)
 
-  'labs-leanstral-2603': { label: 'Leanstral (2603)', chatPrice: { input: 0, output: 0 } }, // Lean 4 formal proof engineering (Labs, free for limited period)
+  'labs-leanstral-2603': { label: 'Leanstral (2603)', pubDate: '20260316', chatPrice: { input: 0, output: 0 } }, // Lean 4 formal proof engineering (Labs, free for limited period)
 
-  'magistral-small-2509': { chatPrice: { input: 0.5, output: 1.5 } }, // reasoning
-  'magistral-small-latest': { chatPrice: { input: 0.5, output: 1.5 }, hidden: true }, // symlink
+  'magistral-small-2509': { pubDate: '20250917', chatPrice: { input: 0.5, output: 1.5 } }, // reasoning
+  'magistral-small-latest': { pubDate: '20250917', chatPrice: { input: 0.5, output: 1.5 }, hidden: true }, // symlink
 
-  'labs-devstral-small-2512': { label: 'Devstral Small 2 (2512)', chatPrice: { input: 0.1, output: 0.3 } }, // Devstral Small 2 - 24B coding agents (Labs)
-  'devstral-small-2507': { chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // older version
-  'devstral-small-latest': { label: 'Devstral Small 2 (latest)', chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // symlink
+  'labs-devstral-small-2512': { label: 'Devstral Small 2 (2512)', pubDate: '20251209', chatPrice: { input: 0.1, output: 0.3 } }, // Devstral Small 2 - 24B coding agents (Labs)
+  'devstral-small-2507': { pubDate: '20250710', chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // older version (Devstral Small 1.1)
+  'devstral-small-latest': { label: 'Devstral Small 2 (latest)', pubDate: '20251209', chatPrice: { input: 0.1, output: 0.3 }, hidden: true }, // symlink
 
-  'pixtral-12b-2409': { chatPrice: { input: 0.15, output: 0.15 } }, // vision
-  'pixtral-12b-latest': { chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
-  'pixtral-12b': { chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
+  'pixtral-12b-2409': { pubDate: '20240911', chatPrice: { input: 0.15, output: 0.15 } }, // vision
+  'pixtral-12b-latest': { pubDate: '20240911', chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
+  'pixtral-12b': { pubDate: '20240911', chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
 
-  'open-mistral-nemo-2407': { chatPrice: { input: 0.15, output: 0.15 } }, // NeMo
-  'open-mistral-nemo': { chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
+  'open-mistral-nemo-2407': { pubDate: '20240718', chatPrice: { input: 0.15, output: 0.15 } }, // NeMo
+  'open-mistral-nemo': { pubDate: '20240718', chatPrice: { input: 0.15, output: 0.15 }, hidden: true }, // symlink
 
   // Legacy (kept for reference, no longer in API)
-  'open-mistral-7b': { chatPrice: { input: 0.25, output: 0.25 }, hidden: true },
+  'open-mistral-7b': { pubDate: '20230927', chatPrice: { input: 0.25, output: 0.25 }, hidden: true },
 };
 
 

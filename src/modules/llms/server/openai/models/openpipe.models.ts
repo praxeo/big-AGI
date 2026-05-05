@@ -12,6 +12,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gpt-4.1-2025-04-14',
     label: '💾➜ GPT-4.1 (2025-04-14)',
+    pubDate: '20250414',
     description: 'Flagship GPT model for complex tasks. Major improvements on coding, instruction following, and long context with 1M token context window.',
     contextWindow: 1047576,
     maxCompletionTokens: 32768,
@@ -22,6 +23,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gpt-4.1-mini-2025-04-14',
     label: '💾➜ GPT-4.1 Mini (2025-04-14)',
+    pubDate: '20250414',
     description: 'Balanced for intelligence, speed, and cost. Matches or exceeds GPT-4o in intelligence while reducing latency and cost.',
     contextWindow: 1047576,
     maxCompletionTokens: 32768,
@@ -32,6 +34,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gpt-4o-mini-2024-07-18',
     label: '💾➜ GPT-4o Mini (2024-07-18)',
+    pubDate: '20240718',
     description: 'Affordable model for fast, lightweight tasks. GPT-4o mini is cheaper and more capable than GPT-3.5 Turbo.',
     contextWindow: 128000,
     maxCompletionTokens: 16384,
@@ -41,6 +44,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gpt-4o-2024-08-06',
     label: '💾➜ GPT-4o (2024-08-06)',
+    pubDate: '20240806',
     description: 'Advanced, multimodal flagship model that\'s cheaper and faster than GPT-4 Turbo.',
     contextWindow: 128000,
     maxCompletionTokens: 16384,
@@ -51,6 +55,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gpt-3.5-turbo-0125',
     label: '💾➜ GPT-3.5 Turbo (0125)',
+    pubDate: '20240125',
     description: 'The latest GPT-3.5 Turbo model with higher accuracy at responding in requested formats',
     contextWindow: 16385,
     maxCompletionTokens: 4096,
@@ -63,6 +68,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gemini-1.0-pro-001',
     label: '💾➜ Gemini 1.0 Pro',
+    pubDate: '20240215',
     description: 'Google\'s Gemini 1.0 Pro model',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],
@@ -70,6 +76,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'gemini-1.5-flash-001',
     label: '💾➜ Gemini 1.5 Flash',
+    pubDate: '20240514',
     description: 'Google\'s Gemini 1.5 Flash model - fast and efficient',
     contextWindow: 1000000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn],
@@ -79,6 +86,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Meta-Llama-3.1-8B-Instruct',
     label: '💾 Llama 3.1 · 8B Instruct',
+    pubDate: '20240723',
     description: 'Meta Llama 3.1 8B Instruct - hosted inference with per-token pricing',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -87,6 +95,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Meta-Llama-3.1-70B-Instruct',
     label: '💾 Llama 3.1 · 70B Instruct',
+    pubDate: '20240723',
     description: 'Meta Llama 3.1 70B Instruct - hosted inference with per-token pricing',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -95,6 +104,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Llama-3.1-8B',
     label: '💾 Llama 3.1 · 8B Base',
+    pubDate: '20240723',
     description: 'Meta Llama 3.1 8B base model for fine-tuning',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat],
@@ -102,6 +112,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Llama-3.1-70B',
     label: '💾 Llama 3.1 · 70B Base',
+    pubDate: '20240723',
     description: 'Meta Llama 3.1 70B base model for fine-tuning',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat],
@@ -111,6 +122,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Llama-3.2-1B-Instruct',
     label: '💾 Llama 3.2 · 1B Instruct',
+    pubDate: '20240925',
     description: 'Meta Llama 3.2 1B Instruct - lightweight model for edge and mobile deployment',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -118,6 +130,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Llama-3.2-3B-Instruct',
     label: '💾 Llama 3.2 · 3B Instruct',
+    pubDate: '20240925',
     description: 'Meta Llama 3.2 3B Instruct - efficient model for edge deployment',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -127,6 +140,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'meta-llama/Llama-3.3-70B-Instruct',
     label: '💾 Llama 3.3 · 70B Instruct',
+    pubDate: '20241206',
     description: 'Meta Llama 3.3 70B Instruct - latest 70B model with performance comparable to Llama 3.1 405B',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -136,6 +150,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2-VL-7B-Instruct',
     label: '💾 Qwen 2 · VL 7B Instruct',
+    pubDate: '20240830',
     description: 'Alibaba Qwen 2 Vision-Language 7B Instruct - multimodal model for text and image understanding',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
@@ -145,6 +160,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-1.5B-Instruct',
     label: '💾 Qwen 2.5 · 1.5B Instruct',
+    pubDate: '20240919',
     description: 'Alibaba Qwen 2.5 1.5B Instruct - efficient small model',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -152,6 +168,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-7B-Instruct',
     label: '💾 Qwen 2.5 · 7B Instruct',
+    pubDate: '20240919',
     description: 'Alibaba Qwen 2.5 7B Instruct - balanced performance and efficiency',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -159,6 +176,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-14B-Instruct',
     label: '💾 Qwen 2.5 · 14B Instruct',
+    pubDate: '20240919',
     description: 'Alibaba Qwen 2.5 14B Instruct - hosted inference (hourly compute unit pricing)',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -166,6 +184,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-72B-Instruct',
     label: '💾 Qwen 2.5 · 72B Instruct',
+    pubDate: '20240919',
     description: 'Alibaba Qwen 2.5 72B Instruct - flagship model with performance comparable to Llama 3.1 405B',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -173,6 +192,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-Coder-7B-Instruct',
     label: '💾 Qwen 2.5 · Coder 7B Instruct',
+    pubDate: '20241112',
     description: 'Alibaba Qwen 2.5 Coder 7B Instruct - specialized for code generation and understanding',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -180,6 +200,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen2.5-Coder-32B-Instruct',
     label: '💾 Qwen 2.5 · Coder 32B Instruct',
+    pubDate: '20241112',
     description: 'Alibaba Qwen 2.5 Coder 32B Instruct - specialized for code generation and understanding',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json],
@@ -189,6 +210,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen3-8B',
     label: '💾 Qwen 3 · 8B Base',
+    pubDate: '20250429',
     description: 'Alibaba Qwen 3 8B base model for fine-tuning - supports thinking and non-thinking modes',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat],
@@ -196,6 +218,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'Qwen/Qwen3-14B',
     label: '💾 Qwen 3 · 14B Base',
+    pubDate: '20250429',
     description: 'Alibaba Qwen 3 14B base model for fine-tuning - supports thinking and non-thinking modes',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat],
@@ -205,6 +228,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'google/gemma-3-1b-it',
     label: '💾 Gemma 3 · 1B IT',
+    pubDate: '20250312',
     description: 'Google Gemma 3 1B instruction-tuned - lightweight text-only model',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat],
@@ -212,6 +236,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'google/gemma-3-4b-it',
     label: '💾 Gemma 3 · 4B IT',
+    pubDate: '20250312',
     description: 'Google Gemma 3 4B instruction-tuned - efficient multimodal model with 128K context',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
@@ -219,6 +244,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'google/gemma-3-12b-it',
     label: '💾 Gemma 3 · 12B IT',
+    pubDate: '20250312',
     description: 'Google Gemma 3 12B instruction-tuned - balanced multimodal model with 128K context',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
@@ -226,6 +252,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'google/gemma-3-27b-it',
     label: '💾 Gemma 3 · 27B IT',
+    pubDate: '20250312',
     description: 'Google Gemma 3 27B instruction-tuned - largest Gemma 3 multimodal model with 128K context',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
@@ -235,6 +262,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'mistralai/Mistral-Nemo-Base-2407',
     label: '💾 Mistral Nemo · Base',
+    pubDate: '20240718',
     description: 'Mistral Nemo 12B base model (July 2024) for fine-tuning',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat],
@@ -242,6 +270,7 @@ const _knownOpenPipeChatModels: ModelDescriptionSchema[] = [
   {
     id: 'mistralai/Mistral-Small-24B-Base-2501',
     label: '💾 Mistral Small · 24B Base',
+    pubDate: '20250130',
     description: 'Mistral Small 24B base model (Jan 2025) - competitive with larger models while faster',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat],

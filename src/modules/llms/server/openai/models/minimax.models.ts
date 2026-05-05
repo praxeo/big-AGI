@@ -22,6 +22,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.7',
     label: 'MiniMax M2.7',
+    pubDate: '20260318',
     description: 'Latest flagship with recursive self-improvement and agentic capabilities. 200K context, 131K max output. ~60 t/s.',
     contextWindow: 204800,
     maxCompletionTokens: 131072,
@@ -31,6 +32,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.7-highspeed',
     label: 'MiniMax M2.7 (Highspeed)',
+    pubDate: '20260318',
     description: 'Faster M2.7 variant at ~100 t/s. 200K context, 131K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 131072,
@@ -42,6 +44,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.5',
     label: 'MiniMax M2.5',
+    pubDate: '20260212',
     description: 'Strong coding and reasoning, best value. 200K context, 65K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 65536,
@@ -51,6 +54,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.5-highspeed',
     label: 'MiniMax M2.5 (Highspeed)',
+    pubDate: '20260212',
     description: 'Faster M2.5 variant at ~100 t/s. 200K context, 65K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 65536,
@@ -62,6 +66,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2-her',
     label: 'MiniMax M2-her',
+    pubDate: '20260127',
     description: 'Dialogue-first model for immersive roleplay, character-driven chat, and expressive multi-turn conversations. 64K context.',
     contextWindow: 65536,
     maxCompletionTokens: 2048,
@@ -73,6 +78,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.1',
     label: 'MiniMax M2.1',
+    pubDate: '20251223',
     description: '230B params (10B active), multilingual coding. 200K context, 65K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 65536,
@@ -83,6 +89,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2.1-highspeed',
     label: 'MiniMax M2.1 (Highspeed)',
+    pubDate: '20251223',
     description: 'Faster M2.1 variant. 200K context, 65K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 65536,
@@ -95,6 +102,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M2',
     label: 'MiniMax M2',
+    pubDate: '20251027',
     description: '230B params (10B active), agentic and reasoning. 200K context, 128K max output.',
     contextWindow: 204800,
     maxCompletionTokens: 128000,
@@ -107,6 +115,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-M1',
     label: 'MiniMax M1',
+    pubDate: '20250616',
     description: '456B total / 45.9B active MoE with lightning attention. 1M context, 40K max output.',
     contextWindow: 1000000,
     maxCompletionTokens: 40000,
@@ -119,6 +128,7 @@ const _knownMiniMaxModels: ModelDescriptionSchema[] = [
   {
     id: 'MiniMax-01',
     label: 'MiniMax 01',
+    pubDate: '20250114',
     description: 'Legacy flagship. 1M context.',
     contextWindow: 1000192,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],

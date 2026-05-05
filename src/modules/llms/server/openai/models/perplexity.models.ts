@@ -39,6 +39,7 @@ const _knownPerplexityChatModels: ModelDescriptionSchema[] = [
   {
     id: 'sonar-deep-research',
     label: 'Sonar Deep Research',
+    pubDate: '20250214',
     description: 'Expert-level research model for exhaustive searches and comprehensive reports. 128k context.',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Reasoning],
@@ -59,6 +60,7 @@ const _knownPerplexityChatModels: ModelDescriptionSchema[] = [
   {
     id: 'sonar-reasoning-pro',
     label: 'Sonar Reasoning Pro',
+    pubDate: '20250218',
     description: 'Premier reasoning model (DeepSeek R1) with Chain of Thought. 128k context.',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Reasoning],
@@ -78,6 +80,7 @@ const _knownPerplexityChatModels: ModelDescriptionSchema[] = [
   {
     id: 'sonar-pro',
     label: 'Sonar Pro',
+    pubDate: '20250121',
     description: 'Advanced search model for complex queries and deep content understanding. 200k context.',
     contextWindow: 200000,
     maxCompletionTokens: 8000,
@@ -96,6 +99,7 @@ const _knownPerplexityChatModels: ModelDescriptionSchema[] = [
   {
     id: 'sonar',
     label: 'Sonar',
+    pubDate: '20250121',
     description: 'Lightweight, cost-effective search model for quick, grounded answers. 128k context.',
     contextWindow: 128000,
     interfaces: [LLM_IF_OAI_Chat],
