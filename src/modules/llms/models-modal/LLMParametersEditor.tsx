@@ -123,6 +123,11 @@ const _geminiGoogleSearchOptions = [
   { value: _UNSPECIFIED, label: 'Off', description: 'Default (disabled)' },
 ] as const;
 
+const _geminiAgentVizOptions = [
+  { value: _UNSPECIFIED, label: 'Auto', description: 'Default - agent may include charts/images' },
+  { value: 'off', label: 'Off', description: 'Text only (better when merging multiple reports)' },
+] as const;
+
 const _geminiMediaResolutionOptions = [
   { value: 'mr_high', label: 'High', description: 'Best quality' },
   { value: 'mr_medium', label: 'Medium', description: 'Balanced' },
@@ -245,6 +250,7 @@ export function LLMParametersEditor(props: {
     llmVndAntWebSearch,
     llmVndAntWebSearchMaxUses,
     llmVndGemEffort,
+    llmVndGeminiAgentViz,
     llmVndGeminiAspectRatio,
     llmVndGeminiCodeExecution,
     llmVndGeminiGoogleSearch,
@@ -684,6 +690,19 @@ export function LLMParametersEditor(props: {
           else onChangeParameter({ llmVndGeminiMediaResolution: value });
         }}
         options={_geminiMediaResolutionOptions}
+      />
+    )}
+
+    {showParam('llmVndGeminiAgentViz') && (
+      <FormSelectControl
+        title='Visualizations'
+        tooltip='Charts and images in Deep Research reports. Disable for text-only output (helpful when merging multiple reports).'
+        value={llmVndGeminiAgentViz ?? _UNSPECIFIED}
+        onChange={(value) => {
+          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndGeminiAgentViz');
+          else onChangeParameter({ llmVndGeminiAgentViz: value });
+        }}
+        options={_geminiAgentVizOptions}
       />
     )}
 

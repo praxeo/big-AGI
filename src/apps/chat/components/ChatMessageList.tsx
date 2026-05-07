@@ -6,6 +6,7 @@ import { Box, List } from '@mui/joy';
 
 import type { SystemPurposeExample } from '../../../data';
 
+import type { AixReattachMode } from '~/modules/aix/client/aix.client';
 import type { DiagramConfig } from '~/modules/aifn/digrams/DiagramsModal';
 import { speakText } from '~/modules/speex/speex.client';
 
@@ -123,7 +124,16 @@ export function ChatMessageList(props: {
     }
   }, [conversationHandler, conversationId, onConversationExecuteHistory]);
 
-  const handleMessageUpstreamResume = React.useCallback(async (generator: DMessageGenerator, messageId: DMessageId) => {
+
+  // Resume in-flight tracking - lives at this level (NOT inside BlockOpUpstreamResume) so it
+  // survives any remount of the message bubble during a long-running stream (e.g. Deep Research).
+  // - `resumeInFlight` (state) drives the loading/Detach UI on BlockOpUpstreamResume via props.
+  // - `resumeAbortersRef` (ref) holds the AbortController so Detach can abort even after a remount.
+  // Map keyed by messageId so multiple messages could in principle resume concurrently.
+  const [resumeInFlight, setResumeInFlight] = React.useState<Record<DMessageId, AixReattachMode>>({});
+  const resumeAbortersRef = React.useRef<Map<DMessageId, AbortController>>(new Map());
+
+  const handleMessageUpstreamResume = React.useCallback(async (generator: DMessageGenerator, messageId: DMessageId, mode: AixReattachMode) => {
     if (!conversationId || !conversationHandler) return;
     if (!generator.upstreamHandle) throw new Error('No upstream handle on generator');
 
@@ -131,20 +141,36 @@ export function ChatMessageList(props: {
     const llmId = generator.mgt === 'aix' ? generator.aix.mId : undefined;
     if (!llmId) throw new Error('No model id on generator');
 
+    const controller = new AbortController();
+    resumeAbortersRef.current.set(messageId, controller);
+    setResumeInFlight(prev => ({ ...prev, [messageId]: mode }));
+
     const { aixCreateChatGenerateContext, aixReattachContent_DMessage_orThrow } = await import('~/modules/aix/client/aix.client');
-    const result = await aixReattachContent_DMessage_orThrow(
-      llmId,
-      generator,
-      aixCreateChatGenerateContext('conversation', conversationId),
-      { abortSignal: 'NON_ABORTABLE', throttleParallelThreads: 0 },
-      async (update, isDone) => {
-        conversationHandler.messageEdit(messageId, {
-          fragments: update.fragments,
-          generator: update.generator,
-          pendingIncomplete: update.pendingIncomplete,
-        }, isDone, isDone); // remove the pending state and updte only when done
-      },
-    );
+    try {
+      await aixReattachContent_DMessage_orThrow(
+        llmId,
+        generator,
+        aixCreateChatGenerateContext('conversation', conversationId),
+        mode,
+        { abortSignal: controller.signal, throttleParallelThreads: 0 }, // Detach: aborting kills the local fetch; upstream run keeps going.
+        async (update, isDone) => {
+          conversationHandler.messageEdit(messageId, {
+            fragments: update.fragments,
+            generator: update.generator,
+            pendingIncomplete: update.pendingIncomplete,
+          }, isDone, isDone); // remove the pending state and update only when done
+        },
+      );
+    } finally {
+      // Clear local tracking only if this attempt is still the current one (avoid races on rapid retry)
+      if (resumeAbortersRef.current.get(messageId) === controller)
+        resumeAbortersRef.current.delete(messageId);
+      setResumeInFlight(prev => {
+        if (prev[messageId] !== mode) return prev;
+        const { [messageId]: _, ...rest } = prev;
+        return rest;
+      });
+    }
 
     // Manual reattach is one-shot: on failure (e.g. upstream 404 from expired or already-consumed handle),
     // drop the upstreamHandle so the Resume button doesn't keep luring the user into the same error.
@@ -155,6 +181,11 @@ export function ChatMessageList(props: {
     //     generator: { ...result.generator, upstreamHandle: undefined },
     //   }, false /* messageComplete */, true /* touch */);
   }, [conversationHandler, conversationId]);
+
+  const handleMessageUpstreamDetach = React.useCallback((messageId: DMessageId) => {
+    resumeAbortersRef.current.get(messageId)?.abort();
+  }, []);
+
 
   const handleMessageUpstreamDelete = React.useCallback(async (generator: DMessageGenerator, messageId: DMessageId) => {
     if (!conversationId || !conversationHandler) return;
@@ -395,7 +426,11 @@ export function ChatMessageList(props: {
 
       {filteredMessages.map((message, idx) => {
 
-          // Optimization: only memo complete components, or we'd be memoizing garbage
+          // Optimization: only memo complete components, or we'd be memoizing garbage (fragments
+          // change every chunk during streaming, so the equality check would always fail).
+          // CAVEAT: switching between memo and non-memo at the same position causes React to
+          // remount the subtree (different component types). Any state that must survive that
+          // boundary lives on this component (e.g. resumeInFlight, resumeAbortersRef).
           const ChatMessageMemoOrNot = !message.pendingIncomplete ? ChatMessageMemo : ChatMessage;
 
           return props.isMessageSelectionMode ? (
@@ -427,7 +462,9 @@ export function ChatMessageList(props: {
               onMessageBranch={handleMessageBranch}
               onMessageContinue={handleMessageContinue}
               onMessageUpstreamResume={handleMessageUpstreamResume}
+              onMessageUpstreamDetach={handleMessageUpstreamDetach}
               onMessageUpstreamDelete={handleMessageUpstreamDelete}
+              upstreamResumeMode={resumeInFlight[message.id]}
               onMessageDelete={handleMessageDelete}
               onMessageFragmentAppend={handleMessageAppendFragment}
               onMessageFragmentDelete={handleMessageDeleteFragment}

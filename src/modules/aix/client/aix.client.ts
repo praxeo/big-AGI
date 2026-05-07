@@ -70,7 +70,7 @@ export function aixCreateModelFromLLMOptions(
     llmVndAntEffort, llmVndGemEffort, llmVndOaiEffort, llmVndMiscEffort,
     llmVndAnt1MContext, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
     llmVndBedrockAPI,
-    llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
+    llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
     llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
     llmVndOrtWebSearch,
@@ -143,6 +143,7 @@ export function aixCreateModelFromLLMOptions(
 
     // Gemini
     ...(llmVndGeminiInteractions ? { vndGeminiAPI: 'interactions-agent' } : {}),
+    ...(llmVndGeminiAgentViz === 'off' ? { vndGeminiAgentViz: 'off' } : {}), // Deep Research agent_config.visualization - only forward when explicitly disabled
     ...(llmVndGeminiAspectRatio ? { vndGeminiAspectRatio: llmVndGeminiAspectRatio } : {}),
     ...(llmVndGeminiCodeExecution === 'auto' ? { vndGeminiCodeExecution: llmVndGeminiCodeExecution } : {}),
     ...(llmVndGeminiComputerUse ? { vndGeminiComputerUse: llmVndGeminiComputerUse } : {}),
@@ -645,21 +646,29 @@ function _finalizeLlmMetricsWithCosts(cgMetricsLg: undefined | DMetricsChatGener
 // --- L2 - Content Generation reattachment as DMessage ---
 
 /**
+ * Reattach mode selects how to reconstruct an in-progress upstream run:
+ *  - 'replay'   - canonical: SSE replays the event sequence from the start. Live deltas reach
+ *                 the UI as the run progresses (or as past content is replayed).
+ *  - 'snapshot' - one-shot JSON GET returns the resource as-is right now. Used to recover when
+ *                 the SSE endpoint is broken upstream but the resource itself is still readable.
+ *
+ * Names describe what you get, not how. See `kb/modules/LLM-gemini-interactions.md` for failure modes.
+ */
+export type AixReattachMode = 'replay' | 'snapshot';
+
+/**
  * Reattach facade: wraps `aixChatGenerateContent_DMessage_orThrow` for the reattach-to-upstream flow.
+ * - Validates the generator carries an `upstreamHandle`
+ * - Stubs the unused chat-generate request, and
+ * - Seeds the base function so the LL's reattach branch fires.
  *
- * On an in-progress upstream run (Gemini Deep Research today, extensible to OAI Responses), the server
- * just needs the handle to GET-poll; no chat-generate body is needed. This facade:
- * - validates the generator carries an `upstreamHandle`,
- * - stubs the chat-generate request (unused on the reattach path - the server uses the handle),
- * - seeds the base function via `clientOptions.reattachGenerator` so the LL's reattach branch fires.
- *
- * The reassembler starts with empty fragments; since Gemini Interactions snapshots are cumulative,
- * the stream will rebuild the complete content from scratch. Any partial content from the original run is replaced.
+ * The reassembler replaces content on reattach (Gemini Interactions snapshots are cumulative, so this rebuilds from scratch).
  */
 export async function aixReattachContent_DMessage_orThrow(
   llmId: DLLMId,
   reattachGenerator: Readonly<DMessageGenerator>,
   aixContext: AixAPI_Context_ChatGenerate,
+  mode: AixReattachMode,
   clientOptions: Pick<AixClientOptions, 'abortSignal' | 'throttleParallelThreads'>,
   onStreamingUpdate?: (update: AixChatGenerateContent_DMessageGuts, isDone: boolean) => MaybePromise<void>,
 ): Promise<_AixChatGenerateContent_DMessageGuts_WithOutcome> {
@@ -674,7 +683,7 @@ export async function aixReattachContent_DMessage_orThrow(
     llmId,
     stubChatGenerate,
     aixContext,
-    true, // streaming
+    mode === 'replay', // wire-level: SSE demuxer (replay) vs one-shot JSON body (snapshot)
     { ...clientOptions, reattachGenerator: reattachGenerator as any /* guaranteed by the check */ },
     onStreamingUpdate,
   );

@@ -151,6 +151,9 @@ export function createGeminiInteractionsParserSSE(requestedModelName: string | n
         if (!deltaParse.success) {
           // Empty deltas ({}) appear alongside placeholder blocks (e.g. internal tool slots) - silent skip
           if (event.delta && Object.keys(event.delta).length === 0) break;
+          // Known-but-not-surfaced delta types (mirrors NS parser's INTERNAL_OUTPUT_TYPES policy + spec's document/video variants we don't model) - silent skip
+          const deltaType = (event.delta as { type?: string })?.type;
+          if (deltaType && (GeminiInteractionsWire_API_Interactions.INTERNAL_OUTPUT_TYPES.has(deltaType) || deltaType === 'document' || deltaType === 'video')) break;
           console.warn('[GeminiInteractions] unknown content.delta shape at index', event.index, event.delta);
           break;
         }
@@ -234,6 +237,192 @@ export function createGeminiInteractionsParserSSE(requestedModelName: string | n
       default: {
         const _exhaustiveCheck: never = event;
         console.warn('[GeminiInteractions] unreachable: unhandled emittable type', { event });
+        break;
+      }
+    }
+  };
+}
+
+
+/**
+ * Non-streaming parser: reads the GET /v1beta/interactions/{id} JSON body once and emits the same
+ * particles the SSE parser would, in a single batch.
+ *
+ * Used by the "Recover" path when SSE delivery is broken upstream (10-min cuts; see KB doc) but the
+ * resource is still fetchable. We always re-emit the upstream handle so failed/in_progress runs
+ * remain retryable; only `status: completed` clears it (via the reassembler's outcome=='completed' policy).
+ *
+ * See `kb/modules/LLM-gemini-interactions.md` for failure modes and recovery model.
+ */
+export function createGeminiInteractionsParserNS(requestedModelName: string | null): ChatGenerateParseFunction {
+
+  const parserCreationTimestamp = Date.now();
+
+  return function parse(pt: IParticleTransmitter, rawEventData: string, _eventName?: string): void {
+
+    // model name (preserved from caller's DMessage on resume; first-call only on fresh fetches)
+    if (requestedModelName != null)
+      pt.setModelName(requestedModelName);
+
+    // parse + validate against the Interaction resource schema (looseObject - tolerant to upstream additions)
+    let rawJson: unknown;
+    try {
+      rawJson = JSON.parse(rawEventData);
+    } catch (e: any) {
+      throw new Error(`malformed Interaction JSON: ${e?.message || String(e)}`);
+    }
+    const parsed = GeminiInteractionsWire_API_Interactions.Interaction_schema.safeParse(rawJson);
+    if (!parsed.success) {
+      console.warn('[GeminiInteractions-NS] unexpected Interaction shape:', rawJson);
+      throw new Error('Gemini Interactions: unexpected resource shape (no `id`/`status` fields)');
+    }
+    const interaction = parsed.data;
+
+    // upstream handle - preserve so user can retry / delete
+    pt.setUpstreamHandle(interaction.id, 'vnd.gem.interactions');
+
+    // Walk outputs in order. Each output is loose; we safeParse against KnownOutput_schema and
+    // silently skip INTERNAL_OUTPUT_TYPES (tool calls/results). Order matters - thoughts and
+    // text interleave in the report and the user reads them top-to-bottom.
+    const outputs = interaction.outputs ?? [];
+    let lastEmittedKind: 'thought' | 'text' | 'image' | 'audio' | null = null;
+    for (const rawOut of outputs) {
+      const outType = (rawOut as { type?: string })?.type;
+
+      // silent-skip internal tool-call outputs (matches SSE parser policy for INTERNAL_OUTPUT_TYPES)
+      if (outType && GeminiInteractionsWire_API_Interactions.INTERNAL_OUTPUT_TYPES.has(outType))
+        continue;
+
+      const knownOut = GeminiInteractionsWire_API_Interactions.KnownOutput_schema.safeParse(rawOut);
+      if (!knownOut.success) {
+        if (outType) console.warn('[GeminiInteractions-NS] unknown output type, skipping:', outType);
+        continue;
+      }
+
+      // emit a part boundary when switching kinds, mirrors SSE behavior on content.start across indices
+      if (lastEmittedKind !== null && lastEmittedKind !== knownOut.data.type)
+        pt.endMessagePart();
+
+      switch (knownOut.data.type) {
+        case 'thought': {
+          const summary = knownOut.data.summary;
+          if (typeof summary === 'string') {
+            if (summary) pt.appendReasoningText(summary);
+          } else if (Array.isArray(summary)) {
+            for (const item of summary)
+              if (item.text) pt.appendReasoningText(item.text);
+          }
+          if (knownOut.data.signature)
+            pt.setReasoningSignature(knownOut.data.signature);
+          lastEmittedKind = 'thought';
+          break;
+        }
+        case 'text': {
+          if (knownOut.data.text)
+            pt.appendText(knownOut.data.text);
+          // Citations: matches SSE policy - DISABLE_CITATIONS kill-switch dictates Deep Research drops them
+          if (!DISABLE_CITATIONS && knownOut.data.annotations) {
+            for (const annRaw of knownOut.data.annotations) {
+              const ann = GeminiInteractionsWire_API_Interactions.UrlCitationAnnotation_schema.safeParse(annRaw);
+              if (!ann.success) continue;
+              const a = ann.data;
+              pt.appendUrlCitation(a.title || a.url, a.url, undefined, a.start_index, a.end_index, undefined, undefined);
+            }
+          }
+          lastEmittedKind = 'text';
+          break;
+        }
+        case 'image': {
+          if (knownOut.data.data && knownOut.data.mime_type)
+            pt.appendImageInline(knownOut.data.mime_type, knownOut.data.data, 'Gemini Generated Image', 'Gemini', '', true);
+          else if (knownOut.data.uri)
+            pt.appendText(`\n[Image: ${knownOut.data.uri}]\n`);
+          lastEmittedKind = 'image';
+          break;
+        }
+        case 'audio': {
+          if (knownOut.data.data && knownOut.data.mime_type) {
+            const mime = knownOut.data.mime_type.toLowerCase();
+            const isPCM = mime.startsWith('audio/l16') || mime.includes('codec=pcm');
+            if (isPCM) {
+              try {
+                const wav = geminiConvertPCM2WAV(knownOut.data.mime_type, knownOut.data.data);
+                pt.appendAudioInline(wav.mimeType, wav.base64Data, 'Gemini Generated Audio', 'Gemini', wav.durationMs);
+              } catch (error) {
+                console.warn('[GeminiInteractions-NS] audio PCM convert failed:', error);
+              }
+            } else {
+              pt.appendAudioInline(knownOut.data.mime_type, knownOut.data.data, 'Gemini Generated Audio', 'Gemini', 0);
+            }
+          }
+          lastEmittedKind = 'audio';
+          break;
+        }
+        default: {
+          const _exhaustive: never = knownOut.data;
+          break;
+        }
+      }
+    }
+
+    // close out any open part before the terminal status emission
+    if (lastEmittedKind !== null) pt.endMessagePart();
+
+    // Terminal status -> stop reason + dialect end (mirrors _handleInteractionComplete)
+    switch (interaction.status) {
+      case 'completed':
+        _emitUsageMetrics(pt, interaction.usage, parserCreationTimestamp, undefined);
+        pt.setTokenStopReason('ok');
+        pt.setDialectEnded('done-dialect');
+        break;
+      case 'failed':
+        _emitUsageMetrics(pt, interaction.usage, parserCreationTimestamp, undefined);
+        pt.setDialectTerminatingIssue('Deep Research interaction failed', null, 'srv-warn');
+        break;
+      case 'cancelled':
+        _emitUsageMetrics(pt, interaction.usage, parserCreationTimestamp, undefined);
+        pt.setTokenStopReason('cg-issue');
+        pt.setDialectEnded('done-dialect');
+        break;
+      case 'incomplete':
+        pt.appendText('\n_Response incomplete (run stopped early)._\n');
+        _emitUsageMetrics(pt, interaction.usage, parserCreationTimestamp, undefined);
+        pt.setTokenStopReason('out-of-tokens');
+        pt.setDialectEnded('done-dialect');
+        break;
+      case 'requires_action':
+        pt.setDialectTerminatingIssue('Deep Research returned requires_action (not supported in this client)', null, 'srv-warn');
+        break;
+      case 'in_progress': {
+        // Two scenarios both surface as `in_progress`:
+        //  1) Run is genuinely live server-side (just slow) - polling later will yield content.
+        //  2) "Zombie": the generator crashed but the status never transitioned. Stays `in_progress`
+        //     for days with no outputs. Not recoverable - the only remedy is delete + retry.
+        // We can't disambiguate from one frame, so we surface {created, updated, outputs.length}
+        // and let the user decide. `tokenStopReason='cg-issue'` keeps the upstream handle alive
+        // (vs 'ok' which would clear it via the reassembler's clean-completion policy).
+        // see kb/modules/LLM-gemini-interactions.md#failure-modes (C)
+        const elapsedMin = _minutesSince(interaction.created);
+        const updatedMin = _minutesSince(interaction.updated);
+        const outCount = (interaction.outputs ?? []).length;
+        const lines: string[] = ['\n_Deep Research run is **`in_progress`** server-side._\n'];
+        if (elapsedMin != null) lines.push(`- Started: **${_humanDuration(elapsedMin)} ago**`);
+        if (updatedMin != null && updatedMin !== elapsedMin) lines.push(`- Last server update: **${_humanDuration(updatedMin)} ago**`);
+        lines.push(`- Outputs so far: **${outCount === 0 ? 'none' : outCount}**`);
+        // Heuristic threshold: stale-and-empty for >60 min is almost certainly a zombie.
+        const looksStuck = outCount === 0 && elapsedMin != null && elapsedMin > 60;
+        if (looksStuck)
+          lines.push('\nThis run looks **stuck** (no content for over an hour). Click **Cancel** to delete it and try again.');
+        else
+          lines.push('\nTry **Recover** again in a few minutes; if it stays empty, click **Cancel** to delete and retry.');
+        pt.appendText(lines.join('\n') + '\n');
+        pt.setTokenStopReason('cg-issue');
+        pt.setDialectEnded('done-dialect');
+        break;
+      }
+      default: {
+        const _exhaustiveCheck: never = interaction.status;
+        console.warn('[GeminiInteractions-NS] unreachable status', interaction.status);
         break;
       }
     }
@@ -369,4 +558,23 @@ function _emitUsageMetrics(
   }
 
   pt.updateMetrics(m);
+}
+
+
+/** Minutes elapsed between an upstream ISO 8601 timestamp and now. Returns null on parse failure. */
+function _minutesSince(iso: string | undefined | null): number | null {
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return null;
+  return Math.max(0, (Date.now() - ms) / 60_000);
+}
+
+/** Human-readable elapsed-time string for in_progress diagnostic messages. */
+function _humanDuration(minutes: number): string {
+  if (minutes < 1) return 'less than a minute';
+  if (minutes < 60) return `${Math.round(minutes)} min`;
+  const hours = minutes / 60;
+  if (hours < 24) return `${Math.round(hours * 10) / 10} hours`;
+  const days = hours / 24;
+  return `${Math.round(days * 10) / 10} days`;
 }

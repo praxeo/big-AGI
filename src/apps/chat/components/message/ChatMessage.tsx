@@ -29,6 +29,7 @@ import VerticalAlignBottomIcon from '@mui/icons-material/VerticalAlignBottom';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 import VisibilityOffIcon from '@mui/icons-material/VisibilityOff';
 
+import type { AixReattachMode } from '~/modules/aix/client/aix.client';
 import { ModelVendorAnthropic } from '~/modules/llms/vendors/anthropic/anthropic.vendor';
 
 import { AnthropicIcon } from '~/common/components/icons/vendors/AnthropicIcon';
@@ -161,8 +162,10 @@ export function ChatMessage(props: {
   onMessageBeam?: (messageId: string) => Promise<void>,
   onMessageBranch?: (messageId: string) => void,
   onMessageContinue?: (messageId: string, continueText: null | string) => void,
-  onMessageUpstreamResume?: (generator: DMessageGenerator, messageId: string) => Promise<void>,
+  onMessageUpstreamResume?: (generator: DMessageGenerator, messageId: string, mode: AixReattachMode) => Promise<void>,
+  onMessageUpstreamDetach?: (messageId: string) => void,
   onMessageUpstreamDelete?: (generator: DMessageGenerator, messageId: string) => Promise<void>,
+  upstreamResumeMode?: AixReattachMode, // set by parent while a resume is in flight on this message
   onMessageDelete?: (messageId: string) => void,
   onMessageFragmentAppend?: (messageId: DMessageId, fragment: DMessageFragment) => void
   onMessageFragmentDelete?: (messageId: DMessageId, fragmentId: DMessageFragmentId) => void,
@@ -247,7 +250,7 @@ export function ChatMessage(props: {
   // const wordsDiff = useWordsDifference(textSubject, props.diffPreviousText, showDiff);
 
 
-  const { onMessageAssistantFrom, onMessageDelete, onMessageFragmentAppend, onMessageFragmentDelete, onMessageFragmentReplace, onMessageContinue, onMessageUpstreamResume, onMessageUpstreamDelete } = props;
+  const { onMessageAssistantFrom, onMessageDelete, onMessageFragmentAppend, onMessageFragmentDelete, onMessageFragmentReplace, onMessageContinue, onMessageUpstreamResume, onMessageUpstreamDetach, onMessageUpstreamDelete } = props;
 
   const handleFragmentNew = React.useCallback(() => {
     onMessageFragmentAppend?.(messageId, createTextContentFragment(''));
@@ -265,10 +268,14 @@ export function ChatMessage(props: {
     onMessageContinue?.(messageId, continueText);
   }, [messageId, onMessageContinue]);
 
-  const handleUpstreamResume = React.useCallback(() => {
+  const handleUpstreamResume = React.useCallback((mode: AixReattachMode) => {
     if (!messageGenerator) return;
-    return onMessageUpstreamResume?.(messageGenerator, messageId);
+    return onMessageUpstreamResume?.(messageGenerator, messageId, mode);
   }, [messageGenerator, messageId, onMessageUpstreamResume]);
+
+  const handleUpstreamDetach = React.useCallback(() => {
+    onMessageUpstreamDetach?.(messageId);
+  }, [messageId, onMessageUpstreamDetach]);
 
   const handleUpstreamDelete = React.useCallback(() => {
     if (!messageGenerator) return;
@@ -903,7 +910,9 @@ export function ChatMessage(props: {
             <BlockOpUpstreamResume
               upstreamHandle={messageGenerator.upstreamHandle}
               pending={messagePendingIncomplete}
-              onResume={(!messagePendingIncomplete && onMessageUpstreamResume) ? handleUpstreamResume : undefined}
+              inFlightMode={props.upstreamResumeMode}
+              onResume={onMessageUpstreamResume ? handleUpstreamResume : undefined}
+              onDetach={onMessageUpstreamDetach ? handleUpstreamDetach : undefined}
               onDelete={onMessageUpstreamDelete ? handleUpstreamDelete : undefined}
             />
           )}

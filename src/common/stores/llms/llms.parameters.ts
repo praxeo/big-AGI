@@ -349,6 +349,15 @@ export const DModelParameterRegistry = {
     // when undefined, the model chooses automatically
   },
 
+  // Gemini Interactions API agent_config - per-agent knobs (Deep Research only today)
+  llmVndGeminiAgentViz: _enumDef({
+    label: 'Visualizations',
+    type: 'enum',
+    description: 'Charts and images in Deep Research reports. Disable for text-only output (helpful when merging multiple reports).',
+    values: ['auto', 'off'],
+    // undefined means upstream default ('auto'); we only forward when explicitly 'off'
+  }),
+
   // NOTE: we don't have this as a parameter, as for now we use it in tandem with llmVndGeminiGoogleSearch
   // llmVndGeminiUrlContext: {
   //   label: 'URL Context',

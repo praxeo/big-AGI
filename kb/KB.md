@@ -21,6 +21,9 @@ Architecture and system documentation is available in the `/kb/` knowledge base,
 - **[LLM-editorial-control.md](modules/LLM-editorial-pubdate.md)** - Where we have editorial control over per-model metadata vs dynamic discovery; `pubDate` field semantics, propagation chain, resolution rules, per-vendor matrix
 - **[LLM-models-catalog-pipeline.md](modules/LLM-models-catalog-pipeline.md)** - Forward-looking pipeline: extraction script, snapshot artifact, website consumption, future schema extensions
 
+#### LLM - Vendor APIs
+- **[LLM-gemini-interactions.md](modules/LLM-gemini-interactions.md)** - Gemini Interactions API (Deep Research): endpoints, status taxonomy, two retrieval paths (SSE replay vs JSON GET), known failure modes (10-min cuts, zombies), UI surface
+
 ### Systems Documentation
 
 #### Core Platform Systems

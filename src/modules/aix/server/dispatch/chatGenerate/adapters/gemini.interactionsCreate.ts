@@ -86,7 +86,8 @@ export function aixToGeminiInteractionsCreate(model: AixAPI_Model, chatGenerateR
       agent_config: {
         type: 'deep-research',
         thinking_summaries: 'auto', // Enable thought_summary blocks - without this the API would not emit summaries during streaming
-        // visualization defaults to 'auto' upstream; leave unset to keep the default (agent may generate charts/images).
+        // visualization: forwarded only when the client explicitly opts out; 'auto' (default) is left unset so the agent may generate charts/images.
+        ...(model.vndGeminiAgentViz === 'off' && { visualization: 'off' }),
       },
     }),
     // non-DR agents: use native system_instruction field (matches gemini.generateContent.ts convention)

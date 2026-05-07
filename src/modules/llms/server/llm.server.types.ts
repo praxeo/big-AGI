@@ -94,6 +94,7 @@ const ModelParameterSpec_schema = z.object({
     // Bedrock
     'llmVndBedrockAPI',
     // Gemini
+    'llmVndGeminiAgentViz',
     'llmVndGeminiAspectRatio',
     'llmVndGeminiCodeExecution',
     'llmVndGeminiComputerUse',
