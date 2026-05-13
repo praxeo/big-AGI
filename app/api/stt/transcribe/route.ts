@@ -5,16 +5,6 @@ export const maxDuration = 60;
 const DEFAULT_BASE_URL = 'https://api.openai.com';
 const DEFAULT_MODEL = 'gpt-4o-transcribe';
 
-const DEFAULT_PROMPT =
-  'Emergency department clinical documentation. '
-  + 'Expect medical terminology: cholecystitis, appendicitis, diverticulitis, '
-  + 'cellulitis, sepsis, pneumonia, pyelonephritis, pancreatitis, '
-  + 'hospitalist, CT, MRI, CBC, BMP, CMP, troponin, lactic acid, '
-  + 'DVT, PE, NSTEMI, STEMI, TPA, INR, BNP, procalcitonin, lipase, '
-  + 'IV, IM, PO, PRN, q4h, q6h, mg, mL, mcg. '
-  + 'Physician names are prefixed with Dr. '
-  + 'Use standard medical abbreviations.';
-
 function normalizeLanguage(raw: string | null): string | undefined {
   if (!raw) return undefined;
   const trimmed = raw.trim();
@@ -38,7 +28,6 @@ export async function POST(req: Request) {
 
     const baseUrl = (process.env.STT_API_BASE_URL || DEFAULT_BASE_URL).replace(/\/+$/, '');
     const model = process.env.STT_MODEL || DEFAULT_MODEL;
-    const prompt = process.env.STT_PROMPT || DEFAULT_PROMPT;
 
     const incomingForm = await req.formData();
     const maybeFile = incomingForm.get('file');
@@ -59,11 +48,9 @@ export async function POST(req: Request) {
     const upstreamForm = new FormData();
     upstreamForm.append('model', model);
     upstreamForm.append('file', file, file.name || 'audio.webm');
+
     if (language)
       upstreamForm.append('language', language);
-
-    if (prompt)
-      upstreamForm.append('prompt', prompt);
 
     const upstreamUrl = `${baseUrl}/v1/audio/transcriptions`;
 
@@ -78,7 +65,11 @@ export async function POST(req: Request) {
       const errorBody = await safeErrorBody(upstreamRes);
       console.error(`[stt/transcribe] Upstream ${upstreamRes.status}:`, errorBody);
       return Response.json(
-        { error: 'Transcription provider returned an error.', details: errorBody, status: upstreamRes.status },
+        {
+          error: 'Transcription provider returned an error.',
+          details: errorBody,
+          status: upstreamRes.status,
+        },
         { status: upstreamRes.status },
       );
     }
@@ -95,7 +86,10 @@ export async function POST(req: Request) {
   } catch (error: any) {
     console.error('[stt/transcribe] Unexpected error:', error);
     return Response.json(
-      { error: 'Unexpected server error during transcription.', details: error?.message ?? String(error) },
+      {
+        error: 'Unexpected server error during transcription.',
+        details: error?.message ?? String(error),
+      },
       { status: 500 },
     );
   }
