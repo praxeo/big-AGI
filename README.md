@@ -10,7 +10,7 @@
 [![Discord](https://img.shields.io/discord/1098796266906980422?style=for-the-badge&label=Discord&logo=discord&logoColor=white&labelColor=000000&color=purple)](https://discord.gg/MkH4qj2Jp9)
 <br/>
 [![GitHub Monthly Commits](https://img.shields.io/github/commit-activity/m/enricoros/big-agi?style=for-the-badge&x=3&logo=github&logoColor=white&label=commits&labelColor=000&color=green)](https://github.com/enricoros/big-agi/commits)
-[![GHCR Pulls](https://img.shields.io/badge/ghcr.io-800k_dl-12b76a?style=for-the-badge&logo=Xdocker&logoColor=white&labelColor=000&color=A8E6CF)](https://github.com/enricoros/big-AGI/pkgs/container/big-agi)
+[![GHCR Pulls](https://img.shields.io/badge/ghcr.io-850k_dl-12b76a?style=for-the-badge&logo=Xdocker&logoColor=white&labelColor=000&color=A8E6CF)](https://github.com/enricoros/big-AGI/pkgs/container/big-agi)
 [![Contributors](https://img.shields.io/github/contributors/enricoros/big-agi?style=for-the-badge&x=2&logo=Xgithub&logoColor=white&label=cooks&labelColor=000&color=A8E6CF)](https://github.com/enricoros/big-AGI/graphs/contributors)
 [![License: MIT](https://img.shields.io/badge/License-MIT-A8E6CF?style=for-the-badge&labelColor=000)](https://opensource.org/licenses/MIT)
 <br/>
@@ -43,7 +43,7 @@ It comes packed with **world-class features** like Beam, and is praised for its 
 
 ### What makes Big-AGI different:
 
-**Intelligence**: with [Beam & Merge](https://big-agi.com/beam) for multi-model de-hallucination, native search, and bleeding-edge AI models like Opus 4.7, Nano Banana Pro, Kimi K2.6 or GPT 5.4 -
+**Intelligence**: with [Beam & Merge](https://big-agi.com/beam) for multi-model de-hallucination, native search, and bleeding-edge AI models like Opus 4.7 1M, GPT 5.5, Gemini 3.1, DeepSeek V4 or Grok 4.3 -
 **Control**: with personas, data ownership, requests inspection, unlimited usage with API keys, and *no vendor lock-in* -
 and **Speed**: with a local-first, over-powered, zero-latency, madly optimized web app.
 
@@ -144,6 +144,7 @@ NOTE: this is a powerful tool - if you need a toy UI or clone, this ain't it.
 ## Release Notes
 
 👉 **[See the Live Release Notes](https://big-agi.com/changes)**
+- Open 2.0.5: **Roberto** **Opus 4.7 1M**, **GPT-5.5**, **DeepSeek V4**, Anthropic Containers/Skills, resumable Deep Research, MiniMax & Arcee AI
 - Open 2.0.4: **Hyper Params** **Opus 4.6**, **GPT-5.4**, **Gemini 3.1 Pro**, AWS Bedrock, parameter accuracy, Anthropic continuation/Fast mode
 - Open 2.0.3: **Red Carpet** **Kimi K2.5**, **Gemini 3 Flash**, **GPT 5.2**, Google Drive, Inworld, Novita.ai, Speech/UX improvements
 - Open 2.0.2: **Speex** multi-vendor speech synthesis, **Opus 4.5**, **Gemini 3 Pro**, **Nano Banana Pro**, **Grok 4.1**, **GPT-5.1**, **Kimi K2** + 280 fixes
