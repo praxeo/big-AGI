@@ -16,13 +16,22 @@ interface FragmentBuckets {
   interleavedFragments: InterleavedFragment[];
   imageAttachments: DMessageAttachmentFragment[];
   nonImageAttachments: DMessageAttachmentFragment[];
-  lastFragmentIsError: boolean;
+  // lastFragmentIsError: boolean;
 }
 
 /**
- * Split Fragments into renderable groups, while only recalculating when the input changes, and when content really changes
+ * Split Fragments into renderable groups, while only recalculating when the input changes, and when content really changes.
+ *
+ * The optional `isVisible` predicate filters fragments BEFORE bucketing - one pass instead of post-bucketing `.filter()`
+ * memos at call sites. Pass a stable function (typically from a hook); a fresh closure each render invalidates the memo.
+ *
+ * `lastFragmentIsError` is computed on the raw `messageFragments`, independent of filtering - error UI state isn't
+ * affected by visibility prefs.
  */
-export function useFragmentBuckets(messageFragments: Immutable<DMessageFragment[]>): FragmentBuckets {
+export function useFragmentBuckets(
+  messageFragments: Immutable<DMessageFragment[]>,
+  isVisible?: (fragment: Immutable<DMessageFragment>) => boolean,
+): FragmentBuckets {
 
   // Refs to store the last stable value for each bucket
   const annotationFragmentsRef = React.useRef<DVoidFragmentModelAnnotations[]>([]);
@@ -30,7 +39,7 @@ export function useFragmentBuckets(messageFragments: Immutable<DMessageFragment[
   const imageAttachmentsRef = React.useRef<DMessageAttachmentFragment[]>([]);
   const nonImageAttachmentsRef = React.useRef<DMessageAttachmentFragment[]>([]);
 
-  // Use useMemo to recalculate buckets only when messageFragments changes
+  // Use useMemo to recalculate buckets only when messageFragments or isVisible changes
   return React.useMemo(() => {
 
     const annotationFragments: DVoidFragmentModelAnnotations[] = [];
@@ -39,6 +48,8 @@ export function useFragmentBuckets(messageFragments: Immutable<DMessageFragment[
     const nonImageAttachments: DMessageAttachmentFragment[] = [];
 
     messageFragments.forEach(fragment => {
+      // Visibility filter (optional): drop fragments hidden by global AI block policies before bucketing.
+      if (isVisible && !isVisible(fragment)) return;
       const ft = fragment.ft;
       switch (ft) {
         case 'content':
@@ -77,14 +88,14 @@ export function useFragmentBuckets(messageFragments: Immutable<DMessageFragment[
     if (!shallowEquals(nonImageAttachments, nonImageAttachmentsRef.current))
       nonImageAttachmentsRef.current = nonImageAttachments;
 
-    const lastFragment: DMessageFragment | undefined = messageFragments.at(-1);
+    // const lastFragment: DMessageFragment | undefined = messageFragments.at(-1);
 
     return {
       annotationFragments: annotationFragmentsRef.current,
       interleavedFragments: interleavedFragmentsRef.current,
       imageAttachments: imageAttachmentsRef.current,
       nonImageAttachments: nonImageAttachmentsRef.current,
-      lastFragmentIsError: !!lastFragment && isContentFragment(lastFragment) && isErrorPart(lastFragment.part),
+      // lastFragmentIsError: !!lastFragment && isContentFragment(lastFragment) && isErrorPart(lastFragment.part),
     };
-  }, [messageFragments]);
+  }, [isVisible, messageFragments]);
 }

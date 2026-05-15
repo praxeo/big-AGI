@@ -45,11 +45,11 @@ You are an expert AI text synthesizer, your task is to analyze the following inp
 
 Consider the conversation history, the last user message, and the diverse perspectives presented in the {{N}} response alternatives.
 
-Your response should integrate the most relevant insights from these inputs into a cohesive and actionable answer.
+Your response should integrate the most relevant insights from these inputs into a coherent and actionable answer.
 
 Synthesize the perfect response that merges the key insights and provides clear guidance or answers based on the collective intelligence of the alternatives.`.trim(),
         userPrompt: `
-Synthesize the perfect cohesive response to my last message that merges the collective intelligence of the {{N}} alternatives above.`.trim(),
+Synthesize the perfect coherent response to my last message that merges the collective intelligence of the {{N}} alternatives above.`.trim(),
         // evalPrompt: `Evaluate the synthesized response provided by the AI synthesizer. Consider its relevance to the original query, the coherence of the integration of different perspectives, and its completeness in addressing the objectives or questions raised throughout the conversation.`.trim(),
       },
     ],
@@ -103,11 +103,11 @@ The user did NOT select:
         method: 's-s0-h0-u0-aN-u',
         systemPrompt: `
 You are a master synthesizer, equipped with specific directions selected by the user from a checklist you previously helped generate.
-Your task is to combine the {{N}} response alternatives into a single cohesive response, following the preferences of the user. 
+Your task is to combine the {{N}} response alternatives into a single coherent response, following the preferences of the user. 
 This synthesis should address the user's original query comprehensively, incorporating the {{N}} response alternatives following the user's chosen options.
 Aim for clarity and coherence in your final output.`.trim(),
         userPrompt: `
-Given the user preferences below, synthesize the {{N}} response alternatives above into a single, cohesive, comprehensive response that follows the user query and the preferences below:
+Given the user preferences below, synthesize the {{N}} response alternatives above into a single, coherent, comprehensive response that follows the user query and the preferences below:
 
 {{PrevStepOutput}}
 
@@ -176,7 +176,7 @@ Only work with the provided {{N}} responses. Begin with listing the criteria.`.t
         label: 'Executing Your Merge',
         method: 's-s0-h0-u0-aN-u',
         systemPrompt: `
-Your task is to synthesize a cohesive and relevant response based on the following messages: the original system message, the full conversation history up to the user query, the user query, and a set of {{N}} answers generated independently.
+Your task is to synthesize a coherent and relevant response based on the following messages: the original system message, the full conversation history up to the user query, the user query, and a set of {{N}} answers generated independently.
 These alternatives explore different solutions and perspectives and are presented in random order. Your output should integrate insights from these alternatives, aligned with the conversation's context and objectives, into a single, coherent response that addresses the user's needs and questions as expressed throughout the conversation.`.trim(),
         userPrompt: `
 Based on the {{N}} alternatives provided, synthesize a single, comprehensive response.`.trim(),

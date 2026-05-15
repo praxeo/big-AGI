@@ -7,7 +7,7 @@ import { aixSpillSystemToUser, approxDocPart_To_String, approxInReferenceTo_To_X
 
 
 // configuration
-const hotFixImagePartsFirst = true; // https://ai.google.dev/gemini-api/docs/image-understanding#tips-best-practices
+const hotFixSingleImagePartFirst = true; // https://ai.google.dev/gemini-api/docs/image-understanding#tips-best-practices
 const hotFixReplaceEmptyMessagesWithEmptyTextPart = true;
 
 // [Gemini 3, 2025-11-20] Bypass dummy thoughtSignature for Gemini 3+ validation
@@ -306,10 +306,14 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[], apiRequiresS
     const isModelMessage = message.role === 'model';
     const baseRole: GeminiWire_Messages.Content['role'] = isModelMessage ? 'model' : 'user';
 
-    if (hotFixImagePartsFirst) {
+    let messageParts: AixMessages_ChatMessage['parts'][number][] = message.parts;
+    if (
+      hotFixSingleImagePartFirst &&
+      messageParts.filter(part => part.pt === 'inline_image').length === 1 // only 1 image part
+    ) {
       // https://ai.google.dev/gemini-api/docs/image-understanding#tips-best-practices
       // "When using a single image with text, place the text prompt after the image part in the contents array."
-      message.parts.sort((a, b) => {
+      messageParts = [...messageParts].sort((a, b) => {
         if (a.pt === 'inline_image' && b.pt !== 'inline_image') return -1;
         if (a.pt !== 'inline_image' && b.pt === 'inline_image') return 1;
         return 0;
@@ -333,11 +337,11 @@ function _toGeminiContents(chatSequence: AixMessages_ChatMessage[], apiRequiresS
      * at least one part for a `Content` object, so the empty message becomes a "" instead.
      * E.g. { role: 'rolename', parts: [{text: ''}] }
      */
-    if (hotFixReplaceEmptyMessagesWithEmptyTextPart && message.parts.length === 0) {
+    if (hotFixReplaceEmptyMessagesWithEmptyTextPart && messageParts.length === 0) {
       parts.push(GeminiWire_ContentParts.TextPart(''));
     }
 
-    for (const part of message.parts) {
+    for (const part of messageParts) {
       // Determine the target Gemini role for this part: tool_response -> 'user', everything else -> baseRole
       const partRole: GeminiWire_Messages.Content['role'] = (isModelMessage && part.pt === 'tool_response') ? 'user' : baseRole;
 

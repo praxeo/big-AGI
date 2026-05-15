@@ -27,6 +27,7 @@ const _styles = {
   },
 
   sheetTitle: {
+    mx: 0, // fixes a bug where Typography has a mx:-0.25 px:0.25 and the negative margin causes h-scrolling of the whole block...
     px: 1.5,
     py: 0.75,
     fontSize: 'sm',
@@ -35,6 +36,7 @@ const _styles = {
   },
 
   sheetTitleClickable: {
+    mx: 0, // fixes a bug where Typography has a mx:-0.25 px:0.25 and the negative margin causes h-scrolling of the whole block...
     px: 1.5,
     py: 0.75,
     fontSize: 'sm',

@@ -22,6 +22,7 @@ import { Brand } from '~/common/app.config';
 import { ChatBeamIcon } from '~/common/components/icons/ChatBeamIcon';
 import { PhChats } from '~/common/components/icons/phosphor/PhChats';
 import { PhChatsDuotone } from '~/common/components/icons/phosphor/PhChatsDuotone';
+import { PhGearSixIcon } from '~/common/components/icons/phosphor/PhGearSixIcon';
 import { hasNoChatLinkItems } from '~/modules/trade/link/store-share-link';
 
 
@@ -231,7 +232,7 @@ export const navItems: {
     },
     {
       name: 'App Preferences',
-      icon: SettingsIcon,
+      icon: PhGearSixIcon,
       type: 'modal',
       overlayId: 'settings',
     },

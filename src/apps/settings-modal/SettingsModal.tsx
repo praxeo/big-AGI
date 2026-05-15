@@ -230,6 +230,7 @@ export function SettingsModal(props: {
           </Button>}
         </Box>
       }
+      unfilterBackdrop
       sx={_styles.modal}
     >
 
