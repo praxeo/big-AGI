@@ -18,6 +18,7 @@ import { sortLLMsByServiceLabel } from '~/common/stores/llms/components/llms.dro
 import { useLLMsByService } from '~/common/stores/llms/llms.hooks';
 import { useIsMobile } from '~/common/components/useMatchMedia';
 import { useModelDomains } from '~/common/stores/llms/hooks/useModelDomains';
+import { useUIPreferencesStore } from '~/common/stores/store-ui';
 
 import type { IModelVendor } from '../vendors/IModelVendor';
 import { findModelVendor } from '../vendors/vendors.registry';
@@ -70,6 +71,11 @@ const styles = {
   chipDisabled: {
     opacity: 0.5,
   } as const,
+  chipNew: {
+    bgcolor: '#d4ff3a',
+    color: 'black',
+    fontWeight: 'lg',
+  },
   // styleNameChip: {
   //   marginLeft: '0.5rem',
   //   fontSize: '0.75rem',
@@ -84,9 +90,10 @@ export const ModelItem = React.memo(function ModelItem(props: {
   chipChat: boolean,
   chipCode: boolean,
   chipFast: boolean,
+  debugShowFn: boolean,
   isMobile: boolean,
   onModelClicked: (llmId: DLLMId) => void,
-  onModelSetHidden: (llmId: DLLMId, hidden: boolean) => void,
+  onModelSetHidden?: (llmId: DLLMId, hidden: boolean) => void,
   onModelSetStarred: (llmId: DLLMId, starred: boolean) => void,
 }) {
 
@@ -115,12 +122,12 @@ export const ModelItem = React.memo(function ModelItem(props: {
 
   const handleLLMHide = React.useCallback((event: React.MouseEvent) => {
     event.stopPropagation();
-    onModelSetHidden(llm.id, true);
+    onModelSetHidden?.(llm.id, true);
   }, [llm.id, onModelSetHidden]);
 
   const handleLLMUnhide = React.useCallback((event: React.MouseEvent) => {
     event.stopPropagation();
-    onModelSetHidden(llm.id, false);
+    onModelSetHidden?.(llm.id, false);
   }, [llm.id, onModelSetHidden]);
 
   // const handleLLMToggleStar = React.useCallback((event: React.MouseEvent) => {
@@ -231,9 +238,14 @@ export const ModelItem = React.memo(function ModelItem(props: {
         </>}
 
         {/* Features Chips - sync with `useLLMSelect.tsx` */}
-        {isRecentlyPublished && isNotSymlink && pubDate && <GoodTooltip title={`Released ${pubDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`}><Chip size='sm' variant='solid' sx={isHidden ? styles.chipDisabled : { bgcolor: '#d4ff3a', color: 'black', fontWeight: 'lg' }}>new</Chip></GoodTooltip>}
+        {isRecentlyPublished && isNotSymlink && pubDate && (
+          <GoodTooltip title={`Released ${pubDate.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}`}>
+            <Chip size='sm' variant='solid' sx={styles.chipNew}>new</Chip>
+          </GoodTooltip>
+        )}
         {featuresChipMemo}
         {seemsFree && isNotSymlink && <Chip size='sm' color='success' variant='plain' sx={isHidden ? styles.chipDisabled : styles.chipFree}>free</Chip>}
+        {props.debugShowFn && llm.interfaces.includes(LLM_IF_OAI_Fn) && <Chip size='sm' variant='solid' color='warning'>fn</Chip>}
 
 
         {/* Action Buttons */}
@@ -246,7 +258,7 @@ export const ModelItem = React.memo(function ModelItem(props: {
           {/*  </IconButton>*/}
           {/*</GoodTooltip>}*/}
 
-          {!props.isMobile && <GoodTooltip title={isHidden ? 'Hidden' : 'Shown in Chat'}>
+          {!props.isMobile && !!onModelSetHidden && <GoodTooltip title={isHidden ? 'Hidden' : 'Shown in Chat'}>
             <IconButton aria-label={isHidden ? 'Unhide' : 'Hide in Chat'} size='sm' onClick={isHidden ? handleLLMUnhide : handleLLMHide} sx={absorbListPadding}>
               {isHidden ? <VisibilityOffOutlinedIcon sx={{ opacity: 0.5, fontSize: 'md' }} /> : <VisibilityOutlinedIcon />}
             </IconButton>
@@ -274,6 +286,7 @@ export function ModelsList(props: {
 
   // external state
   const isMobile = useIsMobile();
+  const showModelsFn = useUIPreferencesStore(state => state.showModelsFn);
   const domainAssignments = useModelDomains();
   const llms = useLLMsByService(props.filterServiceId === null ? false : props.filterServiceId);
 
@@ -333,16 +346,17 @@ export function ModelsList(props: {
           chipChat={llm.id === primaryChatLlmId}
           chipCode={llm.id === codeApplyLlmId}
           chipFast={llm.id === fastUtilLlmId}
+          debugShowFn={showModelsFn}
           isMobile={isMobile}
           onModelClicked={handleModelClicked}
-          onModelSetHidden={handleModelSetHidden}
+          onModelSetHidden={props.showHiddenModels ? handleModelSetHidden : undefined}
           onModelSetStarred={handleModelSetStarred}
         />,
       );
     }
 
     return items;
-  }, [domainAssignments, handleModelClicked, handleModelSetHidden, handleModelSetStarred, isMobile, llms, props.filterServiceId, props.showHiddenModels]);
+  }, [domainAssignments, handleModelClicked, handleModelSetHidden, handleModelSetStarred, isMobile, llms, props.filterServiceId, props.showHiddenModels, showModelsFn]);
 
   return (
     <List size={!isMobile ? undefined : 'sm'} sx={props.sx}>

@@ -266,9 +266,9 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
     const s: number = response.status;
     let payloadString = safeErrorString(notOkayPayload);
     if (payloadString) {
-      // truncate
-      if (payloadString.length > 240)
-        payloadString = payloadString.slice(0, 240) + '...';
+      // truncate (480 chars: fits typical provider rate-limit/auth/quota messages with org IDs, token counts, and help URLs)
+      if (payloadString.length > 480)
+        payloadString = payloadString.slice(0, 480) + '...';
       // frame
       const inferredType = _inferTextPayloadType(payloadString);
       if (inferredType)
@@ -289,7 +289,7 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
         + (payloadString ? `: \n${payloadString}` : '')
         // Custom hints for common issues from select providers
         + (s === 403 && moduleName === 'Gemini' && payloadString?.includes('Requests from referer') ? ' \n\nGemini: Check API key restrictions in Google Cloud Console' : '')
-        + ((s === 404 || (s === 403 && !url.includes('bedrock') /* just a tad more silence */) || s === 502) && !url.includes('app.openpipe.ai') ? ` \n\nPlease make sure the Server can access -> ${debugCleanUrl}` : ''), // [OpenPipe] 403 when the model is associated to the project, 404 when not found
+        + ((s === 404 || (s === 403 && !url.includes('bedrock') /* just a tad more silence */) || s === 502) ? ` \n\nPlease make sure the Server can access -> ${debugCleanUrl}` : ''),
       // cause: payload, // NOT an Error - do not use even to preserve original error payload as cause
     });
   }
@@ -369,7 +369,7 @@ async function _jsonResponseParserOrThrow(response: Response) {
         throw new TRPCFetcherError({
           category: 'parse',
           message: `Expected JSON data but received ${inferredType ? inferredType + ', likely an error page' : 'NON-JSON content'}${contentTypeInfo}:`
-            + ` \n\n"${text.length > 200 ? text.slice(0, 200) + '...' : text}"`,
+            + ` \n\n"${text.length > 480 ? text.slice(0, 480) + '...' : text}"`,
           // cause: error,
         });
       }

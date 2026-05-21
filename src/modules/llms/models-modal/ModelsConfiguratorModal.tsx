@@ -68,7 +68,9 @@ export function ModelsConfiguratorModal(props: {
   const isMobile = useIsMobile();
   const hasLLMs = useHasLLMs();
   const { showPromisedOverlay } = useOverlayComponents();
-  const { showModelsHidden, setShowModelsHidden, starredOnTop, setStarredOnTop } = useUIPreferencesStore(useShallow(state => ({
+  const { showModelsFn, setShowModelsFn, showModelsHidden, setShowModelsHidden, starredOnTop, setStarredOnTop } = useUIPreferencesStore(useShallow(state => ({
+    showModelsFn: state.showModelsFn,
+    setShowModelsFn: state.setShowModelsFn,
     showModelsHidden: state.showModelsHidden,
     setShowModelsHidden: state.setShowModelsHidden,
     starredOnTop: state.modelsStarredOnTop,
@@ -262,7 +264,7 @@ export function ModelsConfiguratorModal(props: {
               {/* Reset All Parameters */}
               <MenuItem onClick={handleResetAllParameters}>
                 <ListItemDecorator><RestoreIcon /></ListItemDecorator>
-                Remove Customizations
+                Reset Customizations
               </MenuItem>
 
               {/* Remove Cloned Models */}
@@ -271,22 +273,29 @@ export function ModelsConfiguratorModal(props: {
                 Remove Duplicated Models
               </MenuItem>
 
-              <MenuItem onClick={joyKeepPopup((event: any) => setVisMenuAnchor(visMenuAnchor ? null : event.currentTarget))}>
-                <ListItemDecorator />
-                Visibility
-                <KeyboardArrowRightIcon sx={{ ml: 'auto' }} />
+              <ListDivider />
+
+              {/* View toggles */}
+              <MenuItem onClick={joyKeepPopup(() => setShowModelsFn(!showModelsFn))}>
+                <ListItemDecorator><Checkbox color='neutral' checked={showModelsFn} /></ListItemDecorator>
+                Show Function Support (DEV)
+              </MenuItem>
+              <MenuItem onClick={joyKeepPopup(() => setStarredOnTop(!starredOnTop))}>
+                <ListItemDecorator><Checkbox color='neutral' checked={starredOnTop} /></ListItemDecorator>
+                Show Starred on Top
               </MenuItem>
 
               <ListDivider />
 
-              {/* View toggles */}
               <MenuItem onClick={joyKeepPopup(() => setShowModelsHidden(!showModelsHidden))}>
                 <ListItemDecorator><Checkbox color='neutral' checked={showModelsHidden} /></ListItemDecorator>
                 View Hidden Models
               </MenuItem>
-              <MenuItem onClick={joyKeepPopup(() => setStarredOnTop(!starredOnTop))}>
-                <ListItemDecorator><Checkbox color='neutral' checked={starredOnTop} /></ListItemDecorator>
-                View Starred on Top
+
+              <MenuItem onClick={joyKeepPopup((event: any) => setVisMenuAnchor(visMenuAnchor ? null : event.currentTarget))}>
+                <ListItemDecorator />
+                Visibility
+                <KeyboardArrowRightIcon sx={{ ml: 'auto' }} />
               </MenuItem>
 
             </Menu>
@@ -306,7 +315,7 @@ export function ModelsConfiguratorModal(props: {
           </CloseablePopup>}
 
           {/* Visibility submenu */}
-          {!!visMenuAnchor && <CloseablePopup menu anchorEl={visMenuAnchor} onClose={() => setVisMenuAnchor(null)} placement='right-start' zIndex={themeZIndexOverMobileDrawer}>
+          {!!visMenuAnchor && <CloseablePopup menu anchorEl={visMenuAnchor} onClose={() => setVisMenuAnchor(null)} placement='right-start' zIndex={themeZIndexOverMobileDrawer} minWidth={160}>
             <MenuItem onClick={handleShowAllModels}>
               <ListItemDecorator><VisibilityIcon /></ListItemDecorator>
               Show All
@@ -327,7 +336,7 @@ export function ModelsConfiguratorModal(props: {
             <ListDivider />
             <MenuItem onClick={handleResetVisibility}>
               <ListItemDecorator><RestoreIcon /></ListItemDecorator>
-              Reset Default Visibility
+              Reset
             </MenuItem>
           </CloseablePopup>}
 
@@ -335,7 +344,7 @@ export function ModelsConfiguratorModal(props: {
       );
 
     return undefined;
-  }, [activeHasFreeLLMs, activeService?.label, dcAllEnabled, dcHasEligible, dcMenuAnchor, dcNoneEnabled, dcStatus.eligible, dcStatus.enabled, handleDisableAllDC, handleEnableAllDC, handleHideAllModels, handleMainMenuOpenChange, handleRefreshModels, handleRemoveClones, handleResetAllParameters, handleResetVisibility, handleShowAllModels, handleShowOnlyFree, handleShowOnlyPaid, handleShowWizard, hasAnyServices, hasLLMs, isMobile, isRefreshing, isTabSetup, isTabWizard, mainMenuOpen, setShowModelsHidden, setStarredOnTop, showModelsHidden, starredOnTop, visMenuAnchor]);
+  }, [activeHasFreeLLMs, activeService?.label, dcAllEnabled, dcHasEligible, dcMenuAnchor, dcNoneEnabled, dcStatus.eligible, dcStatus.enabled, handleDisableAllDC, handleEnableAllDC, handleHideAllModels, handleMainMenuOpenChange, handleRefreshModels, handleRemoveClones, handleResetAllParameters, handleResetVisibility, handleShowAllModels, handleShowOnlyFree, handleShowOnlyPaid, handleShowWizard, hasAnyServices, hasLLMs, isMobile, isRefreshing, isTabSetup, isTabWizard, mainMenuOpen, setShowModelsFn, setShowModelsHidden, setStarredOnTop, showModelsFn, showModelsHidden, starredOnTop, visMenuAnchor]);
 
 
   // custom done button for wizard mode (combines start and close buttons)

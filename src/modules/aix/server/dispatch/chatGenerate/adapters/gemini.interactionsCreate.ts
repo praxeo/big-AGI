@@ -13,7 +13,7 @@ type TInputPart = z.infer<typeof GeminiInteractionsWire_API_Interactions.InputCo
 
 
 /**
- * Build the POST /v1beta/interactions body for Deep Research (and future agents).
+ * Build the POST /v1beta/interactions body for managed agents (Deep Research, Antigravity, ...).
  *
  * Scope:
  *  - Stateless multi-turn: `chatSequence` is flattened to role-tagged turns and sent as `input`.
@@ -22,8 +22,16 @@ type TInputPart = z.infer<typeof GeminiInteractionsWire_API_Interactions.InputCo
  *      API error: "not supported for the deep-research-* agent. Please include any specific
  *      instructions in the input prompt instead"), so we prepend the system text into the first
  *      user turn.
- *    - non-DR agents (future MCP/Computer Use) use the native `system_instruction` field, matching
- *      the gemini.generateContent.ts convention for clean separation.
+ *    - non-DR agents (Antigravity, future MCP/Computer Use) use the native `system_instruction`
+ *      field, matching the gemini.generateContent.ts convention for clean separation.
+ *  - Per-agent runtime flags:
+ *    - deep-research: `background: true` (REQUIRED per DR guide), plus `agent_config` with
+ *      thinking_summaries / visualization.
+ *    - antigravity (antigravity-preview-05-2026): `background` MUST NOT be true (upstream rejects
+ *      it: 'Agent does not support using background=True and requires store=True'), so we omit it
+ *      and let the API default to false (sync streaming). `environment: "remote"` selects a fresh
+ *      Google-hosted Linux sandbox; default tool set (code_execution, google_search, url_context,
+ *      filesystem) is enabled implicitly. Powered by Gemini 3.5 Flash.
  *  - Multimodal: user and model turns carry images as content-part arrays when any image is present,
  *    otherwise stay as plain strings (preserves the API's convenience shape).
  *  - Doc parts render as text via `approxDocPart_To_String`; in-reference-to XML is prepended to the user turn.
@@ -38,7 +46,8 @@ export function aixToGeminiInteractionsCreate(model: AixAPI_Model, chatGenerateR
   // The API expects a bare agent id (no 'models/' prefix)
   const agent = model.id.startsWith('models/') ? model.id.slice('models/'.length) : model.id;
 
-  // Deep Research agents reject `system_instruction` at the top level - we prepend to input instead
+  // Agent-variant gates - keep mutually exclusive so accidental new agents fall through to defaults
+  const isAntigravity = agent.includes('antigravity-');
   const isDeepResearch = agent.includes('deep-research');
 
   // Extract flattened system text (consumed below - DR: prepend to first user turn; else: native field)
@@ -80,8 +89,8 @@ export function aixToGeminiInteractionsCreate(model: AixAPI_Model, chatGenerateR
     input,
     stream: true, // SSE streaming - upstream returns event-stream (interaction.start, content.start/delta/stop, interaction.complete, done). Required for live thought_summary deltas.
     // FIXME: we only support SSE streaming parsing - we used to support parsing of the final answer (with the GET) but not anymore
-    background: true, // required by agents; also required alongside stream=true
-    store: true, // keep the interaction alive so clients can reattach via SSE replay within Gemini's retention window (1d free / 55d paid)
+    store: true, // keep the interaction alive so clients can reattach via SSE replay within Gemini's retention window (1d free / 55d paid). Required by both DR and Antigravity agents.
+    background: isDeepResearch, // DR REQUIRES true ('Agents are required to use background=true'); Antigravity REJECTS true ('does not support using background=True'); future agents default false.
     ...(isDeepResearch && {
       agent_config: {
         type: 'deep-research',
@@ -89,6 +98,16 @@ export function aixToGeminiInteractionsCreate(model: AixAPI_Model, chatGenerateR
         // visualization: forwarded only when the client explicitly opts out; 'auto' (default) is left unset so the agent may generate charts/images.
         ...(model.vndGeminiAgentViz === 'off' && { visualization: 'off' }),
       },
+    }),
+    ...(isAntigravity && {
+      // Reuse the prior turn's sandbox via `upstreamContainer.uct === 'vnd.gem.interactions'` walk
+      // (see aix.client.ts). `"remote"` (fresh sandbox) only when no prior env exists in history -
+      // NOT a fallback on upstream rejection. If the env is invalidated upstream this POST fails
+      // and the error surfaces; recovery happens on the next user turn (which re-walks history).
+      // NOTE: the env is a MUTATING handle, not a snapshot - re-running an earlier turn rejoins
+      // the same sandbox with whatever files/state intervening turns left behind. Tools default
+      // set is enabled implicitly by omitting `tools` (code_execution, google_search, url_context, fs).
+      environment: model.vndGeminiEnvironmentId || 'remote',
     }),
     // non-DR agents: use native system_instruction field (matches gemini.generateContent.ts convention)
     ...(!isDeepResearch && systemText && { system_instruction: systemText }),

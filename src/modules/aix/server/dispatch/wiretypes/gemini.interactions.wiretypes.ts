@@ -12,6 +12,28 @@ import * as z from 'zod/v4';
  *  - `system_instruction` is accepted for non-DR agents; DR agents reject it and we prepend to `input` instead.
  *  - No `tools` (yet), no model-side `generation_config`.
  *
+ * ============================================================================
+ * 2026-05-06: BREAKING CHANGE ANNOUNCED - REQUIRES MIGRATION BEFORE 2026-06-08
+ * ============================================================================
+ * Upstream is replacing the response schema: `outputs[]` -> `steps[]`, each step has
+ * `content[]` blocks. New SSE events: `interaction.created`, `step.start`,
+ * `step.delta`, `step.stop`, `interaction.completed`, `interaction.in_progress`,
+ * `interaction.requires_action`. Also `response_mime_type` moves into
+ * `response_format.mime_type`, and `image_config` becomes a `response_format`
+ * entry with `type: 'image'`.
+ *
+ * Timeline:
+ *   2026-05-07  new schema available via `Api-Revision: 2026-05-20` request header
+ *   2026-05-26  new schema becomes the DEFAULT; opt out via `Api-Revision: 2026-05-07`
+ *   2026-06-08  legacy schema PERMANENTLY REMOVED
+ *
+ * Migration guide: https://ai.google.dev/gemini-api/docs/interactions-breaking-changes-may-2026
+ * TODO: rewrite request body, response Interaction.outputs -> steps, and the full
+ *       SSE event union in this file + parsers/gemini.interactions.parser.ts +
+ *       adapters/gemini.interactionsCreate.ts. Until then, the dispatch layer can
+ *       send `Api-Revision: 2026-05-07` to keep the legacy schema alive through 6/8.
+ * ============================================================================
+ *
  * Source-of-truth snapshots (for diffing across upstream changes, see ./_upstream/sync.sh):
  *   ./_upstream/gemini.interactions.spec.md  - the formal API reference
  *   ./_upstream/gemini.interactions.guide.md - the prose guide
@@ -66,6 +88,9 @@ export namespace GeminiInteractionsWire_API_Interactions {
   //    Dynamic agents - no tunable config documented beyond the discriminator.
   //  - DeepResearchAgentConfig  { type: 'deep-research', ... }
   //    See ./_upstream/gemini.deep-research.guide.md#agent-configuration for defaults and semantics.
+  //
+  // Note: the Antigravity Agent (antigravity-preview-05-2026, released 2026-05-19) does NOT use
+  // `agent_config` - it is configured via the top-level `environment` and `tools` fields instead.
 
   const _DynamicAgentConfig_schema = z.object({
     type: z.literal('dynamic'),
@@ -110,10 +135,25 @@ export namespace GeminiInteractionsWire_API_Interactions {
     agent_config: AgentConfig_schema.optional(), // Polymorphic on `type`: 'deep-research' | 'dynamic'. MUTUALLY EXCLUSIVE with `generation_config` (model path). Enables thought-summary streaming, visualizations, collaborative planning.
     // generation_config: GenerationConfig_schema.optional(), // model path - not modeled here yet
 
+    // --- Sandbox (Antigravity Agent + future managed agents) ---
+    // `environment` is the top-level sandbox handle on the agent path. Accepts the literal "remote"
+    // (fresh sandbox with defaults), an existing `env_<id>` string (reuses sandbox state across turns),
+    // or an `EnvironmentConfig` object (custom sources / network rules). DR agents ignore this field.
+    environment: z.union([z.string(), z.looseObject({})]).optional(),
+
     // --- Runtime flags (literals below force correct behavior at the adapter layer) ---
     stream: z.boolean().optional(), // SSE streaming - when true, POST returns an event-stream (interaction.start, content.start/delta/stop, interaction.complete, done). On reattach, GET ?stream=true replays the full event sequence (we do not send `last_event_id` - full replay is the intentional semantic; see poller comment).
-    store: z.literal(true), // spec-optional; we lock to `true` so the interaction is retrievable post-run (replay via GET stream, resume via `last_event_id`). Required alongside `background=true` for agents per the DR guide.
-    background: z.literal(true), // spec-optional; DR agents REQUIRE `true` ('Agents are required to use background=true'). Locked to true to prevent accidental sync-mode sends.
+    /**
+     * spec-optional; we lock to `true` so the interaction is retrievable post-run
+     * Required by DR agents AND by Antigravity Agent.
+     */
+    store: z.literal(true),
+    /**
+     * spec-optional, but we mandate it for clarity:
+     * - DR agents REQUIRE `true` ('Agents are required to use background=true').
+     * - Antigravity Agent REJECTS `true` ('does not support using background=True'). Adapter sets per-agent.
+     */
+    background: z.boolean(),
 
     // --- Multi-turn continuation ---
     previous_interaction_id: z.string().optional(), // reuses prior interaction's stored inputs/outputs. Per-turn knobs (tools, system_instruction, generation_config) are NOT carried and must be re-sent.
@@ -181,18 +221,20 @@ export namespace GeminiInteractionsWire_API_Interactions {
     channels: z.number().optional(),
   });
 
-  // Deep Research internals: tool calls + results are streamed as content blocks. We recognize their
-  // `type` strings but treat them as transient (no user-visible emission here). They're listed as a
-  // plain enum so the parser can silent-skip them without trying to schema-parse each variant.
+  // Managed-agent internals that are NOT surfaced to the user. The SSE parser silent-skips these on
+  // `content.delta`; the NS parser silent-skips them when walking `outputs[]`.
   //
-  // Note: `function_call` / `function_result` are INTENTIONALLY absent. Those are the canonical
-  // user-facing tool-call format - if the Interactions API is ever used with a model + `tools`,
-  // they'd need real handling (start/append/end a function invocation). They fall through to the
-  // warn-once path so we notice the moment they appear on this code path.
+  // Antigravity's default tool set surfaces a different group of types - we surface those via
+  // op-state placeholders so the user sees what the agent did. The "surfaced" set (handled by
+  // `_emitAntigravityToolOp` in the SSE parser):
+  //   function_call / function_result               (sandbox filesystem: list_files, read_file, ...)
+  //   code_execution_call / code_execution_result   (bash/python in the sandbox)
+  //   google_search_call / google_search_result     (web search)
+  //   url_context_call / url_context_result         (web page fetch)
+  //
+  // The set below is the residual: tool types we DO NOT surface (not part of Antigravity's default
+  // set, never observed on DR streams in practice, or carry payloads not useful as chip detail).
   export const INTERNAL_OUTPUT_TYPES = new Set<string>([
-    'code_execution_call', 'code_execution_result',
-    'url_context_call', 'url_context_result',
-    'google_search_call', 'google_search_result',
     'google_maps_call', 'google_maps_result',
     'file_search_call', 'file_search_result',
     'mcp_server_tool_call', 'mcp_server_tool_result',
@@ -256,6 +298,9 @@ export namespace GeminiInteractionsWire_API_Interactions {
     object: z.string().optional(),    // 'interaction' literal observed in responses
     agent: z.string().optional(),     // echoed back on agent-path interactions
     model: z.string().optional(),     // echoed back on model-path interactions
+
+    // session/sandbox handle for managed agents (today: Antigravity); forward-carried via the request `environment` field. Lifecycle per docs: Idle after 15min, retained 7d since last-active, then deleted. Wire doesn't expose `environment_expires_at`; parser derives `now + 7d` for the walk's expiry gate.
+    environment_id: z.string().optional(),
 
     // content + metrics
     outputs: z.array(Output_schema).optional(), // absent until first content arrives
