@@ -16,8 +16,7 @@ import type { DModelDomainId } from './model.domains.types';
 import type { DModelsService, DModelsServiceId } from './llms.service.types';
 import { DLLM, DLLMId, LLM_IF_OAI_Fn, LLM_IF_OAI_Vision } from './llms.types';
 import { DModelParameterId, DModelParameterRegistry, DModelParameterValues, LLMImplicitParametersRuntimeFallback } from './llms.parameters';
-import { createDModelConfiguration, DModelConfiguration } from './modelconfiguration.types';
-import { createLlmsAssignmentsSlice, LlmsAssignmentsActions, LlmsAssignmentsSlice, LlmsAssignmentsState, llmsHeuristicUpdateAssignments } from './store-llms-domains_slice';
+import { createLlmsAssignmentsSlice, LlmsAssignmentsActions, LlmsAssignmentsSlice, LlmsAssignmentsState, llmsAssignmentsPruneStale } from './store-llms-domains_slice';
 import { getDomainModelConfiguration } from './hooks/useModelDomain';
 import { portModelPricingV2toV3 } from './llms.pricing';
 
@@ -82,11 +81,11 @@ export const useModelsStore = create<LlmsStore>()(persist(
     // actions
 
     setServiceLLMs: (serviceId: DModelsServiceId, updatedServiceLLMs: ReadonlyArray<DLLM>, keepUserEdits: true, keepMissingLLMs: false) =>
-      set(({ llms, modelAssignments }) => {
+      set(state => {
 
         // separate existing models
-        const otherServiceLLMs = llms.filter(llm => llm.sId !== serviceId);
-        const previousServiceLLMs = llms.filter(llm => llm.sId === serviceId);
+        const otherServiceLLMs = state.llms.filter(llm => llm.sId !== serviceId);
+        const previousServiceLLMs = state.llms.filter(llm => llm.sId === serviceId);
         const consumedPreviousIds = new Set<DLLMId>();
 
         // process updated models, re-applying user customizations where applicable
@@ -166,7 +165,7 @@ export const useModelsStore = create<LlmsStore>()(persist(
         const newLlms = [...customModels, ...missingModels, ...mergedServiceLLMs, ...otherServiceLLMs];
         return {
           llms: newLlms,
-          modelAssignments: llmsHeuristicUpdateAssignments(newLlms, modelAssignments),
+          modelAssignments: llmsAssignmentsPruneStale(newLlms, state.modelAssignments),
         };
       }),
 
@@ -175,7 +174,7 @@ export const useModelsStore = create<LlmsStore>()(persist(
         const newLlms = state.llms.filter(llm => llm.id !== id);
         return {
           llms: newLlms,
-          modelAssignments: llmsHeuristicUpdateAssignments(newLlms, state.modelAssignments),
+          modelAssignments: llmsAssignmentsPruneStale(newLlms, state.modelAssignments),
         };
       }),
 
@@ -184,7 +183,7 @@ export const useModelsStore = create<LlmsStore>()(persist(
         const newLlms = state.llms.filter(llm => !(llm.sId === serviceId && llm.isUserClone === true));
         return {
           llms: newLlms,
-          modelAssignments: llmsHeuristicUpdateAssignments(newLlms, state.modelAssignments),
+          modelAssignments: llmsAssignmentsPruneStale(newLlms, state.modelAssignments),
         };
       }),
 
@@ -367,7 +366,7 @@ export const useModelsStore = create<LlmsStore>()(persist(
         return {
           llms,
           sources: state.sources.filter(s => s.id !== id),
-          modelAssignments: llmsHeuristicUpdateAssignments(llms, state.modelAssignments),
+          modelAssignments: llmsAssignmentsPruneStale(llms, state.modelAssignments),
         };
       }),
 
@@ -425,8 +424,9 @@ export const useModelsStore = create<LlmsStore>()(persist(
      *  3: big-AGI v2.x upgrade
      *  4: migrate .options to .initialParameters/.userParameters
      *  4B: we changed from .chatLLMId/.fastLLMId to modelAssignments: {}, without explicit migration (done on rehydrate, and for no particular reason)
+     *  5: global model assignments default to dynamic Auto, stored as missing assignments
      */
-    version: 4,
+    version: 5,
     migrate: (_state: any, fromVersion: number): LlmsStore => {
 
       if (!_state) return _state;
@@ -465,6 +465,10 @@ export const useModelsStore = create<LlmsStore>()(persist(
         }
       }
 
+      // 4 -> 5: reset everyone to dynamic Auto
+      if (fromVersion < 5)
+        state.modelAssignments = {};
+
       return state;
     },
 
@@ -491,27 +495,10 @@ export const useModelsStore = create<LlmsStore>()(persist(
         return llm.vId ? llm : { ...llm, vId: service.vId };
       }).filter(llm => !!llm) as DLLM[];
 
-      // Select the best LLMs automatically, if not set
+      // Prune stale assignments. Missing assignments mean dynamic Auto.
       try {
-        //  auto-detect assignments, or re-import them from the old format
-        if (!hasKeys(state.modelAssignments)) {
-
-          // reimport the former chatLLMId and fastLLMId if set
-          const prevState = state as { chatLLMId?: DLLMId, fastLLMId?: DLLMId };
-          const existingAssignments: Partial<Record<DModelDomainId, DModelConfiguration>> = {};
-          if (prevState.chatLLMId) {
-            existingAssignments['primaryChat'] = createDModelConfiguration('primaryChat', prevState.chatLLMId, undefined);
-            existingAssignments['codeApply'] = createDModelConfiguration('codeApply', prevState.chatLLMId, undefined);
-            delete prevState.chatLLMId;
-          }
-          if (prevState.fastLLMId) {
-            existingAssignments['fastUtil'] = createDModelConfiguration('fastUtil', prevState.fastLLMId, undefined);
-            delete prevState.fastLLMId;
-          }
-
-          // auto-pick models
-          state.modelAssignments = llmsHeuristicUpdateAssignments(state.llms, existingAssignments);
-        }
+        if (hasKeys(state.modelAssignments))
+          state.modelAssignments = llmsAssignmentsPruneStale(state.llms, state.modelAssignments);
       } catch (error) {
         console.error('Error in autoPickModels', error);
       }
