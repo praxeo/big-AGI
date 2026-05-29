@@ -7,7 +7,7 @@ import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 import type { DLLMMaxOutputTokens } from '~/common/stores/llms/llms.types';
-import { DModelParameterId, DModelParameterRegistry, DModelParameterSpecAny, DModelParameterValues, getAllModelParameterValues, LLMImplicitParametersRuntimeFallback } from '~/common/stores/llms/llms.parameters';
+import { DModelParameterId, DModelParameterRegistry, DModelParameterSpec, DModelParameterSpecAny, DModelParameterValues, getAllModelParameterValues, LLMImplicitParametersRuntimeFallback } from '~/common/stores/llms/llms.parameters';
 import { FormSelectControl } from '~/common/components/forms/FormSelectControl';
 import { FormSliderControl } from '~/common/components/forms/FormSliderControl';
 import { FormSwitchControl } from '~/common/components/forms/FormSwitchControl';
@@ -219,7 +219,7 @@ export function LLMParametersEditor(props: {
   const defGemTB = DModelParameterRegistry['llmVndGeminiThinkingBudget'];
 
   // specs: whether a models supports a parameter
-  const modelParamSpec = React.useMemo(() =>
+  const modelParamSpec: Partial<{ [K in DModelParameterId]: DModelParameterSpec<K> }> = React.useMemo(() =>
       Object.fromEntries((props.parameterSpecs ?? []).map(spec => [spec.paramId, spec]))
     , [props.parameterSpecs]);
 
@@ -299,14 +299,16 @@ export function LLMParametersEditor(props: {
 
   // semantics
   function showParam(paramId: DModelParameterId): boolean {
-    return paramId in modelParamSpec && !modelParamSpec[paramId].hidden;
+    return paramId in modelParamSpec && !modelParamSpec[paramId]?.hidden;
   }
 
   // Anthropic adaptive(-1)/extended(>1024) thinking disables temperature control
   const _antThinkingDefined = 'llmVndAntThinkingBudget' in modelParamSpec;
   const antThinkingEnabled = _antThinkingDefined && !!llmVndAntThinkingBudget; // both mullish mean "off"
   const antThinkingEnabled_Adaptive = antThinkingEnabled && llmVndAntThinkingBudget === -1;
-  const antThinkingShown = _antThinkingDefined && !modelParamSpec['llmVndAntThinkingBudget'].hidden;
+  const antThinkingShown = _antThinkingDefined && !modelParamSpec['llmVndAntThinkingBudget']?.hidden;
+  const antInfSpeedTier = modelParamSpec['llmVndAntInfSpeed']?.enumValues?.[0];
+  const antInfSpeedMult = antInfSpeedTier && DModelParameterRegistry['llmVndAntInfSpeed'].enumPriceMultiplier?.[antInfSpeedTier];
 
   const gemThinkingAuto = llmVndGeminiThinkingBudget === undefined;
   const gemThinkingOff = llmVndGeminiThinkingBudget === 0;
@@ -564,12 +566,12 @@ export function LLMParametersEditor(props: {
     {showParam('llmVndAntInfSpeed') && (
       <FormSwitchControl
         title='Fast Mode (Preview)'
-        description={llmVndAntInfSpeed === 'fast' ? 'Fast - 6x pricing ⚠️' : 'Standard (default)'}
-        tooltip='Accelerated inference (~2.5x faster output) at 6x pricing. Preview access required.'
-        checked={llmVndAntInfSpeed === 'fast'}
+        description={llmVndAntInfSpeed ? `Fast - ${antInfSpeedMult}x pricing ⚠️` : 'Standard (default)'}
+        tooltip='Accelerated inference at premium pricing. Preview access may be required.'
+        checked={llmVndAntInfSpeed !== undefined}
         onChange={(checked) => {
           if (!checked) onRemoveParameter('llmVndAntInfSpeed');
-          else onChangeParameter({ llmVndAntInfSpeed: 'fast' });
+          else if (antInfSpeedTier) onChangeParameter({ llmVndAntInfSpeed: antInfSpeedTier });
         }}
       />
     )}
