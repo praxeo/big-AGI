@@ -4,9 +4,10 @@ import type { DMessageGenerator } from '~/common/stores/chat/chat.message';
 import type { MaybePromise } from '~/common/types/useful.types';
 import { convert_Base64WithMimeType_To_Blob } from '~/common/util/blobUtils';
 import { create_CodeExecutionInvocation_ContentFragment, create_CodeExecutionResponse_ContentFragment, create_FunctionCallInvocation_ContentFragment, createAnnotationsVoidFragment, createDMessageDataRefDBlob, createDVoidWebCitation, createErrorContentFragment, createHostedResourceContentFragment, createModelAuxVoidFragment, createPlaceholderVoidFragment, createTextContentFragment, createZyncAssetReferenceContentFragment, DMessageErrorPart, DVoidModelAuxPart, DVoidPlaceholderMOp, isContentFragment, isModelAuxPart, isTextContentFragment, isVoidAnnotationsFragment, isVoidFragment, isVoidPlaceholderFragment } from '~/common/stores/chat/chat.fragments';
+import { downloadBlob } from '~/common/util/downloadUtils';
 import { ellipsizeMiddle } from '~/common/util/textUtils';
 import { imageBlobTransform, PLATFORM_IMAGE_MIMETYPE } from '~/common/util/imageUtils';
-import { metricsFinishChatGenerateLg, metricsPendChatGenerateLg } from '~/common/stores/metrics/metrics.chatgenerate';
+import { metricsChatGenerateLgToMd, metricsFinishChatGenerateLg, metricsPendChatGenerateLg } from '~/common/stores/metrics/metrics.chatgenerate';
 import { nanoidToUuidV4 } from '~/common/util/idUtils';
 
 import type { AixWire_Particles } from '../server/api/aix.wiretypes';
@@ -701,8 +702,35 @@ export class ContentReassembler {
         }));
         break;
 
+      case 'vnd.oai.container_file':
+        this._pushFragment(createHostedResourceContentFragment({
+          via: 'openai-container',
+          fileId: op.fileId,
+          containerId: op.containerId,
+          ...(op.filename ? { filename: op.filename } : {}),
+        }));
+        break;
+
+      case 'inline-download': {
+        // [Gemini] Inline file artifact (bytes arrive once on the wire): fire-and-forget client download,
+        // plus a one-line text-fragment breadcrumb in place of the download so the transcript records it
+        // (mirrors the 'Generated audio' breadcrumb in onAppendInlineAudio).
+        //
+        // PARITY GAP vs the two cases above: Anthropic ('vnd.ant.file') and OpenAI ('vnd.oai.container_file')
+        // are server-hosted and re-fetchable by id, so they persist as a hosted_resource fragment with a
+        // download-on-demand chip. Gemini sends the bytes once with no handle - so chip parity would require
+        // STORING the bytes in a fragment (a new DMessage part + persistence), which we deliberately avoid to
+        // keep the artifact out of the conversation. Hence: download + note, not a stored re-fetchable resource.
+        const filename = op.filename || `download.${op.mimeType.split(';')[0].trim().split('/')[1] || 'bin'}`;
+        convert_Base64WithMimeType_To_Blob(op.b64, op.mimeType, 'ContentReassembler.onAppendHostedResource.inline-download')
+          .then(blob => downloadBlob(blob, filename))
+          .catch(error => console.warn('[ContentReassembler] inline-download failed:', error));
+        this._pushFragment(createTextContentFragment(`Generated file ⬇ \`${filename}\` (${op.mimeType})`));
+        break;
+      }
+
       default:
-        const _exhaustiveCheck: never = op.kind;
+        const _exhaustiveCheck: never = op;
         console.warn('[ContentReassembler] onAppendHostedResource: unrecognized hosted resource kind', { op });
         break;
     }
@@ -844,6 +872,24 @@ export class ContentReassembler {
           ...this.S.generator,
           upstreamContainer: { uct: 'vnd.ant.container', containerId: id, expiresAt },
         };
+      return; // container is message-scoped, not fragment-scoped
+    }
+
+    // Promote OpenAI code-interpreter session container -> Generator (message-scoped, for cross-turn reuse + file downloads).
+    // Invariant: one container per Response - auto mode keeps every code_interpreter_call in a turn on the same sandbox.
+    // A divergence here is unexpected (a >20min single-Response container rotation, or an upstream/parser anomaly).
+    // Cross-turn round-trip then collapses to the most-recent container (see newCodeInterpreterCallMessage in openai.responsesCreate.ts).
+    if (vendor === 'openai-container' && 'container' in state) {
+      const { id, expiresAt } = state.container;
+      if (id && expiresAt) {
+        const prior = this.S.generator?.upstreamContainer;
+        if (prior?.uct === 'vnd.oai.container' && prior.containerId !== id)
+          console.warn(`[DEV] AIX: OpenAI Responses - container diverged within one message: ${prior.containerId} -> ${id}`);
+        this.S.generator = {
+          ...this.S.generator,
+          upstreamContainer: { uct: 'vnd.oai.container', containerId: id, expiresAt },
+        };
+      }
       return; // container is message-scoped, not fragment-scoped
     }
 
@@ -1087,7 +1133,11 @@ export class ContentReassembler {
   private onMetrics({ metrics }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'set-metrics' }>): void {
     // type check point for AixWire_Particles.CGSelectMetrics -> DMetricsChatGenerate_Lg
     this.S.cgMetricsLg = metrics;
-    metricsPendChatGenerateLg(this.S.cgMetricsLg);
+    metricsPendChatGenerateLg(this.S.cgMetricsLg); // sets TsR='pending'
+    // Reflect preliminary token counts on the generator during streaming, so the UI (avatar tooltip,
+    // Message Info modal) can show input/output tokens early. Costs are intentionally omitted here -
+    // they are computed at finalization (_finalizeLlmMetricsWithCosts), which then overwrites these.
+    this.S.generator = { ...this.S.generator, metrics: metricsChatGenerateLgToMd(this.S.cgMetricsLg) };
   }
 
   private onModelName({ name }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'set-model' }>): void {

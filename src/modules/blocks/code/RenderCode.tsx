@@ -6,6 +6,7 @@ import { Box, ButtonGroup, Sheet, Typography } from '@mui/joy';
 import ChangeHistoryTwoToneIcon from '@mui/icons-material/ChangeHistoryTwoTone';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import FitScreenIcon from '@mui/icons-material/FitScreen';
+import DescriptionOutlinedIcon from '@mui/icons-material/DescriptionOutlined';
 import HtmlIcon from '@mui/icons-material/Html';
 import NumbersRoundedIcon from '@mui/icons-material/NumbersRounded';
 import ReplayRoundedIcon from '@mui/icons-material/ReplayRounded';
@@ -19,6 +20,7 @@ import { useUIPreferencesStore } from '~/common/stores/store-ui';
 
 import { OVERLAY_BUTTON_RADIUS, OverlayButton, overlayButtonsActiveSx, overlayButtonsClassName, overlayButtonsTopRightSx, overlayGroupWithShadowSx } from '../OverlayButton';
 import { RenderCodeHtmlIFrame } from './code-renderers/RenderCodeHtmlIFrame';
+import { RenderCodeMarkdown } from './code-renderers/RenderCodeMarkdown';
 import { RenderCodeMermaid } from './code-renderers/RenderCodeMermaid';
 import { heuristicIsSVGCode, RenderCodeSVG } from './code-renderers/RenderCodeSVG';
 import { RenderCodeSyntax } from './code-renderers/RenderCodeSyntax';
@@ -159,6 +161,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const [fitScreen, setFitScreen] = React.useState(!!props.fitScreen);
   const [htmlReloadKey, setHtmlReloadKey] = React.useState(0);
   const [showHTML, setShowHTML] = React.useState(props.initialShowHTML === true);
+  const [showMarkdown, setShowMarkdown] = React.useState(true);
   const [showMermaid, setShowMermaid] = React.useState(true);
   const [showPlantUML, setShowPlantUML] = React.useState(true);
   const [showSVG, setShowSVG] = React.useState(true);
@@ -211,6 +214,9 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const isHTMLCode = heuristicIsBlockPureHTML(code);
   const renderHTML = isHTMLCode && showHTML && !blockIsPartial;
 
+  const isMdCode = !blockIsPartial && (lcBlockTitle === 'md' || lcBlockTitle === 'markdown' || lcBlockTitle.endsWith('.md'));
+  const renderMarkdown = isMdCode && showMarkdown;
+
   const isMermaidCode = lcBlockTitle === 'mermaid' && !blockIsPartial;
   const renderMermaid = isMermaidCode && showMermaid;
 
@@ -223,7 +229,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const renderSVG = isSVGCode && showSVG && !blockIsPartial;
   const canScaleSVG = renderSVG && code.includes('viewBox="');
 
-  const renderSyntaxHighlight = !renderHTML && !renderMermaid && !renderPlantUML && !renderSVG;
+  const renderSyntaxHighlight = !renderHTML && !renderMarkdown && !renderMermaid && !renderPlantUML && !renderSVG;
   const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || blockIsPartial;
   const renderLineNumbers = !cannotRenderLineNumbers && ((showLineNumbers && uiComplexityMode !== 'minimal') || isFullscreen);
 
@@ -338,18 +344,19 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
         <span style={!isFullscreen ? undefined : _styles.fullscreenSyntaxFix}>
           {/* Renders HTML, or inline SVG, inline plantUML rendered, or highlighted code */}
           {renderHTML ? <RenderCodeHtmlIFrame key={htmlReloadKey} htmlCode={code} isFullscreen={isFullscreen} />
-            : renderMermaid ? <RenderCodeMermaid mermaidCode={code} fitScreen={fitScreen} />
-              : renderSVG ? <RenderCodeSVG svgCode={code} fitScreen={fitScreen} />
-                : (renderPlantUML && (plantUmlSvgData || plantUmlError)) ? <RenderCodePlantUML svgCode={plantUmlSvgData ?? null} error={plantUmlError} fitScreen={fitScreen} />
-                  : blockIsPartial ? (
-                    <Box component='pre' sx={_styles.streamingPlainPre}>
-                      <Box component='code'>
-                        {code}
+            : renderMarkdown ? <RenderCodeMarkdown mdCode={code} />
+              : renderMermaid ? <RenderCodeMermaid mermaidCode={code} fitScreen={fitScreen} />
+                : renderSVG ? <RenderCodeSVG svgCode={code} fitScreen={fitScreen} />
+                  : (renderPlantUML && (plantUmlSvgData || plantUmlError)) ? <RenderCodePlantUML svgCode={plantUmlSvgData ?? null} error={plantUmlError} fitScreen={fitScreen} />
+                    : blockIsPartial ? (
+                      <Box component='pre' sx={_styles.streamingPlainPre}>
+                        <Box component='code'>
+                          {code}
+                        </Box>
                       </Box>
-                    </Box>
-                  ) : (
-                    <RenderCodeSyntax highlightedSyntaxAsHtml={codeSyntaxHtml} presenterMode={isFullscreen} />
-                  )}
+                    ) : (
+                      <RenderCodeSyntax highlightedSyntaxAsHtml={codeSyntaxHtml} presenterMode={isFullscreen} />
+                    )}
         </span>
 
       </Box>
@@ -377,6 +384,13 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
                   </OverlayButton>
                 )}
               </ButtonGroup>
+            )}
+
+            {/* Show Markdown Preview */}
+            {isMdCode && (
+              <OverlayButton tooltip={noTooltips ? null : renderMarkdown ? 'Show Code' : 'Show Preview'} variant={renderMarkdown ? 'solid' : 'outlined'} smShadow onClick={() => setShowMarkdown(!showMarkdown)}>
+                <DescriptionOutlinedIcon />
+              </OverlayButton>
             )}
 
             {/* SVG, Mermaid, PlantUML -- including a max-out button */}

@@ -18,7 +18,7 @@ import { stripUndefined } from '~/common/util/objectUtils';
 import { webGeolocationCached } from '~/common/util/webGeolocationUtils';
 
 // NOTE: pay particular attention to the "import type", as this is importing from the server-side Zod definitions
-import type { AixAPI_Access, AixAPI_ConnectionOptions_ChatGenerate, AixAPI_Context_ChatGenerate, AixAPI_Model, AixAPIChatGenerate_Request } from '../server/api/aix.wiretypes';
+import type { AixAPI_Access, AixAPI_ConnectionOptions_ChatGenerate, AixAPI_Context_ChatGenerate, AixAPI_Model, AixAPIChatGenerate_Request, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../server/api/aix.wiretypes';
 
 import { AixStreamRetry } from './aix.client.retry';
 import { ReassemblerParticleTransforms, ContentReassembler } from './ContentReassembler';
@@ -186,6 +186,8 @@ export function aixCreateModelFromLLMOptions(
 export function aixDecorateModelFromGlobals(model: AixAPI_Model, decorations: {
   // [Anthropic Container] Container ID from a prior turn (caller is responsible for expiry checks)
   vndAntContainerId?: string;
+  // [OpenAI Responses Container] Code-interpreter container from a prior turn (caller is responsible for expiry checks)
+  vndOaiContainerId?: string;
   // [Anthropic File Inlining] Global user policy; 'off' means don't decorate (caller can pass it raw)
   vndAntTransformInlineFiles?: AIVndAntInlineFilesPolicy;
   // [Gemini Interactions] Session/sandbox env ID from a prior turn (no expiry gate on the wire today)
@@ -195,6 +197,10 @@ export function aixDecorateModelFromGlobals(model: AixAPI_Model, decorations: {
   // [Anthropic Container] Inject session state from a prior turn
   if (decorations.vndAntContainerId)
     model.vndAntContainerId = decorations.vndAntContainerId;
+
+  // [OpenAI Responses Container] Inject session container from a prior turn (ignored by non-Responses adapters)
+  if (decorations.vndOaiContainerId)
+    model.vndOaiContainerId = decorations.vndOaiContainerId;
 
   // [Anthropic File Inlining] Apply only when not 'off' - the wire enum doesn't include 'off'
   if (decorations.vndAntTransformInlineFiles && decorations.vndAntTransformInlineFiles !== 'off')
@@ -222,7 +228,12 @@ interface AixClientOptions {
   // -- Session State - extract? --
   // Cross-turn sandbox/container handles. Caller may pre-populate; resolver walks chat history to fill any unset slot.
   antContainerId?: string;            // [Anthropic Container] Container ID from a prior turn (caller checks expiry before setting)
+  oaiContainerId?: string;            // [OpenAI Responses Container] Code-interpreter container from a prior turn (caller checks expiry before setting)
   gemEnvironmentId?: string;                  // [Gemini Interactions] Session/sandbox env id from a prior turn (today: Antigravity; no expiry on the wire; best-effort - no auto-fallback if upstream rejects)
+
+  // Client-side tools (e.g., persona memory update)
+  tools?: AixTools_ToolDefinition[];
+  toolsPolicy?: AixTools_ToolsPolicy;
 }
 
 
@@ -292,6 +303,8 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     const aixChatContentGenerateRequest: AixAPIChatGenerate_Request = {
       systemMessage: await aixCGR_SystemMessage_FromDMessageOrThrow(chatSystemInstruction),
       chatSequence: await aixCGR_ChatSequence_FromDMessagesOrThrow(chatHistoryWithoutSystemMessages),
+      ...(clientOptions.tools?.length ? { tools: clientOptions.tools } : undefined),
+      ...(clientOptions.toolsPolicy ? { toolsPolicy: clientOptions.toolsPolicy } : undefined),
     };
 
     // Cross-turn upstream-container resolution. Walks history newest-first, stops at the first
@@ -301,6 +314,11 @@ export async function aixChatGenerateContent_DMessage_FromConversation(
     if (!clientOptions.antContainerId) {
       const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.ant.container');
       if (uc) clientOptions = { ...clientOptions, antContainerId: uc.containerId };
+    }
+    if (!clientOptions.oaiContainerId) {
+      // OpenAI Responses: expiresAt is stamped now+20min by the parser; the 15s buffer falls back to auto-create when stale.
+      const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.oai.container');
+      if (uc) clientOptions = { ...clientOptions, oaiContainerId: uc.containerId };
     }
     if (!clientOptions.gemEnvironmentId) {
       const uc = _findRecentUpstreamContainer(chatHistoryWithoutSystemMessages, 'vnd.gem.interactions');
@@ -582,6 +600,7 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmOptionsOverride, llmId);
   aixDecorateModelFromGlobals(aixModel, {
     vndAntContainerId: clientOptions?.antContainerId,
+    vndOaiContainerId: clientOptions?.oaiContainerId,
     vndAntTransformInlineFiles: aixAccess.dialect === 'anthropic' ? getVndAntInlineFiles() : undefined,
     vndGeminiEnvironmentId: clientOptions?.gemEnvironmentId,
   });

@@ -191,14 +191,35 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
     delete payload.temperature;
   }
 
+  // [Anthropic, 2026-06-09] Fable 5 / Mythos 5: adaptive is the only thinking mode - 'enabled' (budget_tokens) and 'disabled' return 400
+  const hotFixAdaptiveThinkingOnlyModel = /claude-(fable|mythos)-5/.test(model.id);
+
+  // HOTFIX: Fable/Mythos 5 reject forced tool use: 400 'tool_choice forces tool use is not compatible with this model.'
+  // (model-level, regardless of thinking config). Downgrade to 'auto' + a system hint - empirically the model
+  // reliably calls the tool when instructed. Forced tool use is deprecated AIX-wide, see ToolsPolicy_schema.
+  if (hotFixAdaptiveThinkingOnlyModel && payload.tool_choice && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool')) {
+    const mustUseHint = payload.tool_choice.type === 'tool'
+      ? `IMPORTANT: You MUST respond by calling the \`${payload.tool_choice.name}\` tool. Do not respond with text.`
+      : 'IMPORTANT: You MUST respond by calling one of the provided tools. Do not respond with text.';
+    console.log(`[Anthropic] ${model.id}: coercing tool_choice '${payload.tool_choice.type}' -> 'auto' (forced tool use rejected by this model)`);
+    payload.tool_choice = { type: 'auto' };
+    payload.system = [...(payload.system ?? []), AnthropicWire_Blocks.TextBlock(mustUseHint, 'hotfix.forced-tools')];
+    // Forced-tool requests are utility flows (autotitle, diagrams, follow-ups): adaptive thinking cannot be
+    // disabled on these models, so default effort to 'low' to bound the thinking spend (caller-overridable)
+    if (!model.reasoningEffort)
+      payload.output_config = { effort: 'low' };
+  }
+
   // [Anthropic] Thinking: adaptive (4.6+), enabled with budget (≤4.5), or disabled
   const areToolCallsRequired = payload.tool_choice && typeof payload.tool_choice === 'object' && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool');
   const canUseThinking = !areToolCallsRequired || !hotFixDisableThinkingWhenToolsForced;
   if (model.vndAntThinkingBudget !== undefined && canUseThinking) {
-    if (model.vndAntThinkingBudget === 'adaptive') {
+    if (model.vndAntThinkingBudget === 'adaptive' || hotFixAdaptiveThinkingOnlyModel) {
+      if (model.vndAntThinkingBudget !== 'adaptive')
+        console.log(`[Anthropic] ${model.id}: coercing thinking '${model.vndAntThinkingBudget}' -> 'adaptive' (adaptive-only model)`);
       payload.thinking = {
         type: 'adaptive',
-        display: 'summarized', // Opus 4.7 defaults to 'omitted' - explicit 'summarized' preserves 4.6-era UX (slight latency cost)
+        display: 'summarized', // Opus 4.7+ and Fable/Mythos 5 default to 'omitted' - explicit 'summarized' preserves 4.6-era UX (slight latency cost)
       };
       delete payload.temperature;
     } else if (model.vndAntThinkingBudget !== null) {
@@ -229,10 +250,10 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   // [Anthropic, 2026-01-29 GA] Structured Outputs - JSON output format (now in output_config.format)
   if (model.strictJsonOutput) {
 
-    // auto-add additionalProperties: false to root object if not present - required by Anthropic
+    // auto-add additionalProperties: false to every object node if not present - required by Anthropic (see _strictNormalizeSchema)
     let schema = model.strictJsonOutput.schema;
-    if (schema && typeof schema === 'object' && schema.type === 'object' && schema.additionalProperties === undefined)
-      schema = { ...schema, additionalProperties: false };
+    if (schema && typeof schema === 'object')
+      schema = _strictNormalizeSchema(schema);
     payload.output_config = {
       ...payload.output_config,
       format: { type: 'json_schema', schema },
@@ -430,8 +451,9 @@ function* _generateAnthropicMessagesContentBlocks({ parts, role }: AixMessages_C
               console.warn('Anthropic: broken empty thinking block', { part });
               break;
             }
-            if (part.aText && part.textSignature)
-              yield { role: 'assistant', content: AnthropicWire_Blocks.ThinkingBlock(part.aText, part.textSignature) };
+            // signature-only blocks (empty aText) happen with thinking.display: 'omitted' and must round-trip unchanged
+            if (part.textSignature)
+              yield { role: 'assistant', content: AnthropicWire_Blocks.ThinkingBlock(part.aText || '', part.textSignature) };
             for (const redactedData of part.redactedData || [])
               yield { role: 'assistant', content: AnthropicWire_Blocks.RedactedThinkingBlock(redactedData) };
             break;
@@ -471,15 +493,16 @@ function _toAnthropicTools(itds: AixTools_ToolDefinition[], strictToolsEnabled: 
 
       case 'function_call':
         const { name, description, input_schema, allowed_callers, input_examples } = itd.function_call;
+        const properties = input_schema?.properties || null; // Anthropic valid values for input_schema.properties are 'object' or 'null' (null is used to declare functions with no inputs)
         return {
           type: 'custom', // we could not set it, but it helps our typesystem with discrimination
           name,
           description,
           input_schema: {
             type: 'object',
-            properties: input_schema?.properties || null, // Anthropic valid values for input_schema.properties are 'object' or 'null' (null is used to declare functions with no inputs)
+            properties: strictToolsEnabled && properties ? _strictNormalizeSchema(properties) : properties,
             required: input_schema?.required,
-            // [Anthropic, 2025-11-13] Structured Outputs requires additionalProperties: false
+            // [Anthropic, 2025-11-13] Structured Outputs requires additionalProperties: false (on every nested object too, see _strictNormalizeSchema)
             ...(strictToolsEnabled ? { additionalProperties: false } : {}),
           },
           // [Anthropic, 2025-11-13] Structured Outputs: strict mode guarantees tool inputs match schema
@@ -496,6 +519,22 @@ function _toAnthropicTools(itds: AixTools_ToolDefinition[], strictToolsEnabled: 
 
     }
   });
+}
+
+/**
+ * [Anthropic, 2025-11-13] Strict mode (tools and JSON output) requires `additionalProperties: false` on EVERY
+ * 'object' node in the schema, not just the root - 400 otherwise (verified empirically on Fable 5, 2026-06-09).
+ * Recursively adds it wherever undefined, without overriding explicit values.
+ */
+function _strictNormalizeSchema<T>(node: T): T {
+  if (!node || typeof node !== 'object') return node;
+  if (Array.isArray(node)) return node.map(_strictNormalizeSchema) as T;
+  const obj: Record<string, any> = {};
+  for (const [key, value] of Object.entries(node))
+    obj[key] = _strictNormalizeSchema(value);
+  if (obj.type === 'object' && obj.additionalProperties === undefined)
+    obj.additionalProperties = false;
+  return obj as T;
 }
 
 function _toAnthropicToolChoice(itp: AixTools_ToolsPolicy): NonNullable<TRequest['tool_choice']> {
