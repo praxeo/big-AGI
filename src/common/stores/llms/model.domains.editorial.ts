@@ -55,6 +55,10 @@ type _EditorialDefaultsTable = {
 export const EditorialDefaults = {
 
   primaryChat: [
+    { vendor: 'anthropic',  modelId: 'claude-fable-5' },
+    { vendor: 'bedrock',    modelId: 'us.anthropic.claude-fable-5' },
+    { vendor: 'bedrock',    modelId: 'global.anthropic.claude-fable-5' },
+    { vendor: 'openrouter', modelId: 'anthropic/claude-fable-5' },
     { vendor: 'anthropic',  modelId: 'claude-opus-4-8' },
     { vendor: 'bedrock',    modelId: 'us.anthropic.claude-opus-4-8-thinking' },
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-opus-4-8-thinking' },
@@ -138,8 +142,11 @@ export const EditorialDefaults = {
 export function llmsEditorialPickForDomain(
   domainId: DModelDomainId,
   filteredLlms: ReadonlyArray<DLLM>,
+  fallbackEditorialDomainId?: DModelDomainId, // optional secondary domain to check when the primary domain has no picks or no matches
 ): DLLMId | undefined {
-  const entries = EditorialDefaults[domainId];
+  const entries = EditorialDefaults[domainId]?.length ? EditorialDefaults[domainId]
+    : fallbackEditorialDomainId && EditorialDefaults[fallbackEditorialDomainId]?.length ? EditorialDefaults[fallbackEditorialDomainId]
+      : undefined;
   if (!entries) return undefined;
   for (const { vendor, modelId } of entries) {
     const hit = filteredLlms.find(llm => llm.vId === vendor && _editorialMatch(llm, modelId));

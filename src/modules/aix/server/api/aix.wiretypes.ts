@@ -420,14 +420,19 @@ export namespace AixWire_Tooling {
   /**
    * Policy for tools that the model can use:
    * - auto: can use a tool or not (default, same as not specifying a policy)
-   * - any: MUST use one tool at least
-   * - function_call: MUST use a specific Function Tool
+   * - any: MUST use one tool at least - DEPRECATED, see below
+   * - function_call: MUST use a specific Function Tool - DEPRECATED, see below
    * - none: same as not giving the model any tool [REMOVED - just give no tools]
+   *
+   * @deprecated 'any' and 'function_call' (forced tool use) are a thing of the past - 2026-06-09:
+   * Claude Fable/Mythos 5 reject them with a 400 ('tool_choice forces tool use is not compatible with
+   * this model.'); the Anthropic adapter coerces them to 'auto' + a system steering hint. New code
+   * should use 'auto' (or no policy) and instruct the model to call the tool in the prompt instead.
    */
   export const ToolsPolicy_schema = z.discriminatedUnion('type', [
     z.object({ type: z.literal('auto') }),
-    z.object({ type: z.literal('any') /*, parallel: z.boolean()*/ }),
-    z.object({ type: z.literal('function_call'), function_call: z.object({ name: z.string() }) }),
+    z.object({ type: z.literal('any') /*, parallel: z.boolean()*/ }), // @deprecated - prefer 'auto' + prompt steering
+    z.object({ type: z.literal('function_call'), function_call: z.object({ name: z.string() }) }), // @deprecated - prefer 'auto' + prompt steering
   ]);
 
 }
@@ -532,6 +537,7 @@ export namespace AixWire_API {
 
     // OpenAI
     vndOaiCodeInterpreter: z.enum(['off', 'auto']).optional(),
+    vndOaiContainerId: z.string().optional(), // [Responses] reuse a prior code-interpreter session container (caller checks expiry before setting)
     vndOaiImageGeneration: z.enum(['mq', 'hq', 'hq_edit', 'hq_png']).optional(),
     vndOaiResponsesAPI: z.boolean().optional(),
     vndOaiRestoreMarkdown: z.boolean().optional(),
@@ -792,9 +798,12 @@ export namespace AixWire_Particles {
     | { p: 'urlc', title: string, url: string, num?: number, from?: number, to?: number, text?: string, pubTs?: number } // url citation - pubTs: publication timestamp
     | { p: 'hres' } & ( // hosted resource - provider-hosted resource
       | { kind: 'vnd.ant.file', fileId: string, containerId?: string }
+      | { kind: 'vnd.oai.container_file', fileId: string, containerId: string, filename?: string } // OpenAI code-interpreter container file (download via /v1/containers/.../files/.../content)
+      | { kind: 'inline-download', mimeType: string, b64: string, filename?: string } // inline bytes (e.g. Gemini code-exec file): client downloads & discards, never stored/re-fetchable
       )
     | { p: 'svs' } & ( // set vendor state - vendor-specific opaque protocol state
       | { vendor: 'anthropic', state: { container: { id: string; expiresAt: string } } } // message-level - container reuse
+      | { vendor: 'openai-container', state: { container: { id: string; expiresAt: string } } } // message-level - OpenAI Responses code-interpreter container reuse; 20min TTL stamped by parser
       | { vendor: 'gemini-envid', state: { environment: { id: string; expiresAt: string | null } } } // message-level - Gemini Interactions sandbox handle (today: Antigravity); 7d TTL stamped by parser
       | { vendor: 'gemini', state: { thoughtSignature: string } } // fragment-level
       | { vendor: 'openai', state: { reasoningItem: { id?: string, encryptedContent?: string } } } // fragment-level (attach to ma reasoning fragment)
