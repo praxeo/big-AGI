@@ -38,7 +38,7 @@ import { azureDeploymentFilter, azureDeploymentToModelDescription, azureParseFro
 import { chutesAIHeuristic, chutesAIModelsToModelDescriptions } from './openai/models/chutesai.models';
 import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
 import { fastAPIHeuristic, fastAPIModels } from './openai/models/fastapi.models';
-import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
+import { fireworksAIFetchModels, fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
 import { groqModelFilter, groqModelSortFn, groqModelToModelDescription, groqValidateModelDefs_DEV } from './openai/models/groq.models';
 import { llmapiHeuristic, llmapiModelsToModelDescriptions } from './openai/models/llmapi.models';
 import { llmsIsNativeOpenAIHost } from '../shared/llm.isomorphic';
@@ -387,6 +387,11 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
         // [OpenAI-compatible dialects]: openAI-style fetch models list
         fetchModels: async () => {
 
+          // [FireworksAI] the OpenAI-compatible /v1/models lists only a subset of models;
+          // fetch the control-plane serverless catalog (filter=supports_serverless=true) for the full list
+          if (dialect === 'openai' && fireworksAIHeuristic(oaiUrl))
+            return await fireworksAIFetchModels(oaiUrl, oaiHeaders, signal, _wire);
+
           // Bypass fetch for providers that do NOT have the /v1/models API yet - works in conjunction with the hardcoded models below
           const bypassFetch = (dialect === 'openai' && minimaxHeuristic(oaiUrl)); // [MiniMax]
           if (bypassFetch) return { data: [] }; // dummy response
@@ -417,8 +422,9 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
           }
 
           // NOTE: we don't zod here as it would strip unknown properties needed for some dialects - so we proceed optimistically
+          // NOTE: typed as any[] because the per-dialect shapes differ (e.g. FireworksAI normalizes its serverless catalog)
           // let maybeModels = OpenAIWire_API_Models_List.Response_schema.parse(openAIWireModelsResponse).data || [];
-          let maybeModels = openAIWireModelsResponse?.data || [];
+          let maybeModels: any[] = openAIWireModelsResponse?.data || [];
 
           // de-duplicate by ids (can happen for local servers.. upstream bugs)
           const preCount = maybeModels.length;
