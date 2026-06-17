@@ -11,7 +11,7 @@ import { fromManualMapping, llmsDefineManualMappings } from '../../models.mappin
 // --- FireworksAI Model ID inference (auto-derived from _fireworksKnownModels) ---
 export type LlmsFireworksAIModelId = typeof _fireworksKnownModels[number]['idPrefix'];
 import type { WireFireworksAIControlPlaneModel, WireFireworksAILegacyModel } from '../wiretypes/fireworksai.wiretypes';
-import { wireFireworksAIControlPlaneListSchema, wireFireworksAIListOutputSchema } from '../wiretypes/fireworksai.wiretypes';
+import { wireFireworksAIControlPlaneListSchema, wireFireworksAIControlPlaneModelSchema, wireFireworksAIListOutputSchema } from '../wiretypes/fireworksai.wiretypes';
 
 
 export function fireworksAIHeuristic(hostname: string) {
@@ -61,15 +61,16 @@ function _fireworksNormalizeControlPlaneModel(m: WireFireworksAIControlPlaneMode
   return {
     id: m.name,
     created: m.createTime ? (Math.floor(Date.parse(m.createTime) / 1000) || undefined) : undefined,
-    // chat-capable unless it's an embedding/image model; conversationConfig is a strong positive signal
-    supportsChat: !!m.conversationConfig || !_fireworksNonChatKinds.has(m.kind || ''),
-    supportsImageInput: m.supportsImageInput,
-    supportsTools: m.supportsTools,
+    // chat-capable = Chat Completions enabled (non-null conversationConfig) AND not an embedding/image kind
+    // (NOTE: Fireworks sets conversationConfig even on EMBEDDING_MODEL kinds, so the kind guard is required)
+    supportsChat: !!m.conversationConfig && !_fireworksNonChatKinds.has(m.kind || ''),
+    supportsImageInput: m.supportsImageInput ?? undefined,
+    supportsTools: m.supportsTools ?? undefined,
     ownedBy: 'fireworks',
-    kind: m.kind,
-    contextLength: m.contextLength,
+    kind: m.kind ?? undefined,
+    contextLength: m.contextLength ?? undefined,
     parameterCount: m.baseModelDetails?.parameterCount ? (Number(m.baseModelDetails.parameterCount) || undefined) : undefined,
-    moe: m.baseModelDetails?.moe,
+    moe: m.baseModelDetails?.moe ?? undefined,
     deprecated: !!m.deprecationDate,
   };
 }
@@ -113,6 +114,7 @@ export async function fireworksAIFetchModels(oaiModelsUrl: string, headers: Head
 
   try {
     const models: FireworksNormalizedModel[] = [];
+    let skipped = 0;
     let pageToken: string | undefined = undefined;
 
     for (let page = 0; page < FIREWORKS_LIST_MAX_PAGES; page++) {
@@ -128,14 +130,27 @@ export async function fireworksAIFetchModels(oaiModelsUrl: string, headers: Head
       const wireResponse = await fetchJsonOrTRPCThrow({ url, headers, name: 'OpenAI/Fireworks', signal });
       wire?.logResponse(wireResponse);
 
-      const { models: pageModels, nextPageToken } = wireFireworksAIControlPlaneListSchema.parse(wireResponse);
-      for (const m of pageModels)
-        models.push(_fireworksNormalizeControlPlaneModel(m));
+      // parse the envelope leniently, then validate each model on its own so one odd entry never collapses the catalog
+      const { models: rawModels, nextPageToken } = wireFireworksAIControlPlaneListSchema.parse(wireResponse);
+      for (const raw of rawModels) {
+        const parsed = wireFireworksAIControlPlaneModelSchema.safeParse(raw);
+        if (parsed.success)
+          models.push(_fireworksNormalizeControlPlaneModel(parsed.data));
+        else
+          skipped++;
+      }
 
       if (!nextPageToken)
         break;
       pageToken = nextPageToken;
     }
+
+    if (skipped)
+      console.warn(`[Fireworks] serverless catalog: skipped ${skipped} model(s) that failed validation`);
+
+    // if the catalog came back empty (unexpected), fall through to the legacy listing rather than showing nothing
+    if (!models.length)
+      throw new Error('empty serverless catalog');
 
     return { data: models };
 
