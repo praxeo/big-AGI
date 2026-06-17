@@ -30,6 +30,17 @@ function _clientIdWithVariant(id: string, idVariant?: string): string {
       : `${id}-${idVariant}`;
 }
 
+/**
+ * True when model listing for this service must run server-side, even if the user enabled Direct
+ * Connection (client-side fetch). [Fireworks] the full serverless catalog is only available via the
+ * control-plane API (api.fireworks.ai/v1/accounts/...), which isn't reachable from the browser (CORS);
+ * the browser-side fetch would silently fall back to the partial /inference/v1/models list.
+ */
+function _modelListingMustRunServerSide(transportAccess: object): boolean {
+  const oaiHost = (transportAccess as { oaiHost?: unknown }).oaiHost;
+  return typeof oaiHost === 'string' && oaiHost.includes('fireworks.ai');
+}
+
 
 // LLM Model Updates Client Functions
 
@@ -40,8 +51,12 @@ export async function llmsUpdateModelsForServiceOrThrow(serviceId: DModelsServic
 
 
   // [CSF] Pre-load client-side executor if needed
+  // NOTE: some providers expose their full model catalog only via a server-side management API that
+  // isn't reachable from the browser (CORS), so model *listing* must run server-side even when the user
+  // enabled Direct Connection. Inference still uses the direct path. [Fireworks] serverless catalog lives
+  // at api.fireworks.ai/v1/accounts/... (not browser-accessible) - see fireworksAIFetchModels.
   let clientSideListModels: typeof import('./llm.client.direct-listModels').clientSideListModels | undefined;
-  if (!!transportAccess && typeof transportAccess === 'object' && (transportAccess as any).clientSideFetch)
+  if (!!transportAccess && typeof transportAccess === 'object' && (transportAccess as any).clientSideFetch && !_modelListingMustRunServerSide(transportAccess))
     try {
       clientSideListModels = (await import('./llm.client.direct-listModels')).clientSideListModels;
     } catch (error) {
