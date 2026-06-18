@@ -1,4 +1,4 @@
-import { DModelInterfaceV1, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
+import { DModelInterfaceV1, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
 import { serverCapitalizeFirstLetter } from '~/server/wire';
 import type { DebugWireLogger } from '~/server/wire';
@@ -225,13 +225,22 @@ export function fireworksAIModelsToModelDescriptions(models: FireworksNormalized
       if (model.supportsTools)
         interfaces.push(LLM_IF_OAI_Fn);
 
+      // [Fireworks] serverless chat models are reasoning models - expose the documented reasoning_effort
+      // control (low/medium/high). Default is unset (vendor default), so models are unaffected unless a level
+      // is explicitly chosen; the openai-dialect adapter sends it as `reasoning_effort`, and replies carry
+      // `reasoning_content`. https://docs.fireworks.ai/guides/reasoning
+      interfaces.push(LLM_IF_OAI_Reasoning);
+      const parameterSpecs: ModelDescriptionSchema['parameterSpecs'] = [
+        { paramId: 'llmVndOaiEffort', enumValues: ['low', 'medium', 'high'] },
+      ];
+
       return fromManualMapping(_fireworksKnownModels, model.id, model.created, undefined, {
         idPrefix: model.id,
         label,
         description,
         contextWindow,
         interfaces,
-        // parameterSpecs: ...
+        parameterSpecs,
         // maxCompletionTokens: ...
         // benchmark: ...
         // chatPrice,
