@@ -30,6 +30,23 @@ const _fireworksDenyListContains: string[] = [
 // model 'kinds' that are not chat LLMs (embeddings, image generation, ...)
 const _fireworksNonChatKinds = new Set<string>(['EMBEDDING_MODEL', 'FLUMINA_BASE_MODEL', 'FLUMINA_ADDON']);
 
+// [Fireworks] per-model `reasoning_effort` value sets, empirically probed against the live serverless API
+// (2026-06-18). The catalog API exposes no reasoning metadata, and Fireworks accepts a different value set per
+// model: most reasoning models accept none/low/medium/high/xhigh (thinking can be disabled via 'none'), while a
+// few require reasoning to stay on and only accept low/medium/high. 'minimal' is rejected by every model, and
+// 'max' behaves like 'high' (and would require widening the shared llmVndOaiEffort registry), so both are omitted.
+type _FireworksEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
+const _fireworksEffortBasic: readonly _FireworksEffort[] = ['low', 'medium', 'high']; // reasoning always on
+const _fireworksEffortFull: readonly _FireworksEffort[] = ['none', 'low', 'medium', 'high', 'xhigh']; // can also disable thinking
+// model ids (substring match) that only accept the basic set; everything else defaults to the full set
+const _fireworksBasicEffortContains: string[] = ['gpt-oss', 'minimax-m2'];
+
+function _fireworksReasoningEffortValues(modelId: string): readonly _FireworksEffort[] {
+  return _fireworksBasicEffortContains.some(contains => modelId.includes(contains))
+    ? _fireworksEffortBasic
+    : _fireworksEffortFull;
+}
+
 
 // --- Serverless catalog fetch (control-plane List Models API) ---
 
@@ -225,13 +242,13 @@ export function fireworksAIModelsToModelDescriptions(models: FireworksNormalized
       if (model.supportsTools)
         interfaces.push(LLM_IF_OAI_Fn);
 
-      // [Fireworks] serverless chat models are reasoning models - expose the documented reasoning_effort
-      // control (low/medium/high). Default is unset (vendor default), so models are unaffected unless a level
-      // is explicitly chosen; the openai-dialect adapter sends it as `reasoning_effort`, and replies carry
-      // `reasoning_content`. https://docs.fireworks.ai/guides/reasoning
+      // [Fireworks] serverless chat models are reasoning models - expose reasoning_effort with the per-model
+      // value set probed from the live API (see _fireworksReasoningEffortValues). Default unset = vendor default,
+      // so models are unaffected unless a level is explicitly chosen; the openai-dialect adapter sends it as
+      // `reasoning_effort`, and replies carry `reasoning_content`. https://docs.fireworks.ai/guides/reasoning
       interfaces.push(LLM_IF_OAI_Reasoning);
       const parameterSpecs: ModelDescriptionSchema['parameterSpecs'] = [
-        { paramId: 'llmVndOaiEffort', enumValues: ['low', 'medium', 'high'] },
+        { paramId: 'llmVndOaiEffort', enumValues: [..._fireworksReasoningEffortValues(model.id)] },
       ];
 
       return fromManualMapping(_fireworksKnownModels, model.id, model.created, undefined, {
