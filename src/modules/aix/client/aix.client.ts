@@ -1,5 +1,7 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 
+import { vertexLinksAutoResolveFragments } from '~/modules/google/vertexai.client';
+
 import type { MaybePromise } from '~/common/types/useful.types';
 import { AIVndAntInlineFilesPolicy, getVndAntInlineFiles } from '~/common/stores/store-ai';
 import { AudioPlayer } from '~/common/util/audio/AudioPlayer';
@@ -16,6 +18,7 @@ import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
 import { metricsStoreAddChatGenerate } from '~/common/stores/metrics/store-metrics';
 import { stripUndefined } from '~/common/util/objectUtils';
 import { webGeolocationCached } from '~/common/util/webGeolocationUtils';
+
 
 // NOTE: pay particular attention to the "import type", as this is importing from the server-side Zod definitions
 import type { AixAPI_Access, AixAPI_ConnectionOptions_ChatGenerate, AixAPI_Context_ChatGenerate, AixAPI_Model, AixAPIChatGenerate_Request, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../server/api/aix.wiretypes';
@@ -68,7 +71,7 @@ export function aixCreateModelFromLLMOptions(
   const {
     llmRef, llmTemperature, llmResponseTokens, llmTopP, llmForceNoStream,
     llmVndAntEffort, llmVndGemEffort, llmVndOaiEffort, llmVndMiscEffort,
-    llmVndAnt1MContext, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
+    llmVndAnt1MContext, llmVndAntCodeSandbox, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
     llmVndBedrockAPI,
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
@@ -132,6 +135,7 @@ export function aixCreateModelFromLLMOptions(
     // Anthropic - (vndAntContainerId, vndAntTransformInlineFiles are set in the decorate function)
     ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget === -1 ? 'adaptive' as const : llmVndAntThinkingBudget } : {}),
     ...(llmVndAnt1MContext ? { vndAnt1MContext: llmVndAnt1MContext } : {}),
+    ...(llmVndAntCodeSandbox === 'auto' ? { vndAntCodeSandbox: llmVndAntCodeSandbox } : {}), // standalone server-side code sandbox (Skills/PTC also enable it server-side)
     ...(llmVndAntInfSpeed ? { vndAntInfSpeed: 'fast' } : {}), // any tier (fast_2x/fast_6x/legacy fast) collapses to the wire 'fast'
     ...(llmVndAntSkills ? { vndAntSkills: llmVndAntSkills } : {}),
     ...(llmVndAntWebDynamic ? { vndAntWebDynamic: true } : {}),
@@ -656,6 +660,14 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   if (metrics) dMessage.generator = { ...dMessage.generator, metrics };
   dMessage.pendingIncomplete = false;
 
+  // [#1114] resolve Gemini/Vertex AI grounding redirect links before the final 'done' update, so every
+  // caller (chat, Beam scatter/fusion, reattach) gets resolved links atomically with completion.
+  // Policy-gated (no-op unless 'resolve') and timeout-capped; failures keep the originals.
+  if (outcome === 'completed' && dMessage.fragments.length) {
+    const resolvedFragments = await vertexLinksAutoResolveFragments(dMessage.fragments);
+    if (resolvedFragments) dMessage.fragments = resolvedFragments;
+  }
+
   // final update
   await onStreamingUpdate?.(dMessage, true);
 
@@ -1002,9 +1014,9 @@ async function _aixChatGenerateContent_LL(
        * causing "closed connection" exceptions when resuming. Processing happens in
        * ContentReassembler's background promise chain.
        *
-       * Error handling split:
-       * - This catch: tRPC/network errors (connection, stream, abort)
-       * - Reassembler catch: processing errors (malformed particles, async work)
+       * Error handling split (see the channel map in aix.client.errors.ts):
+       * - This catch [Error Channel 1]: tRPC/network/transport errors (connection, stream, abort) -> aixClassifyStreamingError
+       * - Reassembler catch [Error Channel 2]: particle-processing errors (malformed particles, async work) -> aixClassifyReassemblyError
        */
       for await (const particle of particleStream)
         reassembler.enqueueWireParticle(particle);

@@ -279,7 +279,8 @@ export class ContentReassembler {
     } catch (error) {
 
       //
-      // Classify and display processing errors (particle/async work failures)
+      // [Error Channel 2] Classify/display particle-PROCESSING errors (see channel map in aix.client.errors.ts;
+      // [Error Channel 1] transport/connection errors are handled by the stream-loop catch in aix.client.ts).
       //
       // NOTE: we cannot throw here as we are part of a detached promise chain
       // READ the `aixClassifyReassemblyError` that explains this in detail
@@ -1120,7 +1121,9 @@ export class ContentReassembler {
     }
 
     // -> ph: show retry status
-    const retryMessage = `Retrying [${attempt}/${maxAttempts}] in ${Math.round(delayMs / 100) / 10}s - ${reason}`;
+    const retryMessage =  delayMs > 0
+      ? `${reason ? `${reason} - ` : ''}Retrying in ${Math.round(delayMs / 100) / 10}s - ${attempt}/${maxAttempts}`
+      : `Connection failed (${attempt} retries)`;
     this._pushFragment(createPlaceholderVoidFragment(retryMessage, undefined, {
       ctl: 'ec-retry',
       rScope: rScope,

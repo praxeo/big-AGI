@@ -4,7 +4,7 @@ import { LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCachi
 import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
-import { fromManualMapping } from '../../models.mappings';
+import { formatPubDate, fromManualMapping } from '../../models.mappings';
 import { llmOrtAntLookup_ThinkingVariants } from '../../anthropic/anthropic.models';
 import { llmOrtGemLookup } from '../../gemini/gemini.models';
 import { llmOrtOaiLookup } from './openai.models';
@@ -49,13 +49,23 @@ const orOldModelIDs = [
 ] as const;
 
 
-export function openRouterModelFamilySortFn(a: { id: string }, b: { id: string }): number {
+export function openRouterModelFamilySortFn(a: { id: string, created?: number }, b: { id: string, created?: number }): number {
   const aPrefixIndex = orModelFamilyOrder.findIndex(prefix => a.id.startsWith(prefix));
   const bPrefixIndex = orModelFamilyOrder.findIndex(prefix => b.id.startsWith(prefix));
 
-  // If both have a prefix, sort by prefix first, and then alphabetically
-  if (aPrefixIndex !== -1 && bPrefixIndex !== -1)
-    return aPrefixIndex !== bPrefixIndex ? aPrefixIndex - bPrefixIndex : b.id.localeCompare(a.id);
+  // If both have a prefix, sort by family first
+  if (aPrefixIndex !== -1 && bPrefixIndex !== -1) {
+    if (aPrefixIndex !== bPrefixIndex)
+      return aPrefixIndex - bPrefixIndex;
+    // ...then within the same family, newest-first by OpenRouter 'created' timestamp.
+    // Reverse-alphabetical id sorting got this wrong: the tier name dominated, so 'sonnet'/'opus'
+    // outranked 'fable' and the latest flagship (e.g. claude-fable-5) sank below older tiers.
+    // By release date this yields fable-5, then opus 4.8 > 4.7 > 4.6 > 4.5, etc.
+    if ((a.created ?? 0) !== (b.created ?? 0))
+      return (b.created ?? 0) - (a.created ?? 0);
+    // stable final tiebreaker for same-day releases (e.g. base vs '-fast' variants)
+    return b.id.localeCompare(a.id);
+  }
 
   // If one has a prefix and the other doesn't, prioritize the one with prefix
   return aPrefixIndex !== -1 ? -1 : 1;
@@ -260,7 +270,20 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       break;
 
     default:
-      // in the default case, we let it be
+      // 0-day: generic reasoning models with no upstream-specific vendor mapping get the shared
+      // on/off/Default thinking toggle (llmVndMiscEffort). OpenRouter's unified reasoning API (2025-11-11)
+      // translates it via the OAI-compatible branch in openai.chatCompletions.ts to `reasoning: { enabled }`:
+      // 'high' -> enabled:true, 'none' -> enabled:false, unset ('Default') -> no field (model default).
+      // We pin enumValues to ['none', 'high'] (binary on/off, no effort levels) since generic models may
+      // not honor effort granularity. Guard: only when the model advertises reasoning AND no equivalent
+      // reasoning control is already present (so we never double up or override a vendor-specific one).
+      if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p =>
+        p.paramId === 'llmVndMiscEffort'
+        || p.paramId === 'llmVndAntEffort' || p.paramId === 'llmVndAntThinkingBudget'
+        || p.paramId === 'llmVndGemEffort' || p.paramId === 'llmVndGeminiThinkingBudget'
+        || p.paramId === 'llmVndOaiEffort',
+      ))
+        parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
       break;
   }
 
@@ -270,6 +293,16 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   // hidden: hide by default older models or models not in known families; match with startsWith for both orOldModelIDs and orModelFamilyOrder
   const hidden = orOldModelIDs.some(prefix => model.id.startsWith(prefix))
     || !orModelFamilyOrder.some(prefix => model.id.startsWith(prefix));
+
+
+  // -- pubDate fallback --
+
+  // When no editorial vendor pubDate was inherited (generic / 0-day / unmapped OR models), derive a
+  // day-precision pubDate from OpenRouter's 'created' (catalog/release timestamp) so the "new" badge and
+  // newest-model surfaces light up for OR models too. An inherited vendor pubDate always wins (more
+  // authoritative than OR's index date), and stale models fall outside the recency window automatically.
+  if (pubDate === undefined && model.created)
+    pubDate = formatPubDate(model.created);
 
 
   return fromManualMapping([], model.id, model?.created, undefined, {

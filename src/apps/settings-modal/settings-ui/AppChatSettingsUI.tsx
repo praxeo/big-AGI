@@ -31,7 +31,7 @@ const OptionsPageSize = [
 ] as const;
 
 
-function ModelsSetupButton(props: { isMissingModels?: boolean }) {
+export function ModelsSetupButton(props: { isMissingModels?: boolean }) {
   return <Button
     // variant='soft' color='success'
     color={props.isMissingModels ? 'danger' : undefined}
@@ -123,7 +123,7 @@ export function AppChatSettingsUI() {
     {!isPwa() && !isMobile && (
       <FormRadioControl
         title='Page Size'
-        description={centerMode === 'full' ? 'Full screen chat' : centerMode === 'narrow' ? 'Narrow chat' : 'Wide'}
+        description={centerMode === 'full' ? 'Default' : centerMode === 'narrow' ? 'Narrow chat' : 'Wide'}
         options={OptionsPageSize}
         value={centerMode} onChange={setCenterMode}
       />

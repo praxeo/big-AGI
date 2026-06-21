@@ -4,6 +4,11 @@ on:
   issues:
     types: [ opened ]
 
+# Prevent duplicate/overlapping triage runs for the same issue (cost + noise guard)
+concurrency:
+  group: claude-triage-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   claude-issue-triage:
     # Optional: Skip for bot users and direct mentions in the body (handled by claude-dm.yml)
@@ -17,13 +22,13 @@ jobs:
     permissions:
       contents: read
       issues: write
-      pull-requests: read # was write, but we're not altering PRs here
+      pull-requests: read # read-only: view/link existing PRs as duplicates (cannot create PRs)
       actions: read
       id-token: write # required to use OIDC to authenticate to Claude Code API
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0 # 1 -> 0: full history helps with git blame, etc.
 
@@ -35,7 +40,7 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           allowed_non_write_users: '*'
           # track_progress: true # Enables tracking comments
-          show_full_output: ${{ github.event.repository.private }} # security: do not log verbosely in private repo
+          show_full_output: ${{ github.event.repository.private }} # security: only show full output in private repos (public action logs are world-readable)
 
           # This is an optional setting that allows Claude to read CI results on PRs
           additional_permissions: |
@@ -55,9 +60,8 @@ jobs:
                **Use web search**: When potentially outside Big-AGI (e.g. user configuration), search the web for similar errors or related issues
                **Provide a solution**:
                - Provide multiple solutions if uncertain, and say so
-               - Analyze the code and suggest specific fixes with code examples
+               - Analyze the code and suggest specific fixes with code examples (reference specific files and line numbers)
                - If possible also suggest fixes or workarounds for immediate relief
-               - Reference specific files and line numbers
                - Suggest workarounds for immediate relief if applicable
                - Use web search to find similar issues and solutions
                - Test selectively and even npm install and run build if needed to verify the solution
@@ -78,6 +82,6 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
           claude_args: |
-            --model claude-opus-4-6
-            --max-turns 75
-            --allowedTools "Edit,Read,Write,WebFetch,WebSearch,Bash(cat:*),Bash(cp:*),Bash(find:*),Bash(git branch:*),Bash(grep:*),Bash(ls:*),Bash(mkdir:*),Bash(npm run:*),Bash(gh issue:*),Bash(gh search:*),Bash(gh label:*),Bash(gh pr:*),SlashCommand"
+            --model claude-opus-4-8[1m]
+            --max-turns 200
+            --allowedTools "Edit,Read,Grep,Glob,Write,WebFetch,WebSearch,Skill,Agent,LSP,Bash(cat:*),Bash(cp:*),Bash(find:*),Bash(git branch:*),Bash(grep:*),Bash(ls:*),Bash(mkdir:*),Bash(npm run:*),Bash(gh issue:*),Bash(gh search:*),Bash(gh label:*),Bash(gh pr:*)"
