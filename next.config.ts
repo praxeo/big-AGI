@@ -97,22 +97,14 @@ let nextConfig: NextConfig = {
   skipTrailingSlashRedirect: true, // required to support PostHog trailing slash API requests
   async rewrites() {
     return [
-      {
-        source: '/a/ph/static/:path*',
-        destination: 'https://us-assets.i.posthog.com/static/:path*',
-      },
-      {
-        source: '/a/ph/:path*',
-        destination: 'https://us.i.posthog.com/:path*',
-      },
-      {
-        source: '/a/ph/decide',
-        destination: 'https://us.i.posthog.com/decide',
-      },
-      {
-        source: '/a/ph/flags',
-        destination: 'https://us.i.posthog.com/flags',
-      },
+      { source: '/a/ph/static/:path*', destination: 'https://us-assets.i.posthog.com/static/:path*' },
+      { source: '/a/ph/array/:path*', destination: 'https://us-assets.i.posthog.com/array/:path*' },
+      { source: '/a/ph/:path*', destination: 'https://us.i.posthog.com/:path*' },
+      // Dev tools hub: unified index at /dev (static page in /public/dev/index.html)
+      { source: '/dev', destination: '/dev/index.html' },
+      // Inspect: standalone static dev tools under /public/dev/inspect/*.html (clean URLs, no .html)
+      // The (\w+) constraint excludes paths with a dot, so '/dev/inspect/storage.html' is still served directly.
+      { source: '/dev/inspect/:tool(\\w+)', destination: '/dev/inspect/:tool.html' },
     ];
   },
 
