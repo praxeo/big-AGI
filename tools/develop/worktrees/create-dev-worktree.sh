@@ -6,7 +6,15 @@
 set -eo pipefail  # Exit on error, pipe failure
 
 # config
-IDE_CMD='webstorm64'  # Command to open the IDE, change as needed
+# Command to open the IDE. Auto-detect the first available launcher:
+# `webstorm64` on Windows, `webstorm` on macOS/Linux (JetBrains Toolbox).
+IDE_CMD='webstorm64'  # default/fallback used in messages if none found on PATH
+for _ide_cand in webstorm64 webstorm; do
+    if command -v "$_ide_cand" >/dev/null 2>&1; then
+        IDE_CMD="$_ide_cand"
+        break
+    fi
+done
 
 # Colors for output (matching release scripts style)
 RED='\033[0;31m'
@@ -178,20 +186,33 @@ if [ "$1" = "--remove" ]; then
     # Get worktree list once
     WORKTREE_LIST=$(git worktree list 2>/dev/null || true)
     
-    # First try to find by branch name (most reliable)
-    WORKTREE_PATH=$(echo "$WORKTREE_LIST" | grep -F "[$BRANCH_TO_REMOVE]" | awk '{print $1}' | head -1 || true)
-    if [ -n "$WORKTREE_PATH" ]; then
-        WORKTREE_EXISTS=true
-    else
-        # Try the expected paths
-        if echo "$WORKTREE_LIST" | grep -q "$WORKTREE_TO_REMOVE"; then
-            WORKTREE_PATH="$WORKTREE_TO_REMOVE"
+    # Resolve by branch name OR directory basename. Accept EITHER a branch name
+    # (the worktree with that branch checked out) OR a worktree dir name
+    # (big-agi_<arg>, old big-agi-<arg>, or <arg>). This handles repurposed
+    # worktrees whose checked-out branch no longer matches the directory name
+    # (e.g. a scratch worktree left on `main`).
+    WORKTREE_BRANCH=""
+    while IFS= read -r wt_line; do
+        [ -z "$wt_line" ] && continue
+        wt_path=$(echo "$wt_line" | awk '{print $1}')
+        wt_base=$(basename "$wt_path")
+        wt_branch=$(echo "$wt_line" | sed 's/.*\[\([^]]*\)\].*/\1/')
+        if [ "$wt_branch" = "$BRANCH_TO_REMOVE" ] \
+            || [ "$wt_base" = "big-agi_$BRANCH_TO_REMOVE" ] \
+            || [ "$wt_base" = "big-agi-$BRANCH_TO_REMOVE" ] \
+            || [ "$wt_base" = "$BRANCH_TO_REMOVE" ]; then
+            WORKTREE_PATH="$wt_path"
+            WORKTREE_BRANCH="$wt_branch"
             WORKTREE_EXISTS=true
-        elif echo "$WORKTREE_LIST" | grep -q "../big-agi-$BRANCH_TO_REMOVE"; then
-            # Handle old naming convention with hyphen
-            WORKTREE_PATH="../big-agi-$BRANCH_TO_REMOVE"
-            WORKTREE_EXISTS=true
+            break
         fi
+    done <<< "$WORKTREE_LIST"
+
+    # Never remove the primary (main) worktree
+    if [ "$WORKTREE_EXISTS" = true ] && [ "$WORKTREE_PATH" = "$MAIN_WORKTREE" ]; then
+        print_color "$RED" "✗ Refusing to remove the primary worktree: $WORKTREE_PATH"
+        echo
+        exit 1
     fi
     
     # Check if branch exists
@@ -209,13 +230,11 @@ if [ "$1" = "--remove" ]; then
     
     # Remove worktree if it exists
     if [ "$WORKTREE_EXISTS" = true ]; then
-        # Get the absolute path from git worktree list
-        ACTUAL_WORKTREE_PATH=$(git worktree list | grep -F "[$BRANCH_TO_REMOVE]" | awk '{print $1}' | head -1)
-        if [ -n "$ACTUAL_WORKTREE_PATH" ]; then
-            WORKTREE_PATH="$ACTUAL_WORKTREE_PATH"
+        if [ -n "$WORKTREE_BRANCH" ] && [ "$WORKTREE_BRANCH" != "$BRANCH_TO_REMOVE" ]; then
+            printf "Removing worktree %s %b(on branch %s)%b... " "$WORKTREE_PATH" "$GRAY" "$WORKTREE_BRANCH" "$NC"
+        else
+            echo -n "Removing worktree $WORKTREE_PATH... "
         fi
-        
-        echo -n "Removing worktree $WORKTREE_PATH... "
         # Try normal remove first, suppress output
         if git --no-pager worktree remove "$WORKTREE_PATH" >/dev/null 2>&1; then
             print_color "$GREEN" "✓"
@@ -241,8 +260,29 @@ if [ "$1" = "--remove" ]; then
         printf "%b⊘ %b(not found)%b\n" "$YELLOW" "$GRAY" "$NC"
     fi
     
-    # Remove branch if it exists
-    if [ "$BRANCH_EXISTS" = true ]; then
+    # Determine whether this branch must be protected from deletion.
+    # Removing a worktree should never delete a long-lived/shared branch just
+    # because it happened to be checked out there (e.g. an accidental
+    # `git checkout main` inside a scratch worktree). git's own safety does not
+    # help here: the worktree is removed first, which frees the branch, so a
+    # subsequent `git branch -D main` would succeed.
+    PROTECTED_BRANCHES="main dev staging prod"
+    BRANCH_IS_PROTECTED=false
+    for pb in $PROTECTED_BRANCHES; do
+        if [ "$BRANCH_TO_REMOVE" = "$pb" ]; then
+            BRANCH_IS_PROTECTED=true
+        fi
+    done
+    # Also protect any branch still checked out in another worktree
+    if git worktree list | grep -qF "[$BRANCH_TO_REMOVE]"; then
+        BRANCH_IS_PROTECTED=true
+    fi
+
+    # Remove branch if it exists (never delete protected/shared branches)
+    if [ "$BRANCH_EXISTS" = true ] && [ "$BRANCH_IS_PROTECTED" = true ]; then
+        echo -n "Deleting branch $BRANCH_TO_REMOVE... "
+        printf "%b⊘ %b(protected, kept)%b\n" "$YELLOW" "$GRAY" "$NC"
+    elif [ "$BRANCH_EXISTS" = true ]; then
         echo -n "Deleting branch $BRANCH_TO_REMOVE... "
         # Try safe delete first
         if git --no-pager branch -d "$BRANCH_TO_REMOVE" >/dev/null 2>&1; then
@@ -283,7 +323,9 @@ if [ "$1" = "--remove" ]; then
         FINAL_BRANCH_EXISTS=true
     fi
     
-    if [ "$FINAL_WORKTREE_EXISTS" = false ] && [ "$FINAL_BRANCH_EXISTS" = false ]; then
+    if [ "$FINAL_WORKTREE_EXISTS" = false ] && [ "$BRANCH_IS_PROTECTED" = true ]; then
+        print_color "$GREEN" "✓ Worktree removed. Branch '$BRANCH_TO_REMOVE' kept (protected)."
+    elif [ "$FINAL_WORKTREE_EXISTS" = false ] && [ "$FINAL_BRANCH_EXISTS" = false ]; then
         print_color "$GREEN" "✓ Cleanup complete! Both worktree and branch removed."
     else
         print_color "$YELLOW" "⚠ Cleanup partially complete:"

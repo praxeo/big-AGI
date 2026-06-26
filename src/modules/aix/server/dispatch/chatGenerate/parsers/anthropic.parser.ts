@@ -212,9 +212,13 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
             break;
 
           case 'tool_use':
-            // [Anthropic] Note: .input={} is parsed as an object - zap to '' for later string concatenation via input_json_delta
-            if (contentBlock && contentBlock.input && typeof contentBlock.input === 'object' && Object.keys(contentBlock.input).length === 0)
-              contentBlock.input = '';
+            // [Anthropic] .input arrives as an object: {} when the args will stream via input_json_delta,
+            // or PRE-POPULATED when the call was made programmatically from code execution (PTC) - the
+            // sandbox computed the args, so the block starts complete. Normalize both to the incremental
+            // string representation. (2026-06-13: a PTC client-tool call used to kill the stream here
+            // with "unexpected argument format: got 'object' instead of 'incr_str'")
+            if (contentBlock && contentBlock.input && typeof contentBlock.input === 'object')
+              contentBlock.input = _antStreamingToolInputToString(contentBlock.input);
 
             // [Anthropic, 2025-11-24] Programmatic Tool Calling - detect if called from code execution
             const isProgrammaticCall = contentBlock.caller?.type === 'code_execution_20250825' || contentBlock.caller?.type === 'code_execution_20260120';
@@ -225,9 +229,10 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
             break;
 
           case 'server_tool_use':
-            // Streaming: zap empty input object since JSON will be streamed via input_json_delta
-            if (contentBlock && contentBlock.input && typeof contentBlock.input === 'object' && Object.keys(contentBlock.input).length === 0)
-              contentBlock.input = '';
+            // Streaming: same normalization as tool_use above ({} streams via input_json_delta;
+            // pre-populated objects are stringified so the += accumulation below stays consistent)
+            if (contentBlock && contentBlock.input && typeof contentBlock.input === 'object')
+              contentBlock.input = _antStreamingToolInputToString(contentBlock.input);
 
             _handleCBS_ServerToolUse(pt, contentBlock);
             break;
@@ -693,6 +698,16 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
 
 
 // --- Shared helpers (used by both S and NS parsers) ---
+
+/**
+ * [Anthropic streaming] Normalize a tool_use/server_tool_use `input` from content_block_start to the
+ * string that input_json_delta appends to: `{}` -> '' (args stream as deltas); a pre-populated
+ * object -> its JSON string (PTC: code execution computed the full args, no deltas follow).
+ * NS instead keeps the object and lets the transmitter ('json_object') do the stringify.
+ */
+function _antStreamingToolInputToString(input: object): string {
+  return Object.keys(input).length === 0 ? '' : JSON.stringify(input);
+}
 
 /** Ellipsize long strings for iTexts/oTexts display (keeps start + end, shows byte count in the middle) */
 function _ellipsizeContext(text: string, maxBytes = 512): string {
