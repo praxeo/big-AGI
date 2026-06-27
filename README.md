@@ -1,33 +1,14 @@
-<!--
-  ============================================================================
-  FORK NOTICE - praxeo/big-AGI
-  ----------------------------------------------------------------------------
-  This is a customized fork of enricoros/big-AGI, kept in sync via periodic
-  merges of upstream `main`. Changes carried on top of upstream:
-
-  1. Voice input / STT pipeline - pluggable speech-to-text engines plus server
-     routes: OpenAI Realtime (WebRTC, gpt-4o-transcribe), Cloudflare, and an
-     ElevenLabs batch transcribe route (scribe_v2).
-       app/api/stt/{session,transcribe}/route.ts
-       src/.../speechrecognition/{RealtimeSTTEngine,CloudflareSTTEngine,
-         AudioRecorderEngine,useSpeechRecognition}.ts
-     Env: STT_API_KEY, STT_MODEL (+ ElevenLabs base URL/model/lang vars).
-
-  2. Custom personas (src/data.ts) - clinical/medical system purposes
-     (MDM Helper, HPI Helper, Clinical Assistant) and a YouTubeTranscriber.
-
-  3. Fireworks vendor - dynamic serverless catalog via the control-plane List
-     Models API, per-model reasoning_effort value sets, null-parse and
-     browser-CSF fixes.
-
-  4. Code block rendering (RenderCode.tsx) - HTML/SVG/PlantUML render gating
-     with a plain-text path during streaming.
-
-  5. "New Chat on Startup" setting - reopen the last chat on launch.
-
-  Cloud/auth/sync features are upstream's; the above are fork-local.
-  ============================================================================
--->
+> [!NOTE]
+> ### Fork notice — `praxeo/big-AGI`
+> Customized fork of [`enricoros/big-AGI`](https://github.com/enricoros/big-AGI), kept in sync via periodic merges of upstream `main`. Changes carried on top of upstream:
+>
+> 1. **Voice input / STT pipeline** — pluggable speech-to-text engines plus server routes: OpenAI Realtime (WebRTC, `gpt-4o-transcribe`), Cloudflare, and an ElevenLabs batch transcribe route (`scribe_v2`). Files: `app/api/stt/{session,transcribe}/route.ts`, `src/.../speechrecognition/{RealtimeSTTEngine,CloudflareSTTEngine,AudioRecorderEngine,useSpeechRecognition}.ts`. Env: `STT_API_KEY`, `STT_MODEL` (+ ElevenLabs base URL/model/lang vars).
+> 2. **Custom personas** (`src/data.ts`) — clinical/medical system purposes (MDM Helper, HPI Helper, Clinical Assistant) and a YouTubeTranscriber.
+> 3. **Fireworks vendor** — dynamic serverless catalog via the control-plane List Models API, per-model `reasoning_effort` value sets, null-parse and browser-CSF fixes.
+> 4. **Code block rendering** (`RenderCode.tsx`) — HTML/SVG/PlantUML render gating with a plain-text path during streaming.
+> 5. **"New Chat on Startup"** setting — reopen the last chat on launch.
+>
+> Cloud/auth/sync features are upstream's; the above are fork-local.
 
 <div align="center">
 
