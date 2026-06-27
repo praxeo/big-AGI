@@ -1,10 +1,9 @@
 > [!NOTE]
-> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. What we changed:
+> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. 
 > - Voice input: OpenAI Realtime, Cloudflare, and ElevenLabs (`scribe_v2`) STT engines (`app/api/stt/*`, `src/.../speechrecognition/*`)
-> - Clinical personas in `src/data.ts` (MDM Helper, HPI Helper, Clinical Assistant) plus a YouTube transcriber
+> - Clinical personas in `src/data.ts` (MDM Helper, HPI Helper, Clinical Assistant) 
 > - Fireworks: dynamic serverless catalog + per-model `reasoning_effort`
 > - Code blocks: HTML/SVG/PlantUML render gating, plain text while streaming
-> - "New Chat on Startup" setting
 
 <div align="center">
 
