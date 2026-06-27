@@ -1,9 +1,9 @@
 > [!NOTE]
 > Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. 
-> - Voice input: OpenAI Realtime, Cloudflare, and ElevenLabs (`scribe_v2`) STT engines (`app/api/stt/*`, `src/.../speechrecognition/*`)
+> - Voice input: Tried many, defaults to ElevenLabs (`scribe_v2`) STT engines (`app/api/stt/*`, `src/.../speechrecognition/*`)
 > - Clinical personas in `src/data.ts` (MDM Helper, HPI Helper, Clinical Assistant) 
 > - Fireworks: dynamic serverless catalog + per-model `reasoning_effort`
-> - Code blocks: HTML/SVG/PlantUML render gating, plain text while streaming
+> - Code blocks: HTML/SVG/PlantUML render gating, plain text while streaming to avoid crashes on my system
 
 <div align="center">
 
