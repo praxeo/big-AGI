@@ -47,6 +47,8 @@ const IF_47_R = [...IF_4_R, LLM_IF_HOTFIX_NoTemperature];
 //                              sentinel on 4.6/4.7/4.8 thinking variants, and for manual budget control on 4.5/earlier.
 //                              Fable/Mythos 5 (2026-06-09): adaptive thinking is ALWAYS ON (no thinking variant, the base
 //                              model reasons); `thinking: {type: 'disabled'}` and budget_tokens both return 400.
+//                              Sonnet 5 (2026-06-29): adaptive-only too, BUT `thinking: {type: 'disabled'}` is allowed (200),
+//                              so it keeps the base + thinking-variant split (like Opus 4.7/4.8); only budget_tokens returns 400.
 // - llmVndAntWebFetch/Search   seem an API feature available on all models
 
 const ANT_TOOLS: Exclude<ModelDescriptionSchema['parameterSpecs'], undefined> = [
@@ -60,7 +62,7 @@ const ANT_TOOLS: Exclude<ModelDescriptionSchema['parameterSpecs'], undefined> = 
 /**
  * Dynamic filtering for web search/fetch - only Opus/Sonnet 4.6+.
  * Also the home of the standalone Code Sandbox toggle (code_execution_20260120), whose model support
- * (Fable/Mythos 5, Opus/Sonnet 4.6+) is a clean subset of this set. NOT added to the base
+ * (Fable/Mythos/Sonnet 5, Opus/Sonnet 4.6+) is a clean subset of this set. NOT added to the base
  * ANT_TOOLS, as Haiku 4.5 only supports code_execution_20250825 (not the 20260120 we ship).
  */
 const ANT_TOOLS_DYNAMIC: Exclude<ModelDescriptionSchema['parameterSpecs'], undefined> = [
@@ -73,6 +75,20 @@ const ANT_TOOLS_DYNAMIC: Exclude<ModelDescriptionSchema['parameterSpecs'], undef
 const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { idVariant: 'thinking' /* this is here because of OpenRouter matching, see below - all these are assued as thinking variants */ } } = {
 
   // NOTE: what's not redefined below is inherited from the underlying model definition
+
+  // Claude Sonnet 5 thinking variant (Claude 5 gen, adaptive-only; base allows disabling thinking)
+  'claude-sonnet-5': {
+    idVariant: 'thinking',
+    label: 'Claude Sonnet 5 (Adaptive)',
+    description: 'Claude Sonnet 5 with adaptive thinking for high-performance coding and agentic workflows',
+    interfaces: [...IF_47_R, LLM_IF_ANT_ToolsSearch],
+    parameterSpecs: [
+      { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 /* FORCE adaptive - Sonnet 5 rejects budget_tokens */ },
+      { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      ...ANT_TOOLS_DYNAMIC,
+    ],
+    benchmark: { cbaElo: 1490 }, // claude-sonnet-5-thinking (launch estimate, no arena data yet)
+  },
 
   // Claude 4.8 models with thinking variants (adaptive-only, manual budgets removed)
   'claude-opus-4-8': {
@@ -98,6 +114,8 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
     parameterSpecs: [
       { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 /* FORCE adaptive - 4.7 rejects budget_tokens */ },
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      // TODO 2026-07-24: fast mode deprecated 2026-06-25, HARD REMOVAL on this date - speed:'fast' will then return
+      // an error (unlike Opus 4.6's silent no-op removal). Drop 'fast_6x' here once removed; migrate users to Opus 4.8.
       { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_6x'] },
       ...ANT_TOOLS_DYNAMIC,
     ],
@@ -113,7 +131,9 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
     parameterSpecs: [
       { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 /* FORCE adaptive */ },
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'max'] },
-      { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_6x'] }, // fast mode deprecated 2026-05-28, removal ~30d later
+      // fast mode REMOVED by Anthropic 2026-06-29: speed:'fast' no longer errors, but silently runs at standard
+      // speed/price (no usage.speed field to detect this client-side - see anthropic.wiretypes.ts). Toggle dropped
+      // here so the UI doesn't advertise a dead control. If Anthropic restores it, re-add 'fast_6x'.
       ...ANT_TOOLS_DYNAMIC,
     ],
     benchmark: { cbaElo: 1502 }, // claude-opus-4-6-thinking
@@ -292,6 +312,30 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     benchmark: { cbaElo: 1510 + 1 }, // (no arena data yet) assuming: claude-fable-5 + 1
   },
 
+  // Claude Sonnet 5 (Claude 5 gen) - unlike Fable/Mythos 5, thinking CAN be disabled, so it keeps a base + thinking variant (like Opus 4.7/4.8)
+  {
+    id: 'claude-sonnet-5', // Active - 2026-06-29
+    label: 'Claude Sonnet 5',
+    pubDate: '20260629',
+    description: 'Best combination of speed and intelligence, with the largest gains in coding and agentic tasks',
+    contextWindow: 1_000_000, // 1M GA at flat pricing (no opt-in required); 1M is both default and max, no smaller variant
+    maxCompletionTokens: 128000,
+    interfaces: [...IF_47, LLM_IF_ANT_ToolsSearch],
+    parameterSpecs: [
+      // CRITICAL: Sonnet 5 defaults to adaptive thinking ON (unlike Opus 4.8 base, which defaults OFF). So this base entry must
+      // EXPLICITLY disable thinking (initialValue null -> `thinking:{type:'disabled'}`)
+      { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: null },
+      ...ANT_TOOLS_DYNAMIC,
+    ],
+    // Sonnet 5 (Claude 5 gen, drop-in upgrade for Sonnet 4.6): adaptive thinking ON by default (omit `thinking` -> it thinks);
+    // base entry above disables it explicitly. Manual budget_tokens rejected (400); `thinking:{type:'disabled'}` allowed (200).
+    // temperature/top_p/top_k rejected (400 'deprecated') EVEN with thinking disabled, no prefill, no fast mode (speed: 400).
+    // New tokenizer: ~30% more tokens vs Sonnet 4.6 (per-token price unchanged). First Sonnet with cyber safeguards (refusals:
+    // stop_reason 'refusal', HTTP 200). Pricing: INTRODUCTORY $2/$10 (cache w$2.50/r$0.20) through 2026-08-31, then $3/$15 standard.
+    chatPrice: { input: 2, output: 10, cache: { cType: 'ant-bp', read: 0.20, write: 2.50, duration: 300 } },
+    benchmark: { cbaElo: 1485 }, // claude-sonnet-5 (launch estimate, no arena data yet)
+  },
+
   // Claude 4.8 models
   {
     id: 'claude-opus-4-8', // Active - 2026-05-28
@@ -324,6 +368,8 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     interfaces: [...IF_47, LLM_IF_ANT_ToolsSearch],
     parameterSpecs: [
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] },
+      // TODO 2026-07-24: fast mode deprecated 2026-06-25, HARD REMOVAL on this date - speed:'fast' will then return
+      // an error (unlike Opus 4.6's silent no-op removal). Drop 'fast_6x' here once removed; migrate users to Opus 4.8.
       { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_6x'] }, // fast mode: research preview since 2026-05-12, Anthropic API only (6x tier, $30/$150)
       ...ANT_TOOLS_DYNAMIC,
     ],
@@ -345,7 +391,9 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     interfaces: [...IF_4, LLM_IF_ANT_ToolsSearch],
     parameterSpecs: [
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'max'] },
-      { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_6x'] }, // fast mode deprecated 2026-05-28, removal ~30d later
+      // fast mode REMOVED by Anthropic 2026-06-29: speed:'fast' no longer errors, but silently runs at standard
+      // speed/price (no usage.speed field to detect this client-side - see anthropic.wiretypes.ts). Toggle dropped
+      // here so the UI doesn't advertise a dead control. If Anthropic restores it, re-add 'fast_6x'.
       ...ANT_TOOLS_DYNAMIC,
     ],
     // Opus 4.6: flat $5/$25 pricing (1M context GA at standard pricing since 2026-03-13, no opt-in required)

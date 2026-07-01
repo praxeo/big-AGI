@@ -32,6 +32,46 @@ export class DispatchContinuationSignal extends Error {
 }
 
 
+// --- Completion Stats ---
+
+/**
+ * Final stats of a chat generation. Generic - NO analytics dependency. `metrics` carries the
+ * token/duration/cost snapshot; `terminationReason` says how generation ended ('done-dialect' = clean).
+ */
+export interface AixChatGenerateCompletionStats {
+  metrics?: AixWire_Particles.CGSelectMetrics;       // token counts (TIn/TCacheRead/TOut/...), duration (dtAll), cost
+  terminationReason?: AixWire_Particles.CGEndReason; // how generation ended ('done-dialect' = clean)
+}
+
+/** Accumulate completion stats from a passing-through particle (last value wins across continuation turns). */
+function _captureCompletionStats(stats: AixChatGenerateCompletionStats, particle: AixWire_Particles.ChatGenerateOp): void {
+  if (!('cg' in particle)) return; // text/part particles carry no stats
+  if (particle.cg === 'set-metrics') stats.metrics = particle.metrics;
+  else if (particle.cg === 'end') stats.terminationReason = particle.terminationReason;
+}
+
+/**
+ * Composable completion-stats tap: re-yields a chat-generate particle stream untouched and, at its true end
+ * (normal end, client abort, or error), awaits `onCompletionStats` with the captured stats - so an async sink
+ * (e.g. an analytics POST) flushes before the stream closes. Kept separate so executeChatGenerateWithContinuation
+ * stays clean: CSF and other callers use it directly, and opt into stats only by wrapping with this.
+ */
+export async function* withChatGenerateCompletionStats(
+  particles: AsyncIterable<AixWire_Particles.ChatGenerateOp>,
+  onCompletionStats: (stats: AixChatGenerateCompletionStats) => void | Promise<void>,
+): AsyncGenerator<AixWire_Particles.ChatGenerateOp, void> {
+  const stats: AixChatGenerateCompletionStats = {};
+  try {
+    for await (const particle of particles) {
+      _captureCompletionStats(stats, particle);
+      yield particle;
+    }
+  } finally {
+    await onCompletionStats(stats);
+  }
+}
+
+
 // --- Continuation + Operation Retry + Dispatch ---
 
 /**
