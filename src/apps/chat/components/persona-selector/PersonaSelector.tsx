@@ -12,12 +12,10 @@ import TelegramIcon from '@mui/icons-material/Telegram';
 
 import { SystemPurposeData, SystemPurposeExample, SystemPurposeId, SystemPurposes } from '../../../../data';
 
-import { YouTubeURLInput } from '~/modules/youtube/YouTubeURLInput';
 import { bareBonesPromptMixer } from '~/modules/persona/pmix/pmix';
 
 import type { DConversationId } from '~/common/stores/chat/chat.conversation';
 import { ExpanderControlledBox } from '~/common/components/ExpanderControlledBox';
-import { createDMessageTextContent } from '~/common/stores/chat/chat.message';
 import { lineHeightTextareaMd } from '~/common/app.theme';
 import { navigateToPersonas } from '~/common/app.routes';
 import { useChatStore } from '~/common/stores/chat/store-chats';
@@ -152,7 +150,6 @@ export function PersonaSelector(props: {
   // derived state
 
   const isCustomPurpose = systemPurposeId === 'Custom';
-  const isYouTubeTranscriber = systemPurposeId === 'YouTubeTranscriber';
 
   const { selectedPurpose, fourExamples } = React.useMemo(() => {
     const selectedPurpose: SystemPurposeData | null = systemPurposeId ? (SystemPurposes[systemPurposeId] ?? null) : null;
@@ -175,15 +172,6 @@ export function PersonaSelector(props: {
     if (purposeId && setSystemPurposeId)
       setSystemPurposeId(props.conversationId, purposeId);
   }, [props.conversationId, setSystemPurposeId]);
-
-  const handleAppendTranscriptAsMessage = React.useCallback((messageText: string) => {
-    // Create a new message object
-    const newMessage = createDMessageTextContent('assistant', messageText); // [chat] append assistant:YouTube transcript
-
-    // Append the new message to the conversation
-    useChatStore.getState().appendMessage(props.conversationId, newMessage);
-  }, [props.conversationId]);
-
 
   const handleCustomSystemMessageChange = React.useCallback((v: React.ChangeEvent<HTMLTextAreaElement>): void => {
     // TODO: persist this change? Right now it's reset every time.
@@ -446,16 +434,6 @@ export function PersonaSelector(props: {
                 backgroundColor: 'background.popup',
               },
               lineHeight: lineHeightTextareaMd,
-            }}
-          />
-        )}
-
-        {/* [row -1] YouTube URL */}
-        {isYouTubeTranscriber && (
-          <YouTubeURLInput
-            onSubmit={handleAppendTranscriptAsMessage}
-            sx={{
-              gridColumn: '1 / -1',
             }}
           />
         )}

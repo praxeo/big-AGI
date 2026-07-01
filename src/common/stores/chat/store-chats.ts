@@ -596,7 +596,6 @@ export const useConversation = (conversationId: DConversationId | null) => useCh
   const conversation = conversationId ? conversations.find(_c => _c.id === conversationId) ?? null : null;
   const title = conversation ? conversationTitle(conversation) : null;
   const isEmpty = conversation ? !conversation.messages.length : true;
-  const isDeveloper = conversation?.systemPurposeId === 'Developer';
   const conversationIdx = conversation ? conversations.findIndex(_c => _c.id === conversation.id) : -1;
 
   const hasConversations = conversations.length > 1 || (conversations.length === 1 && !!conversations[0].messages.length);
@@ -605,7 +604,6 @@ export const useConversation = (conversationId: DConversationId | null) => useCh
   return {
     title,
     isEmpty,
-    isDeveloper,
     conversationIdx,
     hasConversations,
     recycleNewConversationId,
