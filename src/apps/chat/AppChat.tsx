@@ -185,7 +185,6 @@ export function AppChat() {
     // focused
     title: focusedChatTitle,
     isEmpty: isFocusedChatEmpty,
-    isDeveloper: isFocusedChatDeveloper,
     conversationIdx: focusedChatNumber,
     // all
     hasConversations,
@@ -759,7 +758,6 @@ export function AppChat() {
           capabilityHasT2I={capabilityHasT2I}
           capabilityHasT2IEdit={capabilityHasT2IEdit}
           isMulticast={!isMultiConversationId ? null : isComposerMulticast}
-          isDeveloperMode={isFocusedChatDeveloper}
           onAction={handleComposerAction}
           onConversationBeamEdit={handleMessageBeamLastInFocusedPane}
           onConversationsImportFromFiles={handleConversationsImportFromFiles}

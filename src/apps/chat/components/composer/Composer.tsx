@@ -106,7 +106,6 @@ export function Composer(props: {
   capabilityHasT2I: boolean;
   capabilityHasT2IEdit: boolean;
   isMulticast: boolean | null;
-  isDeveloperMode: boolean;
   onAction: (conversationId: DConversationId, chatExecuteMode: ChatExecuteMode, fragments: (DMessageContentFragment | DMessageAttachmentFragment)[], metadata?: DMessageMetadata) => boolean;
   onConversationBeamEdit: (conversationId: DConversationId, editMessageId?: DMessageId) => Promise<void>;
   onConversationsImportFromFiles: (files: File[]) => Promise<void>;
@@ -696,8 +695,7 @@ export function Composer(props: {
         : isTextBeam ? 'Combine insights from multiple AI models...'
           : showChatInReferenceTo ? 'Chat about this...'
             : 'Type'
-            + (props.isDeveloperMode ? ' · attach code' : '')
-            + (isDesktop ? ` · drop ${props.isDeveloperMode ? 'source' : 'files'}` : '')
+            + (isDesktop ? ' · drop files' : '')
             + ` · ${placeholderAction}`
             + (recognitionState.isAvailable ? ' · ramble' : '')
             + '...';
