@@ -20,7 +20,28 @@ export function fireworksAIHeuristic(hostname: string) {
 
 
 const _fireworksKnownModels = llmsDefineManualMappings([
-  // NOTE: the serverless catalog is fully dynamic (see fireworksAIFetchModels), so no manual patching needed for now
+  // NOTE: the serverless models catalog is fully dynamic (see fireworksAIFetchModels), so no manual patching is
+  // needed for regular models. The entries below are for 'Fast' serving-path routers, which live under
+  // accounts/fireworks/routers/... and are NOT returned by the control-plane models catalog - they're injected
+  // into the fetched list (see _fireworksExtraRouters) and described from here. https://docs.fireworks.ai/serverless/serving-paths#fast
+
+  {
+    // GLM 5.2 Fast: same model and quality as GLM 5.2, served on the high-speed 'Fast' path (100+ tokens/sec) at a
+    // premium price. Not a distinct model - just a faster serving alias of accounts/fireworks/models/glm-5p2.
+    idPrefix: 'accounts/fireworks/routers/glm-5p2-fast',
+    label: 'Fireworks · GLM 5.2 Fast',
+    pubDate: '20260615', // GLM 5.2 serverless release
+    description: 'GLM 5.2 on the Fast serving path (100+ tokens/sec, premium price). Same model and quality as GLM 5.2, tuned for low-latency interactive use. Function calling and reasoning; text-only.',
+    contextWindow: 1_048_576, // 1M, same as base glm-5p2
+    maxCompletionTokens: 131072, // 128K max output
+    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
+    parameterSpecs: [
+      // full effort set (none/low/medium/high/xhigh) - matches _fireworksReasoningEffortValues for non-basic models
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'] },
+    ],
+    // 'Fast' serverless pricing ($/Mtok): input 2.10 / cached input 0.21 / output 6.60 - https://docs.fireworks.ai/serverless/pricing
+    chatPrice: { input: 2.10, output: 6.60, cache: { cType: 'oai-ac', read: 0.21 } },
+  },
 ]);
 
 const _fireworksDenyListContains: string[] = [
@@ -106,6 +127,31 @@ function _fireworksNormalizeLegacyModel(m: WireFireworksAILegacyModel): Firework
 }
 
 
+// [Fireworks] 'Fast' serving-path routers to inject into the fetched catalog. These are valid serverless chat
+// endpoints (accounts/fireworks/routers/...) that the control-plane models catalog does NOT list, so without
+// this they'd never appear in the model picker. Display metadata comes from the _fireworksKnownModels editorial
+// entries (matched by id); the fields here mainly drive list ordering (created) and a sane fallback if an
+// editorial entry is ever missing. https://docs.fireworks.ai/serverless/serving-paths#fast
+const _fireworksExtraRouters: FireworksNormalizedModel[] = [
+  {
+    id: 'accounts/fireworks/routers/glm-5p2-fast',
+    created: 1781481600, // 2026-06-15 (GLM 5.2 serverless release) - keeps it adjacent to base glm-5p2 in the list
+    supportsChat: true,
+    supportsTools: true,
+    ownedBy: 'fireworks',
+    kind: 'HF_BASE_MODEL',
+    contextLength: 1_048_576, // 1M (fallback only; editorial contextWindow wins)
+  },
+];
+
+/** Appends the extra 'Fast' routers not already present in the fetched catalog (id-deduped). */
+function _fireworksWithExtraRouters(models: FireworksNormalizedModel[]): FireworksNormalizedModel[] {
+  const present = new Set(models.map(m => m.id));
+  const extras = _fireworksExtraRouters.filter(router => !present.has(router.id));
+  return extras.length ? [...models, ...extras] : models;
+}
+
+
 /**
  * Fetches the Fireworks serverless model catalog.
  *
@@ -169,7 +215,7 @@ export async function fireworksAIFetchModels(oaiModelsUrl: string, headers: Head
     if (!models.length)
       throw new Error('empty serverless catalog');
 
-    return { data: models };
+    return { data: _fireworksWithExtraRouters(models) };
 
   } catch (error) {
     // Fallback: control-plane catalog unavailable (e.g. restricted key) - use the legacy OpenAI-compatible listing
@@ -178,7 +224,7 @@ export async function fireworksAIFetchModels(oaiModelsUrl: string, headers: Head
     const wireResponse = await fetchJsonOrTRPCThrow<{ data?: unknown }>({ url: oaiModelsUrl, headers, name: 'OpenAI/Fireworks', signal });
     wire?.logResponse(wireResponse);
     const legacyModels = wireFireworksAIListOutputSchema.parse(wireResponse?.data ?? []);
-    return { data: legacyModels.map(_fireworksNormalizeLegacyModel) };
+    return { data: _fireworksWithExtraRouters(legacyModels.map(_fireworksNormalizeLegacyModel)) };
   }
 }
 
