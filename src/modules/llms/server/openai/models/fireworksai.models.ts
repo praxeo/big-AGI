@@ -36,7 +36,8 @@ const _fireworksKnownModels = llmsDefineManualMappings([
     maxCompletionTokens: 131072, // 128K max output
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
     parameterSpecs: [
-      // full effort set (none/low/medium/high/xhigh) - matches _fireworksReasoningEffortValues for non-basic models
+      // GLM 5.2 is a Max-tier model: none/low/medium/high plus 'xhigh' -> its top 'Max' thinking tier
+      // (mirrors _fireworksEffortMax / _fireworksReasoningEffortValues, inlined as that const is defined below)
       { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'] },
     ],
     // 'Fast' serverless pricing ($/Mtok): input 2.10 / cached input 0.21 / output 6.60 - https://docs.fireworks.ai/serverless/pricing
@@ -51,21 +52,32 @@ const _fireworksDenyListContains: string[] = [
 // model 'kinds' that are not chat LLMs (embeddings, image generation, ...)
 const _fireworksNonChatKinds = new Set<string>(['EMBEDDING_MODEL', 'FLUMINA_BASE_MODEL', 'FLUMINA_ADDON']);
 
-// [Fireworks] per-model `reasoning_effort` value sets, empirically probed against the live serverless API
-// (2026-06-18). The catalog API exposes no reasoning metadata, and Fireworks accepts a different value set per
-// model: most reasoning models accept none/low/medium/high/xhigh (thinking can be disabled via 'none'), while a
-// few require reasoning to stay on and only accept low/medium/high. 'minimal' is rejected by every model, and
-// 'max' behaves like 'high' (and would require widening the shared llmVndOaiEffort registry), so both are omitted.
+// [Fireworks] per-model `reasoning_effort` value sets. The catalog API exposes no reasoning metadata, and the
+// accepted/meaningful value set differs per model (source: Fireworks API reference - Create Chat/Text Completion
+// per-model block + the reasoning guide; verified 2026-07). Models map to one of three UI tiers:
+//  - Basic (low/medium/high): reasoning always on, 'none' is rejected with an error - gpt-oss (Harmony), minimax-m2.
+//  - Max   (none/low/medium/high/xhigh): a real top thinking tier above 'high', reached via 'xhigh' - DeepSeek V4,
+//    GLM 5.2. Fireworks folds 'xhigh' into its 'max' tier; we surface 'xhigh' (not 'max') because the shared
+//    llmVndOaiEffort registry has no 'max' value (adding one would ripple into OpenRouter), and xhigh->max on the wire.
+//  - Std   (none/low/medium/high): reasoning can be disabled via 'none'; the default for every other model. Some of
+//    these (GLM 4.5/4.6/4.7/5.1, DeepSeek V3.1/V3.2) are actually binary on/off upstream, so low/medium/high collapse
+//    to "on" - harmless, just not independently meaningful (that finer distinction is out of scope for this tier map).
+// 'minimal' is rejected by every model, and 'xhigh'/'max' are not real values outside the Max-tier models above, so
+// they are omitted elsewhere. NOTE: substring-matched (not catalog-driven), so new model families may need adding here.
 type _FireworksEffort = 'none' | 'low' | 'medium' | 'high' | 'xhigh';
 const _fireworksEffortBasic: readonly _FireworksEffort[] = ['low', 'medium', 'high']; // reasoning always on
-const _fireworksEffortFull: readonly _FireworksEffort[] = ['none', 'low', 'medium', 'high', 'xhigh']; // can also disable thinking
-// model ids (substring match) that only accept the basic set; everything else defaults to the full set
+const _fireworksEffortStd: readonly _FireworksEffort[] = ['none', 'low', 'medium', 'high']; // can disable thinking via 'none'
+const _fireworksEffortMax: readonly _FireworksEffort[] = ['none', 'low', 'medium', 'high', 'xhigh']; // 'xhigh' reaches the model's top 'max' tier
+// model ids (substring match) selecting a non-default tier; everything else uses the Std set
 const _fireworksBasicEffortContains: string[] = ['gpt-oss', 'minimax-m2'];
+const _fireworksMaxEffortContains: string[] = ['deepseek-v4', 'glm-5p2'];
 
 function _fireworksReasoningEffortValues(modelId: string): readonly _FireworksEffort[] {
-  return _fireworksBasicEffortContains.some(contains => modelId.includes(contains))
-    ? _fireworksEffortBasic
-    : _fireworksEffortFull;
+  if (_fireworksBasicEffortContains.some(contains => modelId.includes(contains)))
+    return _fireworksEffortBasic;
+  if (_fireworksMaxEffortContains.some(contains => modelId.includes(contains)))
+    return _fireworksEffortMax;
+  return _fireworksEffortStd;
 }
 
 
