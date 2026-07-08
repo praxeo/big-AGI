@@ -1,5 +1,6 @@
 import * as React from 'react';
 import TimeAgo from 'react-timeago';
+import { useQuery } from '@tanstack/react-query';
 
 import { Box, Checkbox, CircularProgress, Dropdown, IconButton, ListDivider, ListItemDecorator, Menu, MenuButton, MenuItem, Sheet, Typography } from '@mui/joy';
 import AttachFileRoundedIcon from '@mui/icons-material/AttachFileRounded';
@@ -7,10 +8,13 @@ import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import DownloadIcon from '@mui/icons-material/Download';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import PlayArrowRoundedIcon from '@mui/icons-material/PlayArrowRounded';
 import VerticalAlignBottomIcon from '@mui/icons-material/VerticalAlignBottom';
 
 import type { AnthropicAccessSchema } from '~/modules/llms/server/anthropic/anthropic.access';
+import type { GeminiAccessSchema } from '~/modules/llms/server/gemini/gemini.access';
 import type { OpenAIAccessSchema } from '~/modules/llms/server/openai/openai.access';
+import { geminiFileDelete, geminiFileDownloadBlob, geminiFileErrorIsGone, geminiFileGetMetadata } from '~/modules/llms/vendors/gemini/geminiFiles.client';
 
 import type { ContentScaling } from '~/common/app.theme';
 import { ConfirmationModal } from '~/common/components/modals/ConfirmationModal';
@@ -20,6 +24,7 @@ import { convert_Base64_To_UInt8Array } from '~/common/util/blobUtils';
 import { createTextContentFragment, DMessageContentFragment, DMessageFragmentId, DMessageHostedResourcePart } from '~/common/stores/chat/chat.fragments';
 import { copyBlobPromiseToClipboard, copyToClipboard } from '~/common/util/clipboardUtils';
 import { downloadBlob } from '~/common/util/downloadUtils';
+import { videoPlayObjectUrl } from '~/common/util/video/videoPlayManaged';
 import { humanReadableBytes } from '~/common/util/textUtils';
 import { mimeTypeIsPlainText, mimeTypeIsSupportedImage, reverseLookupMimeType } from '~/common/attachment-drafts/attachment.mimetypes';
 import { useAIPreferencesStore } from '~/common/stores/store-ai';
@@ -479,6 +484,160 @@ function OpenAIContainerFileChip(props: {
   );
 }
 
+
+function GeminiFileChip(props: {
+  access: GeminiAccessSchema,
+  fileName: string,
+  mimeType: string,
+  isVideo: boolean,
+  onFragmentDelete?: () => void,
+}) {
+
+  // state
+  const [busy, setBusy] = React.useState<false | 'download' | 'play' | 'delete'>(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
+  const { showPromisedOverlay } = useOverlayComponents();
+
+  // props
+  const { access, fileName, mimeType, isVideo, onFragmentDelete } = props;
+
+  // external state - metadata (size/expiry/state). CSF-aware: fetches Google directly when access.clientSideFetch is
+  // set (key stays client-side), else via the key-proxied tRPC route - see geminiFiles.client.ts. Keyed per
+  // {host, fileName} (fileName is globally unique), so switching chats hits cache with no reload.
+  const { data: metadata, isLoading: metaLoading, error: metaError } = useQuery({
+    queryKey: ['gemini-file-metadata', access.geminiHost, fileName],
+    queryFn: () => geminiFileGetMetadata(access, fileName),
+    staleTime: Infinity, // metadata (size/expiry) is immutable once ACTIVE -> never refetch
+    // the file reports PROCESSING right after generation and flips to ACTIVE within a few seconds - poll ONLY until
+    // then so the 'processing…' label clears itself; at ACTIVE the interval returns false and staleTime:Infinity keeps it quiet forever
+    refetchInterval: (query) => (query.state.data?.state === 'PROCESSING' ? 3000 : false),
+  });
+
+  // derived
+  const shortId = fileName.replace(/^files\//, '');
+  const ext = mimeType.split(';')[0].trim().split('/')[1] || 'bin';
+  const downloadName = `gemini-${shortId}.${ext}`;
+  const displayName = isVideo ? 'Gemini Generated Video' : 'Generated file';
+  const isFileGone = geminiFileErrorIsGone(metaError);
+  const isProcessing = metadata?.state === 'PROCESSING';
+  const isBusy = !!busy || metaLoading;
+  const hasError = !!actionError || (!!metaError && !isFileGone);
+
+
+  // handlers
+
+  const getBlob = React.useCallback(() => geminiFileDownloadBlob(access, fileName), [access, fileName]);
+
+  const handleDownload = React.useCallback(async () => {
+    setBusy('download');
+    setActionError(null);
+    try {
+      const blob = await getBlob();
+      blob && downloadBlob(blob, downloadName);
+    } catch (error: any) {
+      setActionError(error?.message || 'Download failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [getBlob, downloadName]);
+
+  const handlePlay = React.useCallback(async () => {
+    setBusy('play');
+    setActionError(null);
+    try {
+      const blob = await getBlob();
+      // reuse the ephemeral fullscreen overlay (revokes the object URL on close) - same playback as inline video
+      blob && videoPlayObjectUrl(URL.createObjectURL(blob), 'AI Video');
+    } catch (error: any) {
+      setActionError(error?.message || 'Play failed');
+    } finally {
+      setBusy(false);
+    }
+  }, [getBlob]);
+
+  const handleDelete = React.useCallback(async (event: React.MouseEvent) => {
+    if (!onFragmentDelete) return;
+    // confirm (shift-click to skip) - deletes the video from Google now; it would otherwise auto-expire in ~48h
+    if (!event.shiftKey && !await showPromisedOverlay('chat-message-delete-hosted-resource', { rejectWithValue: false }, ({ onResolve, onUserReject }) =>
+      <ConfirmationModal
+        open onClose={onUserReject} onPositive={() => onResolve(true)}
+        confirmationText={<>Delete this generated video from Google now?<br />It would otherwise auto-expire in ~48h.</>}
+        positiveActionText='Delete'
+      />,
+    )) return;
+    setBusy('delete');
+    // best-effort remote delete (CSF-aware; a 404 just means it already expired), then drop the fragment
+    geminiFileDelete(access, fileName).catch(console.error);
+    onFragmentDelete();
+  }, [access, fileName, onFragmentDelete, showPromisedOverlay]);
+
+
+  return (
+    <Sheet
+      variant='soft'
+      color='primary'
+      sx={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: 1,
+        mx: 1.5,
+        px: 1.125,
+        py: 0.5,
+        borderRadius: 'sm',
+        overflow: 'hidden',
+        maxWidth: '100%',
+        boxShadow: 'inset 1px 2px 2px -2px rgba(0, 0, 0, 0.2)',
+      }}
+    >
+      <AttachFileRoundedIcon sx={{ fontSize: 'lg', opacity: 0.5 }} />
+
+      <Box sx={{ minWidth: 0, flex: 1 }}>
+        <Box className='agi-ellipsize' sx={{ fontSize: 'sm', fontWeight: 'md', color: hasError ? 'var(--joy-palette-danger-plainColor)' : undefined }}>
+          {metaLoading ? 'Loading...' : isFileGone ? 'Video no longer available (expired)' : hasError ? `${displayName} - ${actionError || 'Could not load file info'}` : displayName}
+        </Box>
+        {metadata && !isFileGone && (
+          <Box sx={{ fontSize: 'xs', opacity: 0.6 }}>
+            {humanReadableBytes(metadata.sizeBytes)}
+            {metadata.expirationTime && <> · expires <TimeAgo date={metadata.expirationTime} /></>}
+            {isProcessing && ' · processing…'}
+          </Box>
+        )}
+      </Box>
+
+      {!isFileGone ? <>
+
+        {isVideo && (
+          <GoodTooltip title='Play'>
+            <IconButton variant='soft' color='primary' disabled={isBusy} onClick={handlePlay} size='sm'>
+              {busy === 'play' ? <CircularProgress size='sm' /> : <PlayArrowRoundedIcon sx={{ fontSize: 'lg' }} />}
+            </IconButton>
+          </GoodTooltip>
+        )}
+        <GoodTooltip title='Download file'>
+          <IconButton variant='soft' color='primary' disabled={isBusy} onClick={handleDownload} size='sm'>
+            {busy === 'download' ? <CircularProgress size='sm' /> : <DownloadIcon sx={{ fontSize: 'lg' }} />}
+          </IconButton>
+        </GoodTooltip>
+        {!!onFragmentDelete && (
+          <GoodTooltip title='Delete from Google & remove'>
+            <IconButton variant='plain' color='danger' disabled={isBusy} onClick={handleDelete} size='sm'>
+              {busy === 'delete' ? <CircularProgress size='sm' /> : <DeleteOutlineIcon sx={{ fontSize: 'lg' }} />}
+            </IconButton>
+          </GoodTooltip>
+        )}
+
+      </> : onFragmentDelete && (
+        <GoodTooltip title='Remove from message'>
+          <IconButton variant='plain' color='danger' onClick={onFragmentDelete} size='sm'>
+            <DeleteOutlineIcon sx={{ fontSize: 'lg' }} />
+          </IconButton>
+        </GoodTooltip>
+      )}
+    </Sheet>
+  );
+}
+
+
 function NoAccessChip(props: { fileId: string }) {
   return (
     <Sheet variant='outlined' sx={{ display: 'inline-flex', alignItems: 'center', gap: 1, px: 1.5, py: 0.5, borderRadius: 'sm' }}>
@@ -514,6 +673,7 @@ export function BlockPartHostedResource(props: {
   // reactive service + access resolution (hooks must run unconditionally - gated by the resolved 'via')
   const antAccess = useLlmServiceAccess(resource.via === 'anthropic' ? props.messageGeneratorLlmId : undefined, 'anthropic');
   const oaiAccess = useLlmServiceAccess(resource.via === 'openai-container' ? props.messageGeneratorLlmId : undefined, 'openai');
+  const gemAccess = useLlmServiceAccess(resource.via === 'gemini-file' ? props.messageGeneratorLlmId : undefined, 'googleai');
 
   if (resource.via === 'anthropic' && antAccess)
     return (
@@ -538,5 +698,17 @@ export function BlockPartHostedResource(props: {
       />
     );
 
-  return <NoAccessChip fileId={resource?.fileId || 'unknown'} />;
+  if (resource.via === 'gemini-file' && gemAccess)
+    return (
+      <GeminiFileChip
+        access={gemAccess}
+        fileName={resource.fileName}
+        mimeType={resource.mimeType}
+        isVideo={!!resource.isVideo}
+        onFragmentDelete={onFragmentDelete ? handleFragmentDelete : undefined}
+      />
+    );
+
+  const fallbackLabel = !resource ? 'unknown' : 'fileId' in resource ? resource.fileId : 'fileName' in resource ? resource.fileName : 'unknown';
+  return <NoAccessChip fileId={fallbackLabel} />;
 }
