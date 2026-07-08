@@ -11,6 +11,10 @@
     "dev-https": "next dev --experimental-https",
     "build": "next build",
     "start": "next start",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "next lint",
     "tsclint": "tsc --noEmit --pretty",
     "postinstall": "prisma generate --no-hints",
@@ -35,7 +39,7 @@
     "@googleworkspace/drive-picker-react": "^0.2.0",
     "@mui/icons-material": "^5.18",
     "@mui/joy": "5.0.0-beta.52",
-    "@next/bundle-analyzer": "~15.1.12",
+    "@next/bundle-analyzer": "~15.5.20",
     "@prisma/client": "~5.22.0",
     "@tanstack/react-query": "^5.101.0",
     "@tanstack/react-virtual": "^3.14.3",
@@ -56,7 +60,7 @@
     "idb-keyval": "^6.2.5",
     "mammoth": "^1.12.0",
     "nanoid": "^5.1.14",
-    "next": "~15.1.12",
+    "next": "~15.5.20",
     "nprogress": "^0.2.0",
     "pdfjs-dist": "5.4.54",
     "posthog-js": "^1.391.2",
@@ -83,6 +87,7 @@
     "zustand": "5.0.14"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.1",
     "@posthog/nextjs-config": "~1.6",
     "@types/node": "^22",
     "@types/nprogress": "^0.2.3",
@@ -93,12 +98,13 @@
     "@types/turndown": "^5.0.6",
     "cross-env": "^10.1.0",
     "eslint": "^9",
-    "eslint-config-next": "~15.1.12",
+    "eslint-config-next": "~15.5.20",
     "eslint-plugin-compat": "^7.0.2",
     "prettier": "^3.8.4",
     "prisma": "~5.22.0",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.108.0"
   },
   "engines": {
     "node": "^26.0.0 || ^24.0.0 || ^22.0.0"

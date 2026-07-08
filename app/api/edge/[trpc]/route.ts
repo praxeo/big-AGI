@@ -16,5 +16,9 @@ const handlerEdgeRoutes = (req: Request) => fetchRequestHandler({
 
 // NOTE: we don't set maxDuration explicitly here - however we set it in the Vercel project settings, raising to the limit of 300s
 // export const maxDuration = 60;
-export const runtime = 'edge';
+
+// NOTE: this router historically ran on the Edge runtime. The Cloudflare (OpenNext) adapter runs the whole
+// app on the Node.js-compatible Workers runtime and does not support `export const runtime = 'edge'`, so the
+// declaration is intentionally omitted. tRPC's fetch handler and async-generator streaming work unchanged on
+// the Workers runtime. (On Vercel, without this declaration the route runs as a Node function rather than Edge.)
 export { handlerEdgeRoutes as GET, handlerEdgeRoutes as POST };
