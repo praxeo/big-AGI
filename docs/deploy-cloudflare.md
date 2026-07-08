@@ -92,14 +92,16 @@ npm scripts (in `package.json`):
 ## Option B: Continuous deployment via GitHub Actions
 
 A ready-made workflow is included at [`.github/workflows/deploy-cloudflare.yml`](../.github/workflows/deploy-cloudflare.yml).
-It builds and deploys on every push to `v2-dev` (and on manual dispatch). To enable it, add two
+It builds and deploys on every push to the **dedicated Cloudflare branch**
+(`claude/cloudflare-deployment-migration-kg8rmh`) and on manual dispatch. To enable it, add two
 **repository** secrets (Settings > Secrets and variables > Actions):
 
 - `CLOUDFLARE_API_TOKEN` - a token created from the **Edit Cloudflare Workers** template
 - `CLOUDFLARE_ACCOUNT_ID` - your account id (dashboard sidebar, or `npx wrangler whoami`)
 
-Provider API keys stay as Worker secrets (below), not repo secrets. This is the drop-in replacement for
-Vercel's Git auto-deploys - see [Turning off Vercel](#turning-off-vercel).
+Provider API keys stay as Worker secrets (below), not repo secrets. Until both secrets exist, the workflow
+builds and **skips** the deploy (staying green); once they're set, pushes auto-deploy. This runs
+**alongside** Vercel - see [Running alongside Vercel](#running-alongside-vercel).
 
 ## Option C: Cloudflare Workers Builds (dashboard)
 
@@ -112,13 +114,20 @@ Import a repository**, and set:
 Cloudflare reads `wrangler.jsonc` for the runtime config. Set your secrets in the project settings
 (see below) rather than committing them.
 
-## Turning off Vercel
+## Running alongside Vercel
 
-Once Cloudflare is deploying, stop Vercel from also building this repo (otherwise both deploy on every push):
+This Cloudflare deployment is designed to run **in parallel** with an existing Vercel production deploy,
+without disturbing it:
 
-- **Simplest:** in each Vercel project's **Settings > Git**, disconnect the repository (or pause deployments).
-- **In-repo alternative:** add a `vercel.json` with `{ "git": { "deploymentEnabled": false } }` to disable
-  Vercel Git deploys without touching the dashboard.
+- **All the app changes required for Cloudflare** (the Next 15.5 bump, removing `runtime = 'edge'`,
+  `serverExternalPackages`, `wrangler.jsonc`, this workflow) live **only on the dedicated Cloudflare branch**
+  (`claude/cloudflare-deployment-migration-kg8rmh`). Keep them there.
+- **Do not merge that branch into `v2-dev`.** `v2-dev` continues to deploy to Vercel exactly as before.
+  Merging would push the framework bump and the edge-runtime change into your Vercel production build.
+- To refresh the Cloudflare deploy with the latest production code, **merge or rebase `v2-dev` into the
+  Cloudflare branch** (one direction only), then push - the workflow redeploys just the Cloudflare Worker.
+- The two targets never collide: different infrastructure, different domains. Vercel builds previews of the
+  branch too (harmless throwaway URLs); those are not your production.
 
 ---
 
