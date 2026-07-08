@@ -196,6 +196,12 @@ If you add ISR/SSG pages, enable an R2-backed cache in `open-next.config.ts` and
 - **No Edge runtime.** OpenNext runs everything on the Node.js-compatible Workers runtime; `export const
   runtime = 'edge'` is not supported and has been removed from `app/api/edge/[trpc]/route.ts`.
 - **Node Middleware** (Next.js `middleware` on the Node runtime, 15.2+) is not yet supported by the adapter.
+- **react-dom `./server.edge` patch.** big-AGI uses the pages router, whose SSR runtime does
+  `require('react-dom/server.edge')`. React 18's `react-dom` ships that build but doesn't list it in its
+  `exports` map (React 19 does), so the Worker bundler stubs it and every server-rendered page 500s
+  ([OpenNext #855](https://github.com/opennextjs/opennextjs-cloudflare/issues/855)). A `postinstall` step
+  (`tools/patch/expose-react-dom-server-edge.mjs`) adds the missing export subpath. It's idempotent and a
+  no-op on React 19 / other targets. If you bump to React 19, you can drop it.
 - Build output (`.open-next/`) and `cloudflare-env.d.ts` are gitignored.
 
 ## Troubleshooting
