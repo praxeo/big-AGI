@@ -27,7 +27,11 @@
   // Worker logs / metrics in the Cloudflare dashboard.
   "observability": {
     "enabled": true
-  }
+  },
+
+  // [browse] Cloudflare Browser Rendering binding, used by src/modules/browse (src/modules/browse/browse.router.ts).
+  // Needs the Workers Paid plan with Browser Rendering enabled; no resource id required.
+  "browser": { "binding": "MYBROWSER" }
 
   // ---------------------------------------------------------------------------------------------------
   // OPTIONAL BINDINGS - uncomment and configure to enable the corresponding feature on Cloudflare.
@@ -38,9 +42,7 @@
   //   { "binding": "NEXT_INC_CACHE_R2_BUCKET", "bucket_name": "big-agi-cache" }
   // ],
   //
-  // 2) Web browsing (src/modules/browse) - Cloudflare Browser Rendering, as an alternative to a
-  //    remote PUPPETEER_WSS_ENDPOINT. Requires the Workers Paid plan:
-  // "browser": { "binding": "BROWSER" },
+  // 2) Web browsing is already enabled above via the `browser` binding (MYBROWSER).
   //
   // 3) Sharing / ChatGPT-share import (Prisma over Postgres) - low-latency pooled DB access:
   // "hyperdrive": [

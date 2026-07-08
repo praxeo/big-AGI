@@ -26,8 +26,9 @@ This guide deploys big-AGI to **Cloudflare Workers** using the
 These are **optional** and only matter if you use them (each is documented in
 [Optional features](#optional-features) below):
 
-- **Web browsing** (`src/modules/browse`) uses `puppeteer-core` to connect to a remote browser. Point it at
-  a remote websocket endpoint (`PUPPETEER_WSS_ENDPOINT`) or wire up Cloudflare **Browser Rendering**.
+- **Web browsing** (`src/modules/browse`) is wired to Cloudflare **Browser Rendering** (the `MYBROWSER`
+  binding) - just enable Browser Rendering on the Paid plan. It falls back to a remote websocket browser
+  (`PUPPETEER_WSS_ENDPOINT`) when the binding isn't present (e.g. local dev).
 - **Sharing / ChatGPT-share import** (`src/modules/trade`) uses Prisma over Postgres. On Workers this needs a
   Prisma **driver adapter** plus **Hyperdrive** (or another Workers-compatible database). Leave it unconfigured
   and only these specific endpoints are unavailable - everything else runs.
@@ -161,11 +162,15 @@ The full list of variables is in [environment-variables.md](environment-variable
 
 ### Web browsing (Browser Rendering)
 
-`src/modules/browse` connects to a remote browser over a websocket. Two choices:
+Wired and on by default: `src/modules/browse` uses the **`MYBROWSER`** Browser Rendering binding (declared
+in `wrangler.jsonc`) through `@cloudflare/puppeteer`. To use it:
 
-- **Remote endpoint:** set `PUPPETEER_WSS_ENDPOINT` (e.g. a hosted browserless instance) as a Worker secret.
-- **Cloudflare Browser Rendering:** uncomment the `browser` binding in `wrangler.jsonc` (requires the Paid
-  plan) and adapt the browse router to use `@cloudflare/puppeteer` with that binding.
+- Be on the **Workers Paid plan** with **Browser Rendering** enabled. The binding needs no resource id.
+
+The router auto-detects the binding at runtime and falls back to a remote WSS browser
+(`PUPPETEER_WSS_ENDPOINT`, e.g. a browserless instance, set as a Worker secret) when the binding is absent
+(e.g. local `next dev`). Note the `@cloudflare/puppeteer` constraints: no XPath (use CSS selectors),
+`page.evaluate()` returns only primitives, and the browser is always identified as a bot.
 
 ### Sharing / ChatGPT-share import (Prisma + Postgres)
 

@@ -1,7 +1,7 @@
 import * as z from 'zod/v4';
 import { TRPCError } from '@trpc/server';
 
-import puppeteer, { Browser, BrowserContext, ScreenshotOptions } from 'puppeteer-core';
+import puppeteer, { Browser, Page, ScreenshotOptions } from 'puppeteer-core';
 import { default as TurndownService } from 'turndown';
 import { load as cheerioLoad } from 'cheerio';
 
@@ -14,6 +14,23 @@ import { workerPuppeteerDownloadFileOrThrow } from './browse.files';
 // configuration
 const DISABLE_FILE_DOWNLOADS = true;
 const WORKER_TIMEOUT = 20 * 1000; // 20 seconds
+
+
+/**
+ * [Cloudflare] Returns the Browser Rendering binding (MYBROWSER) when running on Cloudflare Workers via
+ * the OpenNext adapter, or null otherwise (local dev without the binding, or non-Cloudflare runtimes) - in
+ * which case we fall back to a remote WSS browser endpoint. See docs/deploy-cloudflare.md.
+ */
+async function getCloudflareBrowserBindingOrNull(): Promise<unknown | null> {
+  try {
+    const { getCloudflareContext } = await import('@opennextjs/cloudflare');
+    const cfEnv = getCloudflareContext().env as { MYBROWSER?: unknown };
+    return cfEnv?.MYBROWSER ?? null;
+  } catch {
+    // not on Cloudflare (or the adapter isn't present) - use the WSS path instead
+    return null;
+  }
+}
 
 
 // Input schemas
@@ -73,17 +90,26 @@ export const browseRouter = createTRPCRouter({
     .input(fetchPageInputSchema)
     .mutation(async function* ({ input: { access, requests } }) {
 
-      // get endpoint
-      const endpoint = (access.wssEndpoint || env.PUPPETEER_WSS_ENDPOINT || '').trim();
-      if (!endpoint || (!endpoint.startsWith('wss://') && !endpoint.startsWith('ws://')))
-        throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Invalid WSS browser endpoint' });
-      const workerHost = new URL(endpoint).host;
+      // [Cloudflare] prefer the Browser Rendering binding when available (Workers/OpenNext); otherwise
+      // connect to a remote WSS browser endpoint (the original path, e.g. a browserless instance)
+      const cfBrowser = await getCloudflareBrowserBindingOrNull();
+
+      let endpoint = '';
+      let workerHost: string;
+      if (cfBrowser) {
+        workerHost = 'cloudflare-browser-rendering';
+      } else {
+        endpoint = (access.wssEndpoint || env.PUPPETEER_WSS_ENDPOINT || '').trim();
+        if (!endpoint || (!endpoint.startsWith('wss://') && !endpoint.startsWith('ws://')))
+          throw new TRPCError({ code: 'PRECONDITION_FAILED', message: 'Invalid WSS browser endpoint' });
+        workerHost = new URL(endpoint).host;
+      }
 
       yield { type: 'ack-start' as const };
 
       // start all requests in parallel, intercepting errors too
       const results = await Promise.allSettled(requests.map(request =>
-        workerPuppeteer(endpoint, request.url, request.transforms, request.allowFileDownloads || false, request.screenshot),
+        workerPuppeteer(cfBrowser, endpoint, request.url, request.transforms, request.allowFileDownloads || false, request.screenshot),
       ));
 
       // return all pages trapping errors
@@ -121,6 +147,7 @@ export const browseRouter = createTRPCRouter({
 
 
 async function workerPuppeteer(
+  cfBrowserBinding: unknown | null,
   browserWSEndpoint: string,
   targetUrl: string,
   transforms: PageTransformSchema[],
@@ -142,39 +169,69 @@ async function workerPuppeteer(
     screenshot: undefined,
   };
 
-  // [puppeteer] start the remote session
-  let browser: Browser;
-  try {
-    browser = await puppeteer.connect({
-      browserWSEndpoint,
-      // Add default options for better stability
-      // defaultViewport: { width: 1024, height: 768 },
-      // acceptInsecureCerts: true,
-      protocolTimeout: WORKER_TIMEOUT + 2000, // 2s extra for taking the screenshot?
-    });
-  } catch (connectError: any) {
-    // Transform connection errors into user-friendly messages
-    const errorMessage = connectError?.message || '';
-    if (errorMessage.includes('403'))
-      throw new Error('Browse service authentication failed (403). Please check your browser endpoint credentials.');
-    if (errorMessage.includes('401'))
-      throw new Error('Browse service unauthorized (401). Invalid credentials for the browser endpoint.');
-    if (errorMessage.includes('429'))
-      throw new Error('Browse service rate limited (429). Too many requests, please try again later.');
-    if (errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('504'))
-      throw new Error('Browse service temporarily unavailable. Please try again later.');
-    if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND'))
-      throw new Error('Browse service unreachable. The browser endpoint is not accessible.');
-    // Re-throw with a cleaner message for other connection errors
-    throw new Error(`Browse service connection failed: ${errorMessage || 'Unknown error'}`);
+  // [browser] acquire a page from either the Cloudflare Browser Rendering binding or a remote WSS endpoint,
+  // along with a matching cleanup routine; the rest of the function is identical for both paths.
+  let page: Page;
+  let cleanupBrowser: () => Promise<void>;
+
+  if (cfBrowserBinding) {
+
+    // [Cloudflare] Browser Rendering via the MYBROWSER binding (@cloudflare/puppeteer)
+    try {
+      const cfPuppeteer = (await import('@cloudflare/puppeteer')).default;
+      const cfBrowser = await cfPuppeteer.launch(cfBrowserBinding as Parameters<typeof cfPuppeteer.launch>[0]);
+      // @cloudflare/puppeteer and puppeteer-core expose the same API for the page methods used below
+      page = (await cfBrowser.newPage()) as unknown as Page;
+      cleanupBrowser = () => cfBrowser.close().catch((error) =>
+        console.error('workerPuppeteer: cf browser.close error', { error }));
+    } catch (launchError: any) {
+      throw new Error(`Cloudflare Browser Rendering failed to start: ${launchError?.message || 'Unknown error'}`);
+    }
+
+  } else {
+
+    // [remote] start the session on a Chrome over WSS, e.g. a browserless instance (the original path)
+    let wsBrowser: Browser;
+    try {
+      wsBrowser = await puppeteer.connect({
+        browserWSEndpoint,
+        // Add default options for better stability
+        // defaultViewport: { width: 1024, height: 768 },
+        // acceptInsecureCerts: true,
+        protocolTimeout: WORKER_TIMEOUT + 2000, // 2s extra for taking the screenshot?
+      });
+    } catch (connectError: any) {
+      // Transform connection errors into user-friendly messages
+      const errorMessage = connectError?.message || '';
+      if (errorMessage.includes('403'))
+        throw new Error('Browse service authentication failed (403). Please check your browser endpoint credentials.');
+      if (errorMessage.includes('401'))
+        throw new Error('Browse service unauthorized (401). Invalid credentials for the browser endpoint.');
+      if (errorMessage.includes('429'))
+        throw new Error('Browse service rate limited (429). Too many requests, please try again later.');
+      if (errorMessage.includes('502') || errorMessage.includes('503') || errorMessage.includes('504'))
+        throw new Error('Browse service temporarily unavailable. Please try again later.');
+      if (errorMessage.includes('ECONNREFUSED') || errorMessage.includes('ENOTFOUND'))
+        throw new Error('Browse service unreachable. The browser endpoint is not accessible.');
+      // Re-throw with a cleaner message for other connection errors
+      throw new Error(`Browse service connection failed: ${errorMessage || 'Unknown error'}`);
+    }
+
+    // for local testing, open an incognito context, to separate cookies
+    const isLocalBrowser = browserWSEndpoint.startsWith('ws://');
+    const incognitoContext = isLocalBrowser ? await wsBrowser.createBrowserContext() : null;
+    page = incognitoContext ? await incognitoContext.newPage() : await wsBrowser.newPage();
+    cleanupBrowser = async () => {
+      if (incognitoContext) await incognitoContext.close().catch((error) =>
+        console.error('workerPuppeteer: context.close error', { error }));
+      if (!isLocalBrowser) await wsBrowser.disconnect().catch((error) =>
+        console.error('workerPuppeteer: browser.disconnect error', { error }));
+      else await wsBrowser.close().catch((error) =>
+        console.error('workerPuppeteer: browser.close error', { error }));
+    };
+
   }
 
-  // for local testing, open an incognito context, to separate cookies
-  let incognitoContext: BrowserContext | null = null;
-  const isLocalBrowser = browserWSEndpoint.startsWith('ws://');
-  if (isLocalBrowser)
-    incognitoContext = await browser.createBrowserContext();
-  const page = incognitoContext ? await incognitoContext.newPage() : await browser.newPage();
   page.setDefaultNavigationTimeout(WORKER_TIMEOUT);
 
   // open url
@@ -293,17 +350,11 @@ async function workerPuppeteer(
     console.error('workerPuppeteer: page.screenshot', error);
   }
 
-  // Cleanup: close everything in reverse order
+  // Cleanup: close the page, then the browser/context via the path-specific routine
   await page.close().catch((error) =>
     console.error('workerPuppeteer: page.close error', { error }));
 
-  if (incognitoContext) await incognitoContext.close().catch((error) =>
-    console.error('workerPuppeteer: context.close error', { error }));
-
-  if (!isLocalBrowser) await browser.disconnect().catch((error) =>
-    console.error('workerPuppeteer: browser.disconnect error', { error }));
-  else await browser.close().catch((error) =>
-    console.error('workerPuppeteer: browser.close error', { error }));
+  await cleanupBrowser();
 
   return result;
 }
