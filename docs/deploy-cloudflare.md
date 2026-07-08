@@ -89,15 +89,36 @@ npm scripts (in `package.json`):
    The first deploy provisions a `*.workers.dev` URL. Configure a custom domain later from the
    Workers project's **Settings > Domains & Routes**.
 
-## Option B: Continuous deployment (Workers Builds)
+## Option B: Continuous deployment via GitHub Actions
 
-Connect the GitHub repo via **Workers & Pages > Create > Workers > Import a repository**, and set:
+A ready-made workflow is included at [`.github/workflows/deploy-cloudflare.yml`](../.github/workflows/deploy-cloudflare.yml).
+It builds and deploys on every push to `v2-dev` (and on manual dispatch). To enable it, add two
+**repository** secrets (Settings > Secrets and variables > Actions):
+
+- `CLOUDFLARE_API_TOKEN` - a token created from the **Edit Cloudflare Workers** template
+- `CLOUDFLARE_ACCOUNT_ID` - your account id (dashboard sidebar, or `npx wrangler whoami`)
+
+Provider API keys stay as Worker secrets (below), not repo secrets. This is the drop-in replacement for
+Vercel's Git auto-deploys - see [Turning off Vercel](#turning-off-vercel).
+
+## Option C: Cloudflare Workers Builds (dashboard)
+
+Prefer Cloudflare's own Git integration? Connect the repo via **Workers & Pages > Create > Workers >
+Import a repository**, and set:
 
 - **Build command:** `npm run cf:build`
 - **Deploy command:** `npx opennextjs-cloudflare deploy`
 
 Cloudflare reads `wrangler.jsonc` for the runtime config. Set your secrets in the project settings
 (see below) rather than committing them.
+
+## Turning off Vercel
+
+Once Cloudflare is deploying, stop Vercel from also building this repo (otherwise both deploy on every push):
+
+- **Simplest:** in each Vercel project's **Settings > Git**, disconnect the repository (or pause deployments).
+- **In-repo alternative:** add a `vercel.json` with `{ "git": { "deploymentEnabled": false } }` to disable
+  Vercel Git deploys without touching the dashboard.
 
 ---
 
