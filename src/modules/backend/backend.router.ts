@@ -46,6 +46,16 @@ export const backendRouter = createTRPCRouter({
   /* List server-side capabilities (pre-configured by the deployer) */
   listCapabilities: publicProcedure
     .query(async ({ ctx: _unused }): Promise<BackendCapabilities> => {
+
+      // [Cloudflare] browsing is available via a remote WSS endpoint OR the Browser Rendering (MYBROWSER) binding
+      let hasCloudflareBrowserBinding = false;
+      try {
+        const { getCloudflareContext } = await import('@opennextjs/cloudflare');
+        hasCloudflareBrowserBinding = !!(getCloudflareContext().env as { MYBROWSER?: unknown })?.MYBROWSER;
+      } catch {
+        // not running on Cloudflare Workers - ignore
+      }
+
       return {
         // llms
         hasLlmAlibaba: !!env.ALIBABA_API_KEY || !!env.ALIBABA_API_HOST,
@@ -67,7 +77,7 @@ export const backendRouter = createTRPCRouter({
         hasLlmXAI: !!env.XAI_API_KEY,
         // others
         hasDB: (!!env.MDB_URI) || (!!env.POSTGRES_PRISMA_URL && !!env.POSTGRES_URL_NON_POOLING),
-        hasBrowsing: !!env.PUPPETEER_WSS_ENDPOINT,
+        hasBrowsing: !!env.PUPPETEER_WSS_ENDPOINT || hasCloudflareBrowserBinding,
         hasGoogleCustomSearch: !!env.GOOGLE_CSE_ID && !!env.GOOGLE_CLOUD_API_KEY,
         hasVoiceElevenLabs: !!env.ELEVENLABS_API_KEY,
         // hashes
