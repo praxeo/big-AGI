@@ -1,5 +1,5 @@
 > [!NOTE]
-> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. 
+> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. .
 > - Voice input: Tried many, defaults to ElevenLabs (`scribe_v2`) STT engines (`app/api/stt/*`, `src/.../speechrecognition/*`)
 > - Clinical personas in `src/data.ts` (MDM Helper, HPI Helper, Clinical Assistant) 
 > - Fireworks: dynamic serverless catalog + per-model `reasoning_effort`
