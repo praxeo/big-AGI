@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 
-import { LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image } from '~/common/stores/llms/llms.types';
+import { LLM_IF_ANT_PromptCaching, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image } from '~/common/stores/llms/llms.types';
 import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
@@ -156,8 +156,22 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   if (model.supported_parameters?.includes('reasoning'))
     interfaces.push(LLM_IF_OAI_Reasoning);
 
-  // Prompt caching support: check pricing fields
-  if (model.pricing?.input_cache_read !== undefined || model.pricing?.input_cache_write !== undefined)
+  // Prompt caching support, data-driven from pricing signals (probe-verified 2026-07-10):
+  // - paid cache writes where breakpoints CONTROL caching (Anthropic, Qwen: no breakpoints = no caching)
+  //   = explicit Anthropic-style breakpoints: the client emits meta_cache_control hints and the
+  //   oai-completions adapter stamps cache_control (OR dialect)
+  // - read-only pricing (Grok, DeepSeek, Moonshot, older OpenAI, ...) = automatic upstream caching,
+  //   informational tag only
+  // - google/ excluded from breakpoints: explicit Gemini caching via OR double-counts prompt tokens
+  //   (net cost INCREASE vs uncached), and implicit caching was not observed through OR at all
+  // - openai/ excluded from breakpoints: GPT-5.6+ writes to the paid cache automatically even without
+  //   cache_control (stamps are a no-op), so a breakpoint toggle would be fake - informational tag +
+  //   cache_write_tokens usage read-back give correct cost accounting anyway
+  // note: '~vendor/model-latest' are OR router aliases - strip the '~' so the vendor exclusions still match
+  const modelIdUnaliased = model.id.startsWith('~') ? model.id.slice(1) : model.id;
+  if (cacheWritePrice && !modelIdUnaliased.startsWith('google/') && !modelIdUnaliased.startsWith('openai/'))
+    interfaces.push(LLM_IF_ANT_PromptCaching);
+  else if (cacheReadPrice || model.pricing?.input_cache_read !== undefined)
     interfaces.push(LLM_IF_OAI_PromptCaching);
 
 
@@ -259,12 +273,16 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       break;
 
     case model.id.startsWith('x-ai/') || model.id.startsWith('moonshotai/') || model.id.startsWith('z-ai/') || model.id.startsWith('deepseek/'):
+      // [Moonshot, 2026-07-17] Kimi K3: thinking is always-on at 'max' (its only valid effort) - no thinking toggle;
+      // probe-verified via OR: reasoning.enabled=false 400s ('Reasoning is mandatory ... cannot be disabled')
+      if (model.id.startsWith('moonshotai/kimi-k3'))
+        break;
       // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek models get default reasoning effort if not inherited
       if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndMiscEffort')) {
         // console.log('[DEV] openRouterModelToModelDescription: unexpected xAI/Grok/DeepSeek reasoning model:', model.id);
-        // Binary thinking only: OpenRouter's unified reasoning API currently rejects 'max' (see openai.chatCompletions.ts).
-        // We pin enumValues here so the shared llmVndMiscEffort registry (which also includes 'max' for native DeepSeek V4)
-        // does not surface 'max' in the UI for OR-routed models that can't honor it.
+        // Binary thinking only: we pin enumValues so the shared llmVndMiscEffort registry (which also includes 'max'
+        // for native DeepSeek V4) does not surface 'max' in the UI for OR-routed third-party models - unverified they
+        // honor it (OR itself accepts reasoning.effort='max' since GPT-5.6, see openai.chatCompletions.ts).
         parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
       }
       break;

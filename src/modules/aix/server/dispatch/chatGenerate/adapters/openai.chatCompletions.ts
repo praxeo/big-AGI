@@ -26,12 +26,13 @@ const hotFixPreferArrayUserContent = true;
 const hotFixForceImageContentPartOpenAIDetail: 'auto' | 'low' | 'high' = 'high';
 const hotFixSquashTextSeparator = '\n\n\n---\n\n\n';
 const approxSystemMessageJoiner = '\n\n---\n\n';
+const orSendStickyClientSessionId = true; // [OpenRouter] send a CLIENT-GENERATED session_id (OR does not issue one) for provider-sticky routing (prompt-cache continuity) - disable switch, just in case
 
 
 type TRequest = OpenAIWire_API_Chat_Completions.Request;
 type TRequestMessages = TRequest['messages'];
 
-export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model: AixAPI_Model, _chatGenerate: AixAPIChatGenerate_Request, streaming: boolean): TRequest {
+export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model: AixAPI_Model, _chatGenerate: AixAPIChatGenerate_Request, streaming: boolean, sessionAffinityId?: string): TRequest {
 
   // Pre-process CGR - approximate spill of System to User message
   const chatGenerate = aixSpillSystemToUser(_chatGenerate);
@@ -69,6 +70,13 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
   if (hotFixAlternateUserAssistantRoles)
     chatMessages = _fixAlternateUserAssistantRoles(chatMessages);
+
+  // [OpenRouter, 2026-07-10] Anthropic rejects >4 cache_control blocks ("A maximum of 4 blocks with
+  // cache_control may be provided. Found 5.", verified via OR on all its Anthropic routes) - manual
+  // 'Cache up to here' flags can stack beyond the auto policy's 3. Keep the trailing 4: breakpoints
+  // cache prefixes, so earlier ones are redundant with later ones.
+  if (openAIDialect === 'openrouter')
+    _capTrailingCacheBreakpoints(chatMessages, 4);
 
   // [DeepSeek, 2026-04-24] When tools are present and thinking isn't disabled, V4 demands reasoning_content on EVERY assistant message in history
   // Inject '' placeholder where missing; real reasoning is attached by _toOpenAIMessages
@@ -146,11 +154,16 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     }
   }
 
+  // [2026-07-09, OpenAI] reasoning.mode is Responses-only on native OpenAI (OpenRouter tunnels it, see the OR block
+  // below) - fail loud rather than silently dropping the param on other Chat Completions dispatches
+  if (model.vndOaiReasoningMode && openAIDialect !== 'openrouter')
+    throw new Error('OpenAI Chat Completions API does not support the Reasoning Mode parameter (Responses API only)');
+
   // [OpenAI] Vendor-specific reasoning effort
   const reasoningEffort = model.reasoningEffort; // ?? model.vndOaiReasoningEffort;
   if (reasoningEffort
     && openAIDialect !== 'openrouter' // OpenRouter has its own channeling of this
-    && openAIDialect !== 'deepseek' && openAIDialect !== 'moonshot' && openAIDialect !== 'zai' // MoonShot maps to none->disabled / high->enabled
+    && openAIDialect !== 'deepseek' && openAIDialect !== 'moonshot' && openAIDialect !== 'zai' // these map to thinking enabled/disabled (+ reasoning_effort passthrough) in the block below
     && openAIDialect !== 'alibaba' // Alibaba/Qwen ignores reasoning_effort; uses enable_thinking instead (block below)
     && openAIDialect !== 'perplexity' // Perplexity has its own block below with stricter validation
   ) {
@@ -158,13 +171,13 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     payload.reasoning_effort = reasoningEffort;
   }
 
-  // [Moonshot] Kimi K2.5 reasoning effort -> thinking mode (only 'none' and 'high' supported for now)
+  // [Moonshot] Kimi reasoning effort -> thinking mode; Kimi Code 'k3' also honors reasoning_effort low/high/max (probe-verified 2026-07-18: primary K2.5/K2.6 tolerate the extra field, 'kimi-for-coding' ignores it)
   // [Z.ai] GLM thinking mode: binary enabled/disabled (supports GLM-4.5 series and higher) - https://docs.z.ai/guides/capabilities/thinking-mode
   // [DeepSeek, 2026-04-23] V4 thinking control https://api-docs.deepseek.com/guides/thinking_mode
   if (reasoningEffort && (openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || openAIDialect === 'zai')) {
     // [Z.ai, 2026-06-13] reasoning_effort is GLM-5.2 only; other GLM models are binary thinking enabled/disabled - https://docs.z.ai/api-reference/llm/chat-completion
-    const supportsMaxEffort = openAIDialect === 'deepseek' || (openAIDialect === 'zai' && model.id.startsWith('glm-5.2'));
-    const allowedEffort = supportsMaxEffort ? ['none', 'high', 'max'] : ['none', 'high'];
+    const supportsEffortLevels = openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || (openAIDialect === 'zai' && model.id.startsWith('glm-5.2'));
+    const allowedEffort = openAIDialect === 'moonshot' ? ['none', 'low', 'high', 'max'] : supportsEffortLevels ? ['none', 'high', 'max'] : ['none', 'high'];
     if (!allowedEffort.includes(reasoningEffort)) // domain validation
       throw new Error(`${openAIDialect} only supports reasoning effort ${allowedEffort.join(', ')}, got '${reasoningEffort}'`);
 
@@ -172,7 +185,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
     // [DeepSeek, 2026-04-23] DeepSeek also supports effort control for reasoning-enabled requests - set it here as it was carved from the reasoningEffort setter before
     // [Z.ai, 2026-06-13] GLM-5.2 reasoning_effort takes effect only when thinking is enabled (i.e. effort !== 'none')
-    if (supportsMaxEffort && reasoningEffort !== 'none')
+    if (supportsEffortLevels && reasoningEffort !== 'none')
       payload.reasoning_effort = reasoningEffort;
   }
 
@@ -192,7 +205,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
   // Allow/deny auto-adding hosted tools when custom tools are present
   const hasCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
-  const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' || chatGenerate.toolsPolicy?.type === 'function_call';
+  const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
   const skipWebSearchDueToCustomTools = hasCustomTools && hasRestrictivePolicy;
 
   // Hosted tools
@@ -227,6 +240,14 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
       // max_results: 5, // could be configurable in the future
       // search_prompt: undefined, // could be configurable in the future
     }];
+
+
+  // [OpenRouter, 2026-07-11] Sticky client session id: WE mint this (OpenRouter does not issue session ids) and send it
+  // purely for provider affinity - a stable per-context id sticky-routes to the same upstream provider, which is what
+  // keeps prompt-cache hits alive: caches don't transfer across providers. The affinity id (conversationId/rayId/...) is
+  // hashed to avoid shipping internal ids upstream; a 32-bit collision only means two contexts share affinity, harmless.
+  if (openAIDialect === 'openrouter' && orSendStickyClientSessionId && sessionAffinityId)
+    payload.session_id = 'bagi-' + _fnv1aHex(sessionAffinityId);
 
 
   // [Moonshot] Kimi's $web_search builtin function
@@ -304,12 +325,17 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
         }
       }
     }
-    // OpenAI-compatible (including deepseek, moonshotai, x-ai, z-ai) via OpenRouter - all effort levels including 'none' and 'minimal' are valid (not max, that's just for Anthropic via verbosity)
+    // OpenAI-compatible (including deepseek, moonshotai, x-ai, z-ai) via OpenRouter - all effort levels are valid
+    // [2026-07-11] 'max' throw removed: OR accepts reasoning.effort='max' since GPT-5.6 (probe-verified on
+    // openai/gpt-5.6-*); models that can't honor it get OR's own per-model validation error, same as native
     else if (reasoningEffort) {
-      if (reasoningEffort === 'max') // domain validation
-        throw new Error(`OpenRouter->OpenAI API does not support '${reasoningEffort}' reasoning effort`);
       payload.reasoning = { enabled: reasoningEffort !== 'none', effort: reasoningEffort };
     }
+
+    // [2026-07-11] GPT-5.6+ reasoning mode (OR-documented): 'pro' on a base id makes OpenRouter reroute to the
+    // matching '*-pro' model; orthogonal to effort (combos probe-verified incl pro+max)
+    if (model.vndOaiReasoningMode)
+      payload.reasoning = { ...payload.reasoning, mode: model.vndOaiReasoningMode };
 
     // FIX double-reasoning request - remove reasoning_effort after transferring it to reasoning (unless already set)
     if (payload.reasoning_effort) {
@@ -376,8 +402,11 @@ function _fixAlternateUserAssistantRoles(chatMessages: TRequestMessages): TReque
       const lastItem = acc[acc.length - 1];
       if (lastItem.role === historyItem.role) {
         if (lastItem.role === 'assistant') {
-          lastItem.content += hotFixSquashTextSeparator + historyItem.content;
-          return acc;
+          // only coalesce plain-string contents; array (cache breakpoints) or null (tool-calls-only) forms stay separate
+          if (typeof lastItem.content === 'string' && typeof historyItem.content === 'string') {
+            lastItem.content += hotFixSquashTextSeparator + historyItem.content;
+            return acc;
+          }
         }
         if (lastItem.role === 'user') {
           lastItem.content = [
@@ -398,6 +427,10 @@ function _fixAlternateUserAssistantRoles(chatMessages: TRequestMessages): TReque
 
 function _fixRemoveEmptyMessages(chatMessages: TRequestMessages): TRequestMessages {
   return chatMessages.filter(message => {
+    // never drop protocol-bearing messages: tool_calls-only assistant messages have content:null,
+    // and each tool message pairs with a tool_call_id - removing either side orphans the other ("tool_call_id ... is not found")
+    if (message.role === 'assistant' && message.tool_calls?.length) return true;
+    if (message.role === 'tool') return true;
     const c = message.content;
     if (c === null || c === '') return false;
     if (typeof c === 'string' && !c.trim()) return false; // whitespace-only (e.g. '\n\n' from Anthropic)
@@ -439,8 +472,8 @@ function _fixVndOaiRestoreMarkdown_Inline(payload: TRequest) {
     const firstMessage = payload.messages[0];
     const isDevOrSystem = firstMessage.role === 'developer' || firstMessage.role === 'system';
 
-    // update the text of the developer message
-    if (isDevOrSystem && firstMessage.content && !firstMessage.content.split('\n')[0].includes('Formatting re-enabled')) {
+    // update the text of the developer message (string form only - the array form is OpenRouter-dialect-only, never o1Family)
+    if (isDevOrSystem && typeof firstMessage.content === 'string' && firstMessage.content && !firstMessage.content.split('\n')[0].includes('Formatting re-enabled')) {
       firstMessage.content = 'Formatting re-enabled\n' + firstMessage.content;
     }
     // if the developer message is missing, add it altogether
@@ -471,12 +504,20 @@ function _fixVndOaiRestoreMarkdown_Inline(payload: TRequest) {
 function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMessages_SystemMessage | null, chatSequence: AixMessages_ChatMessage[], hotFixOpenAIo1Family: boolean): TRequestMessages {
 
   // [DeepSeek, 2026-04-24] V4 thinking-by-default - reasoning_content must round-trip on tool-call turns; payload is the 'ma' part's aText (unlike Gemini/OpenAI-Responses which carry opaque handles).
+  // [Moonshot] no echo needed: K3 (also thinking-by-default) accepts tool-call turns without reasoning_content (probe-verified 2026-07-18)
   const echoDeepseekReasoning = openAIDialect === 'deepseek';
+
+  // [OpenRouter, 2026-07-10] OR translates Anthropic-style ephemeral breakpoints for paid-cache-write
+  // providers where breakpoints control caching (Anthropic, Qwen). The client strips the hints for models
+  // without LLM_IF_ANT_PromptCaching (see clientHotFixGenerateRequest_StripCacheHints), so dialect is the
+  // only gate needed here. Other OpenAI dialects self-cache (free writes) and ignore these hints.
+  const emitCacheBreakpoints = openAIDialect === 'openrouter';
 
   // Transform the chat messages into OpenAI's format (an array of 'system', 'user', 'assistant', and 'tool' messages)
   const chatMessages: TRequestMessages = [];
 
   // Convert the system message - single-part stay as-is and multi-part (text or doc) are flattened to a string
+  let msg0CacheBreakpoint = false;
   const msg0TextParts: OpenAIWire_ContentParts.TextContentPart[] = [];
   systemMessage?.parts.forEach((part) => {
     switch (part.pt) {
@@ -493,7 +534,8 @@ function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMess
         throw new Error('OpenAI ChatCompletions: images have to be in user messages, not in system message');
 
       case 'meta_cache_control':
-        // ignore this breakpoint hint - Anthropic only
+        if (emitCacheBreakpoints)
+          msg0CacheBreakpoint = true;
         break;
 
       default:
@@ -503,16 +545,18 @@ function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMess
   });
 
   // Add the system message
-  if (msg0TextParts.length)
-    chatMessages.push({
-      /**
-       * Notes:
-       * o1Family in this case is not o1-preview as it's sporting the Sys0ToUsr0 hotfix
-       * o3-mini accepts both system and developer roles, and they seem to have the same effects
-       */
-      role: !hotFixOpenAIo1Family ? 'system' : 'developer',
-      content: aixTexts_to_OpenAIInstructionText(msg0TextParts.map(text => text.text)),
-    });
+  if (msg0TextParts.length) {
+    /**
+     * Notes:
+     * o1Family in this case is not o1-preview as it's sporting the Sys0ToUsr0 hotfix
+     * o3-mini accepts both system and developer roles, and they seem to have the same effects
+     */
+    const systemText = aixTexts_to_OpenAIInstructionText(msg0TextParts.map(text => text.text));
+    chatMessages.push(!msg0CacheBreakpoint
+      ? { role: !hotFixOpenAIo1Family ? 'system' : 'developer', content: systemText }
+      // single text part carrying the trailing cache breakpoint; never coincides with the o1Family developer role (OpenRouter dialect only)
+      : { role: 'system', content: [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }] });
+  }
 
 
   // Convert the messages
@@ -563,7 +607,8 @@ function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMess
               break;
 
             case 'meta_cache_control':
-              // ignore this breakpoint hint - Anthropic only
+              if (emitCacheBreakpoints)
+                _stampTrailingCacheBreakpoint(chatMessages);
               break;
 
             case 'meta_in_reference_to':
@@ -675,7 +720,8 @@ function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMess
               break;
 
             case 'meta_cache_control':
-              // ignore this breakpoint hint - Anthropic only
+              if (emitCacheBreakpoints)
+                _stampTrailingCacheBreakpoint(chatMessages);
               break;
 
             default:
@@ -701,6 +747,65 @@ function _toOpenAIMessages(openAIDialect: OpenAIDialects, systemMessage: AixMess
   }
 
   return chatMessages;
+}
+
+/**
+ * [OpenRouter, 2026-07-10] Anthropic-style prompt caching: stamp an ephemeral breakpoint on the trailing
+ * text part of the messages assembled so far. Text parts only (per OR docs - images can't carry breakpoints),
+ * coercing string content to the array form, which is the only shape that can carry cache_control.
+ *
+ * Walks back across messages when the last one has no stampable text (image-only user messages,
+ * tool-calls-only assistant messages, meta-ref system messages): prompt caching is prefix-based, so
+ * stamping one block earlier still caches everything before it, which beats dropping the breakpoint.
+ */
+function _stampTrailingCacheBreakpoint(chatMessages: TRequestMessages): void {
+
+  for (let m = chatMessages.length - 1; m >= 0; m--) {
+    const message = chatMessages[m];
+
+    // only user/assistant messages carry breakpoints (skips tool results and meta-ref system messages)
+    if (message.role !== 'user' && message.role !== 'assistant')
+      continue;
+
+    // tool-calls-only assistant message: no content block to carry the breakpoint
+    if (message.content === null)
+      continue;
+
+    const contentParts = typeof message.content === 'string' ? [OpenAIWire_ContentParts.TextContentPart(message.content)] : message.content;
+
+    for (let i = contentParts.length - 1; i >= 0; i--) {
+      const contentPart = contentParts[i];
+      if (contentPart.type === 'text') {
+        message.content = contentParts;
+        contentPart.cache_control = { type: 'ephemeral' };
+        return;
+      }
+    }
+  }
+
+  console.warn('AIX: OpenAI-dispatch: cache breakpoint with no stampable text part in any preceding message');
+}
+
+/** FNV-1a 32-bit hex digest - tiny, deterministic, edge-safe; used to mint the OpenRouter sticky client session id. */
+function _fnv1aHex(text: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+/** Enforce the Anthropic 4-breakpoint API limit by un-stamping the earliest (prefix-redundant) breakpoints. */
+function _capTrailingCacheBreakpoints(chatMessages: TRequestMessages, maxBreakpoints: number): void {
+  const stampedParts: OpenAIWire_ContentParts.TextContentPart[] = [];
+  for (const message of chatMessages)
+    if ((message.role === 'system' || message.role === 'user' || message.role === 'assistant') && Array.isArray(message.content))
+      for (const part of message.content)
+        if (part.type === 'text' && part.cache_control)
+          stampedParts.push(part);
+  for (let i = 0; i < stampedParts.length - maxBreakpoints; i++)
+    delete stampedParts[i].cache_control;
 }
 
 function _toOpenAITools(itds: AixTools_ToolDefinition[], strictToolInvocations: boolean): NonNullable<TRequest['tools']> {
@@ -751,8 +856,11 @@ function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsP
       return 'auto';
     case 'any':
       return 'required';
-    case 'function_call':
-      return { type: 'function' as const, function: { name: itp.function_call.name } };
+    // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema. [Moonshot] probe-verified: named tool_choice
+    // 400s ("tool_choice 'specified' is incompatible with thinking enabled") on all thinking-mode Kimi requests -
+    // always, on the K2.7-code/K3 always-thinking models; 'required' ('any') works.
+    // case 'function_call':
+    //   return { type: 'function' as const, function: { name: itp.function_call.name } };
   }
 }
 

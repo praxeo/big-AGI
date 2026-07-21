@@ -11,6 +11,7 @@
 import * as React from 'react';
 
 import { Box, IconButton, ListItemDecorator, MenuItem, Option, Select, Typography } from '@mui/joy';
+// import AutoModeIcon from '@mui/icons-material/AutoMode';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import GraphicEqRoundedIcon from '@mui/icons-material/GraphicEqRounded';
 import KeyIcon from '@mui/icons-material/Key';
@@ -130,6 +131,7 @@ export function ASRxConfigureEngines(props: { isMobile: boolean }) {
 
   // external state - module
   const engines = useASRxEngines();
+  // const explicitEngineId = useASRxStore(state => state.activeEngineId); // raw user pin, null = auto
   const activeEngine = useASRxGlobalEngine(); // active selection, or priority-ranked fallback
   const activeEngineId = activeEngine?.engineId ?? null;
 
@@ -137,6 +139,7 @@ export function ASRxConfigureEngines(props: { isMobile: boolean }) {
   // derived state
   const hasEngines = engines.length > 0;
   const warnInvalidConfig = !!activeEngine && !asrxAreCredentialsValid(activeEngine.credentials);
+  // const isPinned = !!explicitEngineId && engines.some(e => e.engineId === explicitEngineId);
 
 
   // handlers
@@ -144,6 +147,10 @@ export function ASRxConfigureEngines(props: { isMobile: boolean }) {
   const handleSelectEngine = React.useCallback((_event: any, newValue: string | null) => {
     useASRxStore.getState().setActiveEngineId(newValue);
   }, []);
+
+  // const handleSetAuto = React.useCallback(() => {
+  //   useASRxStore.getState().setActiveEngineId(null);
+  // }, []);
 
   const handleOpenAddMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
     setAddMenuAnchor(event.currentTarget);
@@ -208,12 +215,31 @@ export function ASRxConfigureEngines(props: { isMobile: boolean }) {
 
       <Box sx={_styles.selectGroup}>
 
+        {/* Delete - only shown for manually-added engines */}
+        {activeEngine && !activeEngine.isAutoLinked && !activeEngine.isAutoDetected && (
+          <TooltipOutlined title={`Remove ${activeEngine.label}`}>
+            <IconButton
+              variant='plain'
+              color='neutral'
+              onClick={handleDeleteActive}
+            >
+              <DeleteOutlineIcon />
+            </IconButton>
+          </TooltipOutlined>
+        )}
+
         <Select
           placeholder='None'
           disabled={!hasEngines}
           value={activeEngineId}
           onChange={handleSelectEngine}
           color={warnInvalidConfig ? 'danger' : 'neutral'}
+          // endDecorator={!hasEngines ? undefined :
+          //   <TooltipOutlined title={isPinned ? 'Switch to Auto' : 'Currently in Auto'}>
+          //     <IconButton color={isPinned ? 'primary' : undefined} variant={isPinned ? 'solid' : undefined} onClick={handleSetAuto}>
+          //       <AutoModeIcon />
+          //     </IconButton>
+          //   </TooltipOutlined>}
           renderValue={(option) => {
             if (!option || Array.isArray(option)) return null;
             const engine = engines.find(e => e.engineId === option.value);
@@ -262,29 +288,6 @@ export function ASRxConfigureEngines(props: { isMobile: boolean }) {
           menuOpen={!!addMenuAnchor}
           onClick={handleOpenAddMenu}
         />
-
-        {/* Delete (manual) or Linked indicator (auto-linked/system, disabled) */}
-        {activeEngine && (() => {
-          const canDelete = !activeEngine.isAutoLinked && !activeEngine.isAutoDetected;
-          const tooltip = canDelete
-            ? `Remove ${activeEngine.label}`
-            : activeEngine.isAutoLinked
-              ? 'Linked - manage in Chat > AI Services'
-              : 'System service - not removable';
-          return (
-            <TooltipOutlined title={tooltip}>
-              <IconButton
-                variant='plain'
-                color='neutral'
-                disabled={!canDelete}
-                onClick={canDelete ? handleDeleteActive : undefined}
-                sx={{ ml: 'auto' }}
-              >
-                {canDelete ? <DeleteOutlineIcon /> : <LinkIcon />}
-              </IconButton>
-            </TooltipOutlined>
-          );
-        })()}
 
       </Box>
 

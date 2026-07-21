@@ -6,8 +6,11 @@ import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
 
+import { convert_Base64_To_UInt8Array, convert_UInt8Array_To_Base64 } from '~/common/util/blobUtils';
+
 import { OpenAIWire_API_Chat_Completions } from '../../wiretypes/openai.wiretypes';
 import { calculateDurationMs, createWAVFromPCM } from './gemini.audioutils';
+import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
 
 
 /**
@@ -92,6 +95,26 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
       return;
     }
 
+    // [OpenCode, 2026-07-11] Trailing cost-accounting event (no id/model/choices) - harvest cost/usage, then skip
+    if (chunkData?.['x-opencode-type'] === 'inference-cost') {
+      const metricsUpdate: AixWire_Particles.CGSelectMetrics = {};
+      const nu = chunkData.normalizedUsage;
+      if (nu && typeof nu === 'object') {
+        if (typeof nu.inputTokens === 'number') metricsUpdate.TIn = nu.inputTokens;
+        if (typeof nu.outputTokens === 'number') metricsUpdate.TOut = nu.outputTokens;
+        if (typeof nu.reasoningTokens === 'number') metricsUpdate.TOutR = nu.reasoningTokens;
+        if (typeof nu.cacheReadTokens === 'number' && nu.cacheReadTokens > 0) metricsUpdate.TCacheRead = nu.cacheReadTokens;
+        const cacheWrite = (nu.cacheWrite5mTokens || 0) + (nu.cacheWrite1hTokens || 0);
+        if (cacheWrite > 0) metricsUpdate.TCacheWrite = cacheWrite;
+      }
+      const cost = typeof chunkData.cost === 'string' ? parseFloat(chunkData.cost) : (typeof chunkData.cost === 'number' ? chunkData.cost : undefined);
+      if (cost !== undefined && !isNaN(cost))
+        metricsUpdate.$cReported = Math.round(cost * 100 * 10000) / 10000;
+      if (Object.keys(metricsUpdate).length)
+        pt.updateMetrics(metricsUpdate);
+      return;
+    }
+
     // [OpenRouter] Extract provider routing info (before Zod parsing strips unknown fields)
     if (!openRouterProviderInfraSent && typeof chunkData?.provider === 'string' && chunkData.provider) {
       openRouterProviderInfraSent = true;
@@ -108,8 +131,8 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
 
     // [OpenAI] an upstream error will be handled gracefully and transmitted as text (throw to transmit as 'error')
     if (json.error) {
-      // FIXME: potential point for throwing OperationRetrySignal (using 'srv-warn' for now)
-      return pt.setDialectTerminatingIssue(safeErrorString(json.error) || 'unknown.', IssueSymbols.Generic, 'srv-warn');
+      // FIXME: potential point for throwing OperationRetrySignal
+      return pt.setDialectTerminatingIssue(safeErrorString(json.error) || 'unknown.', IssueSymbols.Generic, openAIUpstreamErrorLogLevel(json.error));
     }
 
     // [OpenAI] if there's a warning, log it once
@@ -678,6 +701,14 @@ function _fromOpenAIMetrics(usage: OpenAIWire_API_Chat_Completions.Response['usa
       if (metricsUpdate.TIn !== undefined)
         metricsUpdate.TIn -= TCacheRead;
     }
+
+    // [OpenRouter, 2026-07-10] Input redistribution: Cache Write (paid-write providers via OR: Anthropic, Qwen)
+    const TCacheWrite = usage.prompt_tokens_details.cache_write_tokens ?? undefined;
+    if (TCacheWrite !== undefined && TCacheWrite > 0) {
+      metricsUpdate.TCacheWrite = TCacheWrite;
+      if (metricsUpdate.TIn !== undefined)
+        metricsUpdate.TIn -= TCacheWrite;
+    }
   }
 
   // [DeepSeek] Input redistribution: Cache Read
@@ -748,8 +779,8 @@ function _forwardOpenRouterDataError(parsedData: any, pt: IParticleTransmitter) 
   }
 
   // Transmit the error as text - note: throw if you want to transmit as 'error'
-  // FIXME: potential point for throwing OperationRetrySignal (using 'srv-warn' for now)
-  pt.setDialectTerminatingIssue(errorMessage, IssueSymbols.Generic, 'srv-warn');
+  // FIXME: potential point for throwing OperationRetrySignal
+  pt.setDialectTerminatingIssue(errorMessage, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
   return true;
 }
 
@@ -767,14 +798,14 @@ function openaiConvertPCM16ToWAV(base64PCMData: string): {
     bitsPerSample: 16,
   };
 
-  const pcmBuffer = Buffer.from(base64PCMData, 'base64');
+  const pcmBytes = convert_Base64_To_UInt8Array(base64PCMData, 'openai.parser.pcm16');
 
-  const wavBuffer = createWAVFromPCM(pcmBuffer, format);
-  const durationMs = calculateDurationMs(pcmBuffer.length, format);
+  const wavBytes = createWAVFromPCM(pcmBytes, format);
+  const durationMs = calculateDurationMs(pcmBytes.length, format);
 
   return {
     mimeType: 'audio/wav',
-    base64Data: wavBuffer.toString('base64'),
+    base64Data: convert_UInt8Array_To_Base64(wavBytes, 'openai.parser.pcm16'),
     durationMs,
   };
 }

@@ -32,7 +32,7 @@ export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: Ai
 
   // Allow/deny auto-adding hosted tools when custom tools are present with a restrictive policy
   const _hasAixCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
-  const _hasAixToolRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' || chatGenerate.toolsPolicy?.type === 'function_call';
+  const _hasAixToolRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
 
   // Dynamic web tools (20260318, was 20260209) require code execution for programmatic tool calling
   // const hasDynamicWebTools = model.vndAntWebDynamic === true && (model.vndAntWebSearch === 'auto' || model.vndAntWebFetch === 'auto');
@@ -162,6 +162,11 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   }
   if (currentMessage)
     chatMessages.push(currentMessage);
+
+  // [Anthropic, 2026-07-10] The API rejects >4 cache_control blocks ("A maximum of 4 blocks with
+  // cache_control may be provided.") - manual 'Cache up to here' flags can stack beyond the auto
+  // policy's 3. Keep the trailing 4: breakpoints cache prefixes, so earlier ones are redundant.
+  _capTrailingCacheBreakpoints(systemMessage, chatMessages, 4);
 
   // If the first (user) message is missing, copy the first line of the system message
   // [Anthropic] October 8th, 2024 release notes: "...we no longer require the first input message to be a user message."
@@ -381,6 +386,20 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
 }
 
 
+/** Enforce the Anthropic 4-breakpoint API limit by un-stamping the earliest (prefix-redundant) breakpoints. */
+function _capTrailingCacheBreakpoints(systemMessage: TRequest['system'], chatMessages: TRequest['messages'], maxBreakpoints: number): void {
+  const stampedBlocks: { cache_control?: unknown }[] = [];
+  for (const block of systemMessage || [])
+    if (block.cache_control)
+      stampedBlocks.push(block);
+  for (const message of chatMessages)
+    for (const block of message.content)
+      if ('cache_control' in block && block.cache_control)
+        stampedBlocks.push(block);
+  for (let i = 0; i < stampedBlocks.length - maxBreakpoints; i++)
+    delete stampedBlocks[i].cache_control;
+}
+
 function* _generateAnthropicMessagesContentBlocks({ parts, role }: AixMessages_ChatMessage): Generator<{
   role: 'user' | 'assistant',
   content: TRequest['messages'][number]['content'][number]
@@ -566,7 +585,9 @@ function _toAnthropicToolChoice(itp: AixTools_ToolsPolicy): NonNullable<TRequest
       return { type: 'auto' as const };
     case 'any':
       return { type: 'any' as const };
-    case 'function_call':
-      return { type: 'tool' as const, name: itp.function_call.name };
+    // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema (the 'tool' branch of the forced-use
+    // hotfix above stays: it guards the Anthropic wire type, which still admits 'tool')
+    // case 'function_call':
+    //   return { type: 'tool' as const, name: itp.function_call.name };
   }
 }

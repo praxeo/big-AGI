@@ -12,6 +12,7 @@ import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined
 import { SystemPurposeId, SystemPurposes } from '../../data';
 
 import { llmsGetVendorIcon } from '~/modules/llms/components/LLMVendorIcon';
+import { t2iIsPainterName } from '~/modules/t2i/t2i.config';
 
 import type { MetricsChatGenerateCost_Md } from '~/common/stores/metrics/metrics.chatgenerate';
 import type { DMessage, DMessageGenerator, DMessageRole } from '~/common/stores/chat/chat.message';
@@ -137,10 +138,7 @@ export function makeMessageAvatarIcon(
 
     case 'assistant':
       const isDownload = messageGeneratorName === 'web';
-      const isTextToImage =
-        messageGeneratorName?.startsWith('GPT Image') // sync this with t2i.client.ts
-        || messageGeneratorName?.startsWith('DALL·E')
-        || messageGeneratorName === 'Prodia';
+      const isTextToImage = t2iIsPainterName(messageGeneratorName);
       const isReact = messageGeneratorName?.startsWith('react-');
 
       // Extra appearance
@@ -389,6 +387,15 @@ export function prettyShortChatModelName(model: string | undefined): string {
 
   // TODO: fully reform this function to be using information from the DLLM, rather than this manual mapping
 
+  // Variant ids ('base::variant', see LLMS_VARIANT_SEPARATOR) - any vendor: prettify the base alone, then re-append the variant
+  const variantIndex = model.indexOf('::');
+  if (variantIndex !== -1) {
+    // const variant = model.slice(variantIndex + 2);
+    return prettyShortChatModelName(model.slice(0, variantIndex));
+    // we decide to not show the variantm, since the model will be overwritten by the real returned model anyways, and so we skip it for this first second..
+    // + (' ' + variant.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '));
+  }
+
   // [Gemini / Google] short-circuit canonical 'models/' prefix before OpenAI regex, to avoid substring collisions (e.g. '-computer-use-' in 'models/gemini-2.5-computer-use-...')
   if (model.startsWith('models/'))
     return _prettyGeminiModelName(model.slice(7));
@@ -417,6 +424,10 @@ export function prettyShortChatModelName(model: string | undefined): string {
       // price variants
       .replace('-pro', ' Pro')
       .replace('-preview', ' (preview)')
+      // GPT-5.6+ capability tiers
+      .replace('-sol', ' Sol')
+      .replace('-terra', ' Terra')
+      .replace('-luna', ' Luna')
       // .replace('-latest', ' latest') // covered by catch-all
       // size (covered by catch-all)
       // .replace('-mini', ' mini')

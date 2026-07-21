@@ -162,7 +162,7 @@ export namespace AixWire_Parts {
      * - image/gif: Anthropic, OpenAI
      * - image/heic, image/heif: Gemini
      */
-    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']),
+    mimeType: z.enum(['image/jpeg', 'image/png', 'image/webp']), // keep in sync with AIX_WIRE_IMAGE_MIMETYPES
     base64: z.string(),
   });
 
@@ -421,18 +421,22 @@ export namespace AixWire_Tooling {
    * Policy for tools that the model can use:
    * - auto: can use a tool or not (default, same as not specifying a policy)
    * - any: MUST use one tool at least - DEPRECATED, see below
-   * - function_call: MUST use a specific Function Tool - DEPRECATED, see below
+   * - function_call: MUST use a specific Function Tool [DISABLED 2026-07-17 - see below]
    * - none: same as not giving the model any tool [REMOVED - just give no tools]
    *
-   * @deprecated 'any' and 'function_call' (forced tool use) are a thing of the past - 2026-06-09:
-   * Claude Fable/Mythos 5 reject them with a 400 ('tool_choice forces tool use is not compatible with
-   * this model.'); the Anthropic adapter coerces them to 'auto' + a system steering hint. New code
-   * should use 'auto' (or no policy) and instruct the model to call the tool in the prompt instead.
+   * @deprecated forced tool use is a thing of the past - 2026-06-09: Claude Fable/Mythos 5 reject it
+   * with a 400 ('tool_choice forces tool use is not compatible with this model.'); the Anthropic
+   * adapter coerces to 'auto' + a system steering hint. New code should use 'auto' (or no policy)
+   * and instruct the model to call the tool in the prompt instead.
+   *
+   * 2026-07-17: 'function_call' (forced NAMED tool) commented out AIX-wide: Moonshot also 400s it on
+   * all thinking-mode requests ("tool_choice 'specified' is incompatible with thinking enabled" - K3
+   * always), modern models don't need it, and with a single tool 'any' is equivalent. 'any' is kept.
    */
   export const ToolsPolicy_schema = z.discriminatedUnion('type', [
     z.object({ type: z.literal('auto') }),
     z.object({ type: z.literal('any') /*, parallel: z.boolean()*/ }), // @deprecated - prefer 'auto' + prompt steering
-    z.object({ type: z.literal('function_call'), function_call: z.object({ name: z.string() }) }), // @deprecated - prefer 'auto' + prompt steering
+    // z.object({ type: z.literal('function_call'), function_call: z.object({ name: z.string() }) }), // DISABLED 2026-07-17 - forced named tool, see deprecation note above
   ]);
 
 }
@@ -540,6 +544,7 @@ export namespace AixWire_API {
     vndOaiCodeInterpreter: z.enum(['off', 'auto']).optional(),
     vndOaiContainerId: z.string().optional(), // [Responses] reuse a prior code-interpreter session container (caller checks expiry before setting)
     vndOaiImageGeneration: z.enum(['mq', 'hq', 'hq_edit', 'hq_png']).optional(),
+    vndOaiReasoningMode: z.enum(['standard', 'pro']).optional(), // [2026-07-09, OpenAI] [Responses] GPT-5.6+ reasoning.mode - 'pro' performs additional model work, billed at standard rates
     vndOaiResponsesAPI: z.boolean().optional(),
     vndOaiRestoreMarkdown: z.boolean().optional(),
     vndOaiVerbosity: z.enum(['low', 'medium', 'high']).optional(),

@@ -6,7 +6,7 @@ import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
 import { createVariantInjector, ModelVariantMap } from '../../llm.server.variants';
-import { type KnownLink, type KnownModel, formatPubDate, fromManualMapping, llmDevCheckModels_DEV, llmsDefineModels } from '../../models.mappings';
+import { formatPubDate, fromManualMapping, type KnownLink, type KnownModel, llmDevCheckModels_DEV, llmsDefineModels } from '../../models.mappings';
 
 // --- OpenAI Model ID inference (auto-derived from _knownOpenAIChatModels) ---
 export type LlmsOpenAIModelId = typeof _knownOpenAIChatModels[number]['idPrefix'];
@@ -14,6 +14,45 @@ export type LlmsOpenAIModelId = typeof _knownOpenAIChatModels[number]['idPrefix'
 
 // OpenAI Model Variants
 export const hardcodedOpenAIVariants: ModelVariantMap = {
+
+  // GPT-5.6 Sol: Pro reasoning mode (successor to the standalone '-pro' models - gpt-5.6-pro does not exist),
+  // and reasoning disabled (non-thinking) - both verified live 2026-07-10
+  'gpt-5.6-sol': [
+    {
+      idVariant: '::pro',
+      label: 'GPT-5.6 Sol Pro',
+      // Empirical (2026-07-10): answers arrive whole (single terminal SSE delta, like 5.5 Pro, but much faster - ~5s vs ~34s
+      // on a trivial prompt); each request adds ~1.7K billed input tokens of orchestration scaffold; background mode supported.
+      description: 'GPT-5.6 Sol with Pro reasoning mode: performs additional model work for the hardest problems. Answers arrive whole (no incremental streaming) and requests carry a ~1.7K input token overhead, billed at standard GPT-5.6 Sol rates.',
+      parameterSpecs: [
+        { paramId: 'llmVndOaiReasoningMode', initialValue: 'pro', hidden: true }, // factory 'pro', not changeable
+        { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], initialValue: 'medium' },
+        { paramId: 'llmVndOaiWebSearchContext' },
+        { paramId: 'llmVndOaiVerbosity' },
+        { paramId: 'llmVndOaiImageGeneration' },
+        { paramId: 'llmVndOaiCodeInterpreter' },
+        { paramId: 'llmForceNoStream' },
+      ],
+    },
+    {
+      idVariant: '::thinking-none',
+      label: 'GPT-5.6 Sol (No-thinking)',
+      hidden: true, // hidden by default as redundant, user can unhide in settings
+      description: 'Supports temperature control for creative applications. GPT-5.6 Sol with reasoning disabled (reasoning_effort=none).',
+      interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_PromptCaching], // NO LLM_IF_OAI_Reasoning, NO LLM_IF_HOTFIX_NoTemperature
+      parameterSpecs: [
+        { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], initialValue: 'none', hidden: true }, // factory 'none', not changeable
+        { paramId: 'llmVndOaiWebSearchContext' },
+        { paramId: 'llmVndOaiVerbosity' },
+        { paramId: 'llmVndOaiImageGeneration' },
+        { paramId: 'llmVndOaiCodeInterpreter' },
+        { paramId: 'llmForceNoStream' },
+      ],
+    },
+  ],
+
+  // NOTE: temperature-at-effort-none is probe-verified on Terra/Luna too, but per the flagship-only precedent
+  // (5.2/5.4/5.5 minis never got one) only Sol gets a No-thinking variant.
 
   // GPT-5.5 with reasoning disabled (non-thinking) - supports temperature control
   'gpt-5.5-2026-04-23': {
@@ -111,25 +150,32 @@ type _OpenAIModelDef = (KnownModel & { pubDate: string }) | KnownLink;
 
 export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
 
-  /// GPT-5.6 series - Limited preview June 26, 2026
+  /// GPT-5.6 series - Announced June 26, 2026 (limited preview); GA on the API July 9, 2026 (tier pointers listed on /v1/models)
   // New naming: the number is the generation; Sol/Terra/Luna are durable capability tiers (intelligence/balance/cost).
-  // Limited preview to a small set of govt-approved partners; not yet on the public /v1/models API, so model IDs use the
-  // stable tier pointers (OpenAI: tiers "advance on their own cadence"). contextWindow/maxCompletionTokens are assumed at
-  // 5.5-class pending API/docs confirmation; pricing is verified from the official announcement.
-  // NOTE: 5.6 Sol introduces new `max` and `ultra` reasoning-effort modes (ultra = subagent acceleration) not yet in the
-  //       llmVndOaiEffort registry - using the supported subset for now; max/ultra need separate param-system support.
+  // Model IDs are the stable tier pointers - no dated snapshots (OpenAI: tiers "advance on their own cadence"); the
+  // 'gpt-5.6' alias routes to Sol (docs-official; not yet listed - the symLink below activates if/when it appears).
+  // Verified live 2026-07-10 (API probes + official model pages), identical across all three tiers:
+  // - 1,050,000 context window / 128,000 max output tokens / knowledge cutoff Feb 16, 2026
+  // - reasoning.effort: none|low|medium|high|xhigh|max ('max' is new, #1159; 'minimal' rejected; no 'ultra' - earlier preview note was wrong)
+  // - reasoning.mode: standard|pro (#1158) - 'pro' replaces the standalone '-pro' models (gpt-5.6-pro does not exist);
+  //   orthogonal to effort (works with none..max), streams, takes summary=detailed; billed at standard token rates
+  // - temperature/top_p only with effort=none; verbosity low|medium|high; web_search/code_interpreter/image_generation all work
+  // NOT yet adopted (shipped Jul 9 alongside 5.6, per API changelog): programmatic tool calling, explicit prompt-cache
+  // controls, persisted reasoning / reasoning.context (auto|current_turn|all_turns - also accepted by 5.5), assistant
+  // message 'phase' (commentary|final_answer), image detail 'original'.
 
   // GPT-5.6 Sol - flagship
   {
     idPrefix: 'gpt-5.6-sol',
     label: 'GPT-5.6 Sol',
-    pubDate: '20260626',
-    description: 'Flagship next-generation model (limited preview). Strongest yet for agentic coding, science, and cybersecurity, with the most robust safety stack to date.',
-    contextWindow: 1050000, // assumed (5.5-class); unverified - not yet on public API
-    maxCompletionTokens: 128000, // assumed; unverified
+    pubDate: '20260709', // API GA (Jun 26 was the limited partner preview)
+    description: 'Flagship next-generation model. Strongest yet for agentic coding, science, and cybersecurity, with the most robust safety stack to date. 1M token context.',
+    contextWindow: 1050000,
+    maxCompletionTokens: 128000,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
-      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'], initialValue: 'medium' }, // TODO: add 'max'/'ultra' once supported in llmVndOaiEffort
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], initialValue: 'medium' },
+      { paramId: 'llmVndOaiReasoningMode' },
       { paramId: 'llmVndOaiWebSearchContext' },
       { paramId: 'llmVndOaiVerbosity' },
       { paramId: 'llmVndOaiImageGeneration' },
@@ -137,20 +183,21 @@ export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
       { paramId: 'llmForceNoStream' },
     ],
     chatPrice: { input: 5, cache: { cType: 'oai-ac', read: 0.5 }, output: 30 }, // cache read = 90% discount
-    // benchmark: TBD (limited preview, not yet on leaderboards)
+    // benchmark: TBD (not yet on leaderboards)
   },
 
   // GPT-5.6 Terra - balanced
   {
     idPrefix: 'gpt-5.6-terra',
     label: 'GPT-5.6 Terra',
-    pubDate: '20260626',
-    description: 'Balanced model for efficient, high-volume everyday work (limited preview). Competitive with GPT-5.5 while being 2x cheaper.',
-    contextWindow: 1050000, // assumed (5.5-class); unverified - not yet on public API
-    maxCompletionTokens: 128000, // assumed; unverified
+    pubDate: '20260709', // API GA (Jun 26 was the limited partner preview)
+    description: 'Balanced model for efficient, high-volume everyday work. Competitive with GPT-5.5 while being 2x cheaper. 1M token context.',
+    contextWindow: 1050000,
+    maxCompletionTokens: 128000,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
-      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'], initialValue: 'medium' },
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], initialValue: 'medium' },
+      { paramId: 'llmVndOaiReasoningMode' },
       { paramId: 'llmVndOaiWebSearchContext' },
       { paramId: 'llmVndOaiVerbosity' },
       { paramId: 'llmVndOaiImageGeneration' },
@@ -158,20 +205,21 @@ export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
       { paramId: 'llmForceNoStream' },
     ],
     chatPrice: { input: 2.5, cache: { cType: 'oai-ac', read: 0.25 }, output: 15 }, // cache read = 90% discount
-    // benchmark: TBD (limited preview, not yet on leaderboards)
+    // benchmark: TBD (not yet on leaderboards)
   },
 
   // GPT-5.6 Luna - fast & affordable
   {
     idPrefix: 'gpt-5.6-luna',
     label: 'GPT-5.6 Luna',
-    pubDate: '20260626',
-    description: 'Fastest, most affordable GPT-5.6 model for high-volume work (limited preview). Strong capability at the lowest cost in the family.',
-    contextWindow: 400000, // assumed (fast-tier class); unverified - not yet on public API
-    maxCompletionTokens: 128000, // assumed; unverified
+    pubDate: '20260709', // API GA (Jun 26 was the limited partner preview)
+    description: 'Fastest, most affordable GPT-5.6 model for high-volume work. Strong capability at the lowest cost in the family. 1M token context.',
+    contextWindow: 1050000, // official model page - same 1M-class as Sol/Terra (earlier 400K assumption was wrong)
+    maxCompletionTokens: 128000,
     interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: [
-      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh'], initialValue: 'medium' },
+      { paramId: 'llmVndOaiEffort', enumValues: ['none', 'low', 'medium', 'high', 'xhigh', 'max'], initialValue: 'medium' },
+      { paramId: 'llmVndOaiReasoningMode' },
       { paramId: 'llmVndOaiWebSearchContext' },
       { paramId: 'llmVndOaiVerbosity' },
       { paramId: 'llmVndOaiImageGeneration' },
@@ -179,7 +227,12 @@ export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
       { paramId: 'llmForceNoStream' },
     ],
     chatPrice: { input: 1, cache: { cType: 'oai-ac', read: 0.1 }, output: 6 }, // cache read = 90% discount
-    // benchmark: TBD (limited preview, not yet on leaderboards)
+    // benchmark: TBD (not yet on leaderboards)
+  },
+  {
+    idPrefix: 'gpt-5.6',
+    label: 'GPT-5.6',
+    symLink: 'gpt-5.6-sol', // official alias: "gpt-5.6 routes requests to GPT-5.6 Sol" - not yet on /v1/models, dormant until listed
   },
 
 
@@ -771,7 +824,8 @@ export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
     description: '[Use: GPT-5.5 Pro with web search - Shut down: 2026-07-23] Faster, more affordable deep research model for complex, multi-step research tasks.',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
-    interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
+    // NOTE: no LLM_IF_OAI_Fn - deep research models reject custom function tools (web_search/code_interpreter only), per the parameter sweep (no fn roundtrip)
+    interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: PS_DEEP_RESEARCH,
     chatPrice: { input: 2, cache: { cType: 'oai-ac', read: 0.5 }, output: 8 },
   },
@@ -812,7 +866,8 @@ export const _knownOpenAIChatModels = llmsDefineModels<_OpenAIModelDef>()([
     description: '[Use: GPT-5.5 Pro with web search - Shut down: 2026-07-23] Our most powerful deep research model for complex, multi-step research tasks.',
     contextWindow: 200000,
     maxCompletionTokens: 100000,
-    interfaces: [LLM_IF_OAI_Responses, ...IFS_CHAT_CACHE_REASON, LLM_IF_HOTFIX_NoTemperature],
+    // NOTE: no LLM_IF_OAI_Fn - deep research models reject custom function tools (web_search/code_interpreter only), per the parameter sweep (no fn roundtrip)
+    interfaces: [LLM_IF_OAI_Responses, LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_HOTFIX_NoTemperature],
     parameterSpecs: PS_DEEP_RESEARCH,
     chatPrice: { input: 10, cache: { cType: 'oai-ac', read: 2.5 }, output: 40 },
   },
@@ -1547,6 +1602,7 @@ const _ORT_OAI_IF_ALLOWLIST: ReadonlySet<string> = new Set([
 ] as const);
 const _ORT_OAI_PARAM_ALLOWLIST: ReadonlySet<string> = new Set([
   'llmVndOaiEffort', // OpenAI reasoning effort
+  'llmVndOaiReasoningMode', // [2026-07-11] GPT-5.6+ reasoning mode - OR-documented `reasoning.mode`: 'pro' on a base id reroutes to the matching '*-pro' model
   'llmVndOaiVerbosity', // verbosity
   // 'llmVndOaiImageGeneration', // OR does NOT support image gen with OAI yet (2026-02-06)
 ] as const satisfies DModelParameterId[]);
@@ -1557,9 +1613,15 @@ const _ORT_OAI_PARAM_ALLOWLIST: ReadonlySet<string> = new Set([
  */
 export function llmOrtOaiLookup(orModelName: string): OrtVendorLookupResult | undefined | null {
 
+  const isOaiProModel = orModelName.endsWith('-pro'); // before the refMap rename - drives the reasoning mode pin below
+
   // typemap to known models
   const ortOaiRefMap: Record<string, string | null> = {
     // renames
+    // [2026-07-11] OR materializes GPT-5.6 Pro mode as standalone '-pro' ids - map to the tier entries (OR supplies label + pricing)
+    'gpt-5.6-sol-pro': 'gpt-5.6-sol',
+    'gpt-5.6-terra-pro': 'gpt-5.6-terra',
+    'gpt-5.6-luna-pro': 'gpt-5.6-luna',
     'gpt-5.5-chat': 'gpt-5.5-2026-04-23', // gpt-5.5-chat-latest not yet in API, map to snapshot
     'gpt-5.4-chat': 'gpt-5.4-2026-03-05', // no chat-latest yet, map to snapshot
     'gpt-5.3-chat': 'gpt-5.3-chat-latest',
@@ -1591,7 +1653,10 @@ export function llmOrtOaiLookup(orModelName: string): OrtVendorLookupResult | un
 
   const parameterSpecs = entry.parameterSpecs
     ?.filter(spec => _ORT_OAI_PARAM_ALLOWLIST.has(spec.paramId))
-    .map(spec => ({ ...spec }));
+    .map(spec =>
+      (isOaiProModel && spec.paramId === 'llmVndOaiReasoningMode') ? { ...spec, initialValue: 'pro' as const, hidden: true } // '-pro' ids ARE pro mode: pinned ('standard' doesn't reroute back)
+        : { ...spec },
+    );
 
   // initialTemperature: not set - OpenAI models use the global fallback (0.5);
   // NoTemperature models are handled client-side via LLM_IF_HOTFIX_NoTemperature (not propagated to OR)
