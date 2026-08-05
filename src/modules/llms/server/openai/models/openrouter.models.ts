@@ -8,6 +8,7 @@ import { formatPubDate, fromManualMapping } from '../../models.mappings';
 import { llmOrtAntLookup_ThinkingVariants } from '../../anthropic/anthropic.models';
 import { llmOrtGemLookup } from '../../gemini/gemini.models';
 import { llmOrtOaiLookup } from './openai.models';
+import { llmOrtXaiLookup } from './xai.models';
 import { wireOpenrouterModelsListOutputSchema } from '../wiretypes/openrouter.wiretypes';
 
 
@@ -36,6 +37,9 @@ const orModelFamilyOrder = [
   // Research/open models
   'nvidia/', 'microsoft/', 'nousresearch/', 'ibm-granite/', 'poolside/', 'xiaomi/',
 ] as const;
+
+// llmVndMiscEffort thinking levels we expose, in canonical order ('xhigh' deliberately absent) - see llms.parameters.ts
+const _MISC_EFFORTS = ['low', 'high', 'max'] as const;
 
 const orOldModelIDs = [
   // Older OpenAI models (no longer on OR but kept for safety)
@@ -79,6 +83,17 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
     console.warn('[DEV] openRouterModelToModelDescription: parser fail', z.prettifyError(error), wireModel);
     return null;
   }
+
+  // drop ':batch' variants: async batch tiers (50%-off resold vendor batch APIs) can't serve
+  // synchronous chat; they'd list as half-price chat models and fail or queue on send.
+  // OR briefly published them on 2026-07-22 (17 openai/*:batch) then withdrew - expected to return.
+  // When OR relaunches batch for real, do NOT just remove this gate - re-verify the semantics first:
+  // - if batch stays async (jobs API / delayed delivery), keep the gate; proper support means a batch
+  //   job surface (submit/poll/retrieve) outside the chat list, a product feature not a parser change
+  // - if OR ships them as sync-callable discounted endpoints, replace the gate with a visible variant:
+  //   '(batch)' label suffix + hidden-by-default + latency note, so users opt in knowingly
+  if (model.id.endsWith(':batch'))
+    return null;
 
 
   // -- Label --
@@ -277,13 +292,36 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       // probe-verified via OR: reasoning.enabled=false 400s ('Reasoning is mandatory ... cannot be disabled')
       if (model.id.startsWith('moonshotai/kimi-k3'))
         break;
-      // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek models get default reasoning effort if not inherited
-      if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndMiscEffort')) {
+      // [xAI, 2026-07-31] inherit native effort specs (medium/xhigh, which llmVndMiscEffort cannot express)
+      if (model.id.startsWith('x-ai/'))
+        _mergeLookup(llmOrtXaiLookup(llmRef));
+
+      // 'none' 400s where OR marks reasoning mandatory (verified: grok-4.5, grok-4.20-multi-agent, grok-build-0.1).
+      // Replace, don't mutate - specs may be shared with the native defs.
+      if (model.reasoning?.mandatory)
+        parameterSpecs.forEach((spec, i) => {
+          if ((spec.paramId === 'llmVndOaiEffort' || spec.paramId === 'llmVndMiscEffort') && 'enumValues' in spec && spec.enumValues)
+            parameterSpecs[i] = { ...spec, enumValues: spec.enumValues.filter(v => v !== 'none') };
+        });
+
+      // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek models get default reasoning effort if not inherited.
+      // Checks llmVndOaiEffort too (else an inherited spec gets a 2nd control stacked); skips mandatory models,
+      // where a binary on/off is meaningless.
+      if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndMiscEffort' || p.paramId === 'llmVndOaiEffort')
+        && !model.reasoning?.mandatory) {
         // console.log('[DEV] openRouterModelToModelDescription: unexpected xAI/Grok/DeepSeek reasoning model:', model.id);
         // Binary thinking only: we pin enumValues so the shared llmVndMiscEffort registry (which also includes 'max'
         // for native DeepSeek V4) does not surface 'max' in the UI for OR-routed third-party models - unverified they
         // honor it (OR itself accepts reasoning.effort='max' since GPT-5.6, see openai.chatCompletions.ts).
-        parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
+        // [DeepSeek, 2026-07-31] Exception: OR's supported_efforts is right here, separating the 0731 flash
+        // (max/high/low) from the April flash and V4-Pro (xhigh/high -> binary). deepseek/ only - for xAI it is wrong.
+        const orEfforts = model.id.startsWith('deepseek/') ? model.reasoning?.supported_efforts : undefined;
+        const derived = _MISC_EFFORTS.filter(e => orEfforts?.includes(e));
+        parameterSpecs.push({
+          paramId: 'llmVndMiscEffort',
+          // empty list means "no information" -> binary fallback, never "no efforts". 'none' is safe: mandatory never gets here.
+          enumValues: !derived.length ? ['none', 'high'] : ['none', ...derived],
+        });
       }
       break;
 

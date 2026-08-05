@@ -2,6 +2,7 @@ import type { LlmsAnthropicModelId } from '~/modules/llms/server/anthropic/anthr
 import type { LlmsDeepseekModelId } from '~/modules/llms/server/openai/models/deepseek.models';
 import type { LlmsGeminiModelId } from '~/modules/llms/server/gemini/gemini.models';
 import type { LlmsMoonshotModelId } from '~/modules/llms/server/openai/models/moonshot.models';
+import type { LlmsNvidiaNIMModelId } from '~/modules/llms/server/openai/models/nvidianim.models';
 import type { LlmsOpenAIModelId } from '~/modules/llms/server/openai/models/openai.models';
 import type { LlmsXAIModelId } from '~/modules/llms/server/openai/models/xai.models';
 import type { LlmsZAIModelId } from '~/modules/llms/server/openai/models/zai.models';
@@ -34,6 +35,7 @@ type _EditorialPick =
   | { vendor: 'deepseek',   modelId: LlmsDeepseekModelId }
   | { vendor: 'googleai',   modelId: LlmsGeminiModelId }
   | { vendor: 'moonshot',   modelId: LlmsMoonshotModelId }
+  | { vendor: 'nvidianim',  modelId: LlmsNvidiaNIMModelId }
   | { vendor: 'openai',     modelId: LlmsOpenAIModelId }
   | { vendor: 'openrouter', modelId: `anthropic/${LlmsAnthropicModelId | 'claude-haiku-4-5'}` | `google/${string}` | `openai/${LlmsOpenAIModelId}` } // dynamic discovery
   | { vendor: 'xai',        modelId: LlmsXAIModelId }
@@ -60,6 +62,12 @@ export const EditorialDefaults = {
     // { vendor: 'bedrock',    modelId: 'us.anthropic.claude-fable-5' },
     // { vendor: 'bedrock',    modelId: 'global.anthropic.claude-fable-5' },
     // { vendor: 'openrouter', modelId: 'anthropic/claude-fable-5' },
+    // LAUNCHED 2026-07-24: claude-opus-5 replaces Opus 4.8 as the top Anthropic pick ($5/$25, 1M ctx, thinking
+    // on by default). Single always-adaptive entry (no variant), so no '-thinking' Bedrock suffix.
+    { vendor: 'anthropic',  modelId: 'claude-opus-5' },
+    { vendor: 'bedrock',    modelId: 'us.anthropic.claude-opus-5' },
+    { vendor: 'bedrock',    modelId: 'global.anthropic.claude-opus-5' },
+    { vendor: 'openrouter', modelId: 'anthropic/claude-opus-5' },
     { vendor: 'anthropic',  modelId: 'claude-opus-4-8' },
     { vendor: 'bedrock',    modelId: 'us.anthropic.claude-opus-4-8-thinking' },
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-opus-4-8-thinking' },
@@ -72,6 +80,7 @@ export const EditorialDefaults = {
     { vendor: 'openrouter', modelId: 'openai/gpt-5.6-sol' },
     { vendor: 'openai',     modelId: 'gpt-5.5' },
     { vendor: 'openrouter', modelId: 'openai/gpt-5.5' },
+    { vendor: 'googleai',   modelId: 'models/gemini-3.6-flash' }, // 2026-07-21 GA - newest Flash flagship, above 3.5 Flash (Elo 1485 vs 1476, cheaper output)
     { vendor: 'googleai',   modelId: 'models/gemini-3.5-flash' },
     { vendor: 'anthropic',  modelId: 'claude-opus-4-6' },
     { vendor: 'googleai',   modelId: 'models/gemini-3.1-pro-preview' },
@@ -82,9 +91,15 @@ export const EditorialDefaults = {
     { vendor: 'moonshot',   modelId: 'kimi-k2.6' },
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'deepseek',   modelId: 'deepseek-v4-pro' },
+    // NVIDIA NIM: free trial catalog, tail picks (native vendors above always win when configured)
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-ultra-550b-a55b' }, // NVIDIA flagship, 1M ctx, reliably served
+    { vendor: 'nvidianim',  modelId: 'z-ai/glm-5.2' }, // top Elo on the NIM roster
+    { vendor: 'nvidianim',  modelId: 'deepseek-ai/deepseek-v4-pro' }, // strong but often saturated on the free endpoint
   ],
 
   codeApply: [
+    { vendor: 'googleai',   modelId: 'models/gemini-3.6-flash' }, // 2026-07-21 GA - "improved code/agentic planning" + token efficiency over 3.5 Flash
+    { vendor: 'openrouter', modelId: 'google/gemini-3.6-flash' },
     { vendor: 'googleai',   modelId: 'models/gemini-3.5-flash' },
     { vendor: 'openrouter', modelId: 'google/gemini-3.5-flash' },
     { vendor: 'openai',     modelId: 'gpt-5.3-codex' },
@@ -95,6 +110,7 @@ export const EditorialDefaults = {
     { vendor: 'bedrock',    modelId: 'us.anthropic.claude-sonnet-4-6' },
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-sonnet-4-6' },
     { vendor: 'openrouter', modelId: 'anthropic/claude-sonnet-4-6' },
+    { vendor: 'anthropic',  modelId: 'claude-opus-5' }, // launched 2026-07-24
     { vendor: 'anthropic',  modelId: 'claude-opus-4-8' },
     { vendor: 'anthropic',  modelId: 'claude-opus-4-7' },
     { vendor: 'xai',        modelId: 'grok-4.5' }, // xAI: 'Code: Grok 4.5' (docs 2026-07-08)
@@ -103,6 +119,10 @@ export const EditorialDefaults = {
     { vendor: 'zai',        modelId: 'glm-5' },
     { vendor: 'moonshot',   modelId: 'kimi-k2.6' },
     { vendor: 'deepseek',   modelId: 'deepseek-v4-flash' },
+    // NVIDIA NIM: free trial catalog, tail picks
+    { vendor: 'nvidianim',  modelId: 'z-ai/glm-5.2' }, // mirrors the native zai codeApply pick
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-super-120b-a12b' }, // agentic/tool-use tuned, 12B active
+    { vendor: 'nvidianim',  modelId: 'deepseek-ai/deepseek-v4-flash' },
   ],
 
   fastUtil: [
@@ -111,9 +131,11 @@ export const EditorialDefaults = {
     { vendor: 'openai',     modelId: 'gpt-5.4-mini' },
     { vendor: 'openrouter', modelId: 'openai/gpt-5.4-mini' },
     { vendor: 'openai',     modelId: 'gpt-5.4-nano' },
+    { vendor: 'googleai',   modelId: 'models/gemini-3.5-flash-lite' }, // 2026-07-21 GA - "low-latency subagent for high-volume automation" (Elo 1459 vs 3.1FL's 1432; slightly pricier at $0.30/$2.50 vs $0.25/$1.50)
+    { vendor: 'openrouter', modelId: 'google/gemini-3.5-flash-lite' },
     { vendor: 'googleai',   modelId: 'models/gemini-3.1-flash-lite' },
     { vendor: 'openrouter', modelId: 'google/gemini-3.1-flash-lite' },
-    { vendor: 'googleai',   modelId: 'models/gemini-2.5-flash-lite' },
+    { vendor: 'googleai',   modelId: 'models/gemini-2.5-flash-lite' }, // deprecated 2026-07-22, kept as deep fallback
     { vendor: 'anthropic',  modelId: 'claude-haiku-4-5-20251001' },
     { vendor: 'bedrock',    modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' },
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0' },
@@ -123,12 +145,19 @@ export const EditorialDefaults = {
     { vendor: 'xai',        modelId: 'grok-4.3' },
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'deepseek',   modelId: 'deepseek-v4-flash' },
+    // NVIDIA NIM: free trial catalog, tail picks
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-nano-30b-a3b' }, // 3B active, 1M ctx
+    { vendor: 'nvidianim',  modelId: 'openai/gpt-oss-20b' },
+    { vendor: 'nvidianim',  modelId: 'nvidia/nvidia-nemotron-nano-9b-v2' },
   ],
 
   imageCaption: [
+    { vendor: 'googleai',   modelId: 'models/gemini-3.6-flash' }, // 2026-07-21 GA - vision, cheaper output than 3.5 Flash
+    { vendor: 'openrouter', modelId: 'google/gemini-3.6-flash' },
     { vendor: 'googleai',   modelId: 'models/gemini-3.5-flash' },
     { vendor: 'openrouter', modelId: 'google/gemini-3.5-flash' },
     { vendor: 'anthropic',  modelId: 'claude-sonnet-4-6' },
+    { vendor: 'anthropic',  modelId: 'claude-opus-5' }, // launched 2026-07-24
     { vendor: 'anthropic',  modelId: 'claude-opus-4-8' },
     { vendor: 'anthropic',  modelId: 'claude-opus-4-7' },
     { vendor: 'openrouter', modelId: 'anthropic/claude-sonnet-4-6' },
@@ -136,6 +165,10 @@ export const EditorialDefaults = {
     { vendor: 'openrouter', modelId: 'openai/gpt-5.6-luna' },
     { vendor: 'openai',     modelId: 'gpt-5.4-mini' },
     { vendor: 'openrouter', modelId: 'openai/gpt-5.4-mini' },
+    // NVIDIA NIM: free trial catalog, tail picks
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-nano-12b-v2-vl' }, // small VL, verified image input
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' },
+    { vendor: 'nvidianim',  modelId: 'mistralai/mistral-medium-3.5-128b' },
   ],
 
 } as const satisfies _EditorialDefaultsTable;

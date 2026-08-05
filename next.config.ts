@@ -32,6 +32,10 @@ buildType && console.log(` 🧠 big-AGI: building for ${buildType}...\n`);
 let nextConfig: NextConfig = {
   reactStrictMode: !process.env.NO_STRICT_MODE, // default: enabled
 
+  // build-time lint: default ON (a build is the last gate); NO_LINT_BUILD=1 skips the ~15s
+  // typed pass when CI already ran `npm run lint` as its own step
+  eslint: { ignoreDuringBuilds: !!process.env.NO_LINT_BUILD },
+
   // [exports] https://nextjs.org/docs/advanced-features/static-html-export
   ...(buildType && {
     output: buildType,
@@ -43,6 +47,10 @@ let nextConfig: NextConfig = {
     // Optional: Change links `/me` -> `/me/` and emit `/me.html` -> `/me/index.html`
     // trailingSlash: true,
   }),
+
+  // Allow running builds without racing over .next/ - if set takes precedence over the 'dist' above
+  // However note this will cause issues with "include" in tsconfig.json, which assumes 'dist'
+  ...(process.env.AGI_DIST_DIR && { distDir: process.env.AGI_DIST_DIR }),
 
   // [puppeteer] https://github.com/puppeteer/puppeteer/issues/11052
   // NOTE: we may not be needing this anymore, as we use '@cloudflare/puppeteer'

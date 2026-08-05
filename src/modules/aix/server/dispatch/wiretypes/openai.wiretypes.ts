@@ -473,6 +473,10 @@ export namespace OpenAIWire_API_Chat_Completions {
     // [Alibaba, 2026-06-26] Qwen (and DashScope-hosted third-party) thinking toggle via compatible-mode; Qwen ignores `reasoning_effort`
     enable_thinking: z.boolean().optional(),
 
+    // [NVIDIA NIM, 2026-07-25] vLLM-style chat template kwargs - the inner key is model-family-specific
+    // (verified live: `{thinking: false}` suppresses `reasoning_content` on Nemotron 3; accepted as a no-op elsewhere)
+    chat_template_kwargs: z.record(z.string(), z.union([z.boolean(), z.string(), z.number()])).optional(),
+
     seed: z.number().int().optional(),
     stop: z.array(z.string()).optional(), // Up to 4 sequences where the API will stop generating further tokens.
     user: z.string().optional(),
@@ -1399,6 +1403,10 @@ export namespace OpenAIWire_Responses_Items {
     role: z.literal('assistant'),
     // assistant inputs: 'output_text', 'refusal'
     content: z.array(_ContentItem_Parts_schema),
+    // [OpenAI, 2026-02-24] message phase: 'commentary' (preambles/progress) vs 'final_answer'. gpt-5.4+ set
+    // it on every assistant message; docs require resending it on replay (dropping it degrades performance).
+    // Assistant messages only - the API 400s it on user/system/developer/function_call items.
+    phase: z.enum(['commentary', 'final_answer']).optional(),
   });
 
   const InputMessage_Compat_schema = z.union([
@@ -1598,6 +1606,7 @@ export namespace OpenAIWire_API_Responses {
 
     // configure reasoning
     reasoning: z.object({
+      context: z.enum(['auto', 'current_turn', 'all_turns']).nullish(), // [2026-02-24, OpenAI] how much prior reasoning the model consumes; 'all_turns' is gpt-5.4+ only (older models 400 with "Unsupported value")
       effort: z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).nullish(), // defaults to 'none' for GPT-5.2, 'medium' for older; [2026-07-09, OpenAI] 'max' added with GPT-5.6
       mode: z.enum(['standard', 'pro']).nullish(), // [2026-07-09, OpenAI] GPT-5.6+: 'pro' performs additional model work, billed at standard token rates; orthogonal to effort
       summary: z.enum(['auto', 'concise', 'detailed']).nullish(),

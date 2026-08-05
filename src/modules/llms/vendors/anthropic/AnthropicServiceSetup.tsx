@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import { Alert, Box, FormControl, Typography } from '@mui/joy';
+import { Box, FormControl, Typography } from '@mui/joy';
 
 import { useChatAutoAI } from '../../../../apps/chat/store-app-chat';
 
@@ -32,7 +32,7 @@ export function AnthropicServiceSetup(props: { serviceId: DModelsServiceId }) {
   const { autoVndAntBreakpoints, setAutoVndAntBreakpoints } = useChatAutoAI();
 
   // derived state
-  const { anthropicKey, anthropicHost, anthropicInferenceGeo, clientSideFetch, heliconeKey } = serviceAccess;
+  const { anthropicKey, anthropicHost, anthropicInferenceGeo, clientSideFetch } = serviceAccess;
   const needsUserKey = !serviceHasCloudTenantConfig;
 
   // advanced mode - initialize open if CSF is enabled, but let user toggle freely
@@ -90,20 +90,11 @@ export function AnthropicServiceSetup(props: { serviceId: DModelsServiceId }) {
     {showAdvanced && <FormTextField
       autoCompleteId='anthropic-host'
       title='API Host'
-      description='For proxies or custom endpoints'
+      description='Proxies, custom endpoints'
       placeholder='deployment.service.region.amazonaws.com'
       isError={false}
       value={anthropicHost || ''}
       onChange={text => updateSettings({ anthropicHost: text })}
-    />}
-
-    {showAdvanced && <FormTextField
-      autoCompleteId='anthropic-helicone-key'
-      title='Helicone Key' disabled={!!anthropicHost}
-      description={<>Generate <Link level='body-sm' href='https://www.helicone.ai/keys' target='_blank'>here</Link></>}
-      placeholder='sk-...'
-      value={heliconeKey || ''}
-      onChange={text => updateSettings({ heliconeKey: text })}
     />}
 
     {(showAdvanced || !!anthropicInferenceGeo) && <FormSwitchControl
@@ -120,10 +111,6 @@ export function AnthropicServiceSetup(props: { serviceId: DModelsServiceId }) {
       onChange={on => updateSettings({ csf: on })}
       helpText="Fetch models and make requests directly to Anthropic's API using your browser instead of through the server. Useful for bypassing server limitations or ensuring requests use your API key directly."
     />}
-
-    {!!heliconeKey && <Alert variant='soft' color='success'>
-      Advanced: You set the Helicone key, and Anthropic text will be routed through Helicone.
-    </Alert>}
 
     <SetupFormRefetchButton refetch={refetch} disabled={!shallFetchSucceed || isFetching} loading={isFetching} error={isError} advanced={advanced} />
 

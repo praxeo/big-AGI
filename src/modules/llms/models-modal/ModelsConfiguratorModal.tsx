@@ -3,6 +3,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import { Box, Button, Checkbox, CircularProgress, Divider, Dropdown, IconButton, ListDivider, ListItemDecorator, Menu, MenuButton, MenuItem, Typography } from '@mui/joy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import LaunchIcon from '@mui/icons-material/Launch';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 import RefreshIcon from '@mui/icons-material/Refresh';
 import RestoreIcon from '@mui/icons-material/Restore';
@@ -13,12 +14,14 @@ import { joyKeepPopup } from '~/common/components/CloseablePopup';
 
 import type { DModelsService, DModelsServiceId } from '~/common/stores/llms/llms.service.types';
 import { AppBreadcrumbs } from '~/common/components/AppBreadcrumbs';
+import { BaseProduct } from '~/common/app.release';
 import { ConfirmationModal } from '~/common/components/modals/ConfirmationModal';
 import { GoodModal } from '~/common/components/modals/GoodModal';
 import { PhGift } from '~/common/components/icons/phosphor/PhGift';
 import { SubMenuHost, SubMenuItem, useSubMenuHost } from '~/common/components/SubMenu';
 import { isLLMChatFree_cached } from '~/common/stores/llms/llms.pricing';
-import { llmsStoreActions, llmsStoreState } from '~/common/stores/llms/store-llms';
+import { isLLMCustomUserParameters } from '~/common/stores/llms/llms.types';
+import { llmsStoreActions, llmsStoreState, useModelsStore } from '~/common/stores/llms/store-llms';
 import { optimaActions } from '~/common/layout/optima/useOptima';
 import { useAllServicesDCStatus } from '~/common/stores/llms/hooks/useModelServiceClientSideFetch';
 import { useHasFreeLLMs, useHasLLMs } from '~/common/stores/llms/llms.hooks';
@@ -27,7 +30,7 @@ import { useModelsZeroState } from '~/common/stores/llms/hooks/useModelsZeroStat
 import { useOverlayComponents } from '~/common/layout/overlays/useOverlayComponents';
 import { useUICounter, useUIPreferencesStore } from '~/common/stores/store-ui';
 
-import { LLMVendorSetup } from '../components/LLMVendorSetup';
+import { LLMVendorSetup, VENDOR_DOCS } from '../components/LLMVendorSetup';
 import { ModelsList } from './ModelsList';
 import { ModelsServiceSelector } from './ModelsServiceSelector';
 import { ModelsWizard } from './ModelsWizard';
@@ -83,7 +86,19 @@ export function ModelsConfiguratorModal(props: {
     ?? null;
 
   const activeService = modelsServices.find(s => s.id === activeServiceId);
-  // const hasClones = useModelsStore(({ llms }) => llms.some(llm => llm.sId === activeServiceId && llm.isUserClone));
+
+  // vendor docs page for the active service; openai in custom-host mode is documented by the custom-endpoints page instead
+  const activeServiceDocsUrl = React.useMemo(() => {
+    if (!activeService?.vId) return null;
+    const isCustomOpenAIHost = activeService.vId === 'openai' && !!(activeService.setup as { oaiHost?: string } | undefined)?.oaiHost;
+    const docSlug = isCustomOpenAIHost ? 'connect-custom-endpoints' : VENDOR_DOCS[activeService.vId];
+    return !docSlug ? null : BaseProduct.DocsBaseSite + '/' + docSlug;
+  }, [activeService]);
+
+  // menu enablement - boolean selectors (early-exit scans, primitive return: no re-render unless flipping)
+  // mirrors exactly what each action would touch: resetServiceUserParameters strips userParameters + userLabel (skipping clones)
+  const hasServiceCustomizations = useModelsStore(({ llms }) => llms.some(llm => llm.sId === activeServiceId && !llm.isUserClone && (llm.userLabel !== undefined || isLLMCustomUserParameters(llm))));
+  const hasServiceClones = useModelsStore(({ llms }) => llms.some(llm => llm.sId === activeServiceId && llm.isUserClone === true));
 
   const hasAnyServices = !!modelsServices.length;
   const isTabWizard = tab === 'wizard';
@@ -263,16 +278,26 @@ export function ModelsConfiguratorModal(props: {
               </MenuItem>
 
               {/* Reset All Parameters */}
-              <MenuItem onClick={handleResetAllParameters}>
+              <MenuItem disabled={!hasServiceCustomizations} onClick={handleResetAllParameters}>
                 <ListItemDecorator><RestoreIcon /></ListItemDecorator>
                 Reset Customizations
               </MenuItem>
 
               {/* Remove Cloned Models */}
-              <MenuItem onClick={handleRemoveClones}>
+              <MenuItem disabled={!hasServiceClones} onClick={handleRemoveClones}>
                 <ListItemDecorator><DeleteOutlineIcon /></ListItemDecorator>
                 Remove Duplicated Models
               </MenuItem>
+
+              {/* Vendor Setup Guide (big-agi.com/docs) */}
+              {!!activeServiceDocsUrl && (
+                <MenuItem component='a' href={activeServiceDocsUrl} target='_blank'>
+                  {/*<ListItemDecorator><HelpOutlineRoundedIcon /></ListItemDecorator>*/}
+                  <ListItemDecorator />
+                  {activeService?.label ?? 'Service'} setup guide
+                  <LaunchIcon sx={{ ml: 'auto', fontSize: 16, opacity: 0.7 }} />
+                </MenuItem>
+              )}
 
               <ListDivider />
 
@@ -326,7 +351,7 @@ export function ModelsConfiguratorModal(props: {
       );
 
     return undefined;
-  }, [activeHasFreeLLMs, activeService?.label, dcAllEnabled, dcHasEligible, dcNoneEnabled, dcStatus.eligible, dcStatus.enabled, handleDisableAllDC, handleEnableAllDC, handleHideAllModels, handleMainMenuOpenChange, handleRefreshModels, handleRemoveClones, handleResetAllParameters, handleResetVisibility, handleShowAllModels, handleShowOnlyFree, handleShowOnlyPaid, handleShowWizard, hasAnyServices, hasLLMs, isMobile, isRefreshing, isTabSetup, isTabWizard, mainMenuOpen, setShowModelsFn, setShowModelsHidden, setStarredOnTop, showModelsFn, showModelsHidden, starredOnTop, subMenuHost]);
+  }, [activeHasFreeLLMs, activeService?.label, activeServiceDocsUrl, dcAllEnabled, dcHasEligible, dcNoneEnabled, dcStatus.eligible, dcStatus.enabled, handleDisableAllDC, handleEnableAllDC, handleHideAllModels, handleMainMenuOpenChange, handleRefreshModels, handleRemoveClones, handleResetAllParameters, handleResetVisibility, handleShowAllModels, handleShowOnlyFree, handleShowOnlyPaid, handleShowWizard, hasAnyServices, hasLLMs, hasServiceClones, hasServiceCustomizations, isMobile, isRefreshing, isTabSetup, isTabWizard, mainMenuOpen, setShowModelsFn, setShowModelsHidden, setStarredOnTop, showModelsFn, showModelsHidden, starredOnTop, subMenuHost]);
 
 
   // custom done button for wizard mode (combines start and close buttons)

@@ -5,7 +5,7 @@ import type { OpenAIDialects } from '~/modules/llms/server/openai/openai.access'
 import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixMessages_SystemMessage, AixParts_DocPart, AixParts_InlineAudioPart, AixParts_MetaInReferenceToPart, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../../../api/aix.wiretypes';
 import { OpenAIWire_API_Chat_Completions, OpenAIWire_ContentParts, OpenAIWire_Messages } from '../../wiretypes/openai.wiretypes';
 
-import { aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String } from './adapters.common';
+import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String } from './adapters.common';
 
 
 //
@@ -62,6 +62,9 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
   // Convert the chat messages to the OpenAI 4-Messages format
   let chatMessages = _toOpenAIMessages(openAIDialect, chatGenerate.systemMessage, chatGenerate.chatSequence, hotFixOpenAIOFamily);
+
+  // Pair every interior tool call with a tool message, or the request is rejected wholesale
+  _fixPairInteriorToolCalls(chatMessages);
 
   // Apply hotfixes
 
@@ -165,6 +168,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     && openAIDialect !== 'openrouter' // OpenRouter has its own channeling of this
     && openAIDialect !== 'deepseek' && openAIDialect !== 'moonshot' && openAIDialect !== 'zai' // these map to thinking enabled/disabled (+ reasoning_effort passthrough) in the block below
     && openAIDialect !== 'alibaba' // Alibaba/Qwen ignores reasoning_effort; uses enable_thinking instead (block below)
+    && openAIDialect !== 'nvidianim' // NVIDIA rejects unknown params and gpt-oss strictly validates reasoning_effort - dedicated block below
     && openAIDialect !== 'perplexity' // Perplexity has its own block below with stricter validation
   ) {
     // for: 'azure' | 'groq' | 'lmstudio' | 'localai' | 'mistral' | 'openai' | 'togetherai' | 'xai'
@@ -177,7 +181,10 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (reasoningEffort && (openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || openAIDialect === 'zai')) {
     // [Z.ai, 2026-06-13] reasoning_effort is GLM-5.2 only; other GLM models are binary thinking enabled/disabled - https://docs.z.ai/api-reference/llm/chat-completion
     const supportsEffortLevels = openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || (openAIDialect === 'zai' && model.id.startsWith('glm-5.2'));
-    const allowedEffort = openAIDialect === 'moonshot' ? ['none', 'low', 'high', 'max'] : supportsEffortLevels ? ['none', 'high', 'max'] : ['none', 'high'];
+    // [DeepSeek, 2026-07-31] the V4 reasoning_effort enum is none|minimal|low|medium|high|xhigh|max; we expose the
+    // documented low/high/max (+ none -> thinking disabled). 'low' keeps reasoning on while skipping the hidden agentic
+    // preamble, so it is the cheap thinking tier.
+    const allowedEffort = (openAIDialect === 'moonshot' || openAIDialect === 'deepseek') ? ['none', 'low', 'high', 'max'] : supportsEffortLevels ? ['none', 'high', 'max'] : ['none', 'high'];
     if (!allowedEffort.includes(reasoningEffort)) // domain validation
       throw new Error(`${openAIDialect} only supports reasoning effort ${allowedEffort.join(', ')}, got '${reasoningEffort}'`);
 
@@ -194,6 +201,19 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (reasoningEffort && openAIDialect === 'alibaba')
     payload.enable_thinking = reasoningEffort !== 'none';
 
+  // [NVIDIA NIM, 2026-07-25] Two per-model reasoning mechanisms (NVIDIA rejects unknown top-level params, so we must be exact):
+  // - gpt-oss: native `reasoning_effort`, strictly validated to low|medium|high (llmVndOaiEffort spec narrows the UI to these)
+  // - other thinking models (Nemotron 3, etc.): binary toggle via vLLM `chat_template_kwargs` (llmVndMiscEffort ['none','high'];
+  //   the `thinking` inner key is verified on Nemotron 3 and accepted as a no-op template kwarg elsewhere)
+  if (reasoningEffort && openAIDialect === 'nvidianim') {
+    if (model.id.startsWith('openai/gpt-oss')) {
+      if (!['low', 'medium', 'high'].includes(reasoningEffort))
+        throw new Error(`NVIDIA gpt-oss models only support reasoning effort low, medium, high, got '${reasoningEffort}'`);
+      payload.reasoning_effort = reasoningEffort;
+    } else
+      payload.chat_template_kwargs = { thinking: reasoningEffort !== 'none' };
+  }
+
 
   // [OpenAI, 2026-02-04] Verbosity control - official OpenAI parameter (low/medium/high, default: medium)
   if (model.vndOaiVerbosity) {
@@ -207,6 +227,15 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   const hasCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
   const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
   const skipWebSearchDueToCustomTools = hasCustomTools && hasRestrictivePolicy;
+
+  // [DeepSeek, 2026-07-31] Forced tool calls 400 while thinking is on ("Thinking mode does not support this
+  // tool_choice", both v4 models), and thinking is the vendor default, so the default path fails outright. We disable
+  // thinking rather than downgrade to 'auto': the callers that force a tool need a parseable call, not prose. Only
+  // internal utility calls set a restrictive policy, so a user's own chat turn never loses reasoning here.
+  if (openAIDialect === 'deepseek' && hasRestrictivePolicy) {
+    payload.thinking = { type: 'disabled' };
+    delete payload.reasoning_effort;
+  }
 
   // Hosted tools
   // [OpenAI] Vendor-specific web search context and/or geolocation
@@ -356,6 +385,11 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (hotFixOpenAIOFamily)
     payload = _fixRemoveTemperatureAndTopP(payload);
 
+  // [DeepSeek, 2026-07-31] thinking mode silently ignores temperature/top_p - drop them instead of sending inert
+  // fields. After the tools block, which may have turned thinking off; when off they work normally and are kept.
+  if (openAIDialect === 'deepseek' && payload.thinking?.type !== 'disabled')
+    payload = _fixRemoveTemperatureAndTopP(payload);
+
   if (hotFixRemoveStreamOptions)
     payload = _fixRemoveStreamOptions(payload);
 
@@ -423,6 +457,40 @@ function _fixAlternateUserAssistantRoles(chatMessages: TRequestMessages): TReque
     acc.push(historyItem);
     return acc;
   }, [] as TRequestMessages);
+}
+
+/**
+ * Anti-wedge: an assistant `tool_calls` entry with no `tool` message answering its id is a 400
+ * ("An assistant message with 'tool_calls' must be followed by tool messages responding to each
+ * tool_call_id") that rejects the whole request. The orphan lives in stored history (a run that
+ * failed/aborted before the tool ran, or a tool no client processor claimed), so every later turn
+ * replays it and gets the same 400 - the conversation is bricked until the message is deleted.
+ *
+ * Synthesizes the stub prescribed in kb/modules/AIX-stateless-roundtrip-retention.md (cat-1), which
+ * also retro-heals conversations already poisoned in users' stores. No-op when well-formed.
+ * The LAST message is skipped: a trailing tool call is the in-flight call of an agentic loop.
+ */
+function _fixPairInteriorToolCalls(chatMessages: TRequestMessages): void {
+  for (let i = 0; i < chatMessages.length - 1; i++) {
+    const message = chatMessages[i];
+    if (message.role !== 'assistant' || !message.tool_calls?.length) continue;
+
+    // the results are the run of 'tool' messages right after this assistant message
+    const answeredIds = new Set<string>();
+    let insertAt = i + 1;
+    for (; insertAt < chatMessages.length; insertAt++) {
+      const next = chatMessages[insertAt];
+      if (next.role !== 'tool') break;
+      answeredIds.add(next.tool_call_id);
+    }
+
+    const orphanIds = message.tool_calls.map(tc => tc.id).filter(id => !answeredIds.has(id));
+    if (!orphanIds.length) continue;
+
+    // append to the existing run, in tool_calls order, so all results stay contiguous after the call
+    console.warn(`[OpenAI] Pairing ${orphanIds.length} orphan tool call(s) with a placeholder tool message (messages.${i})`);
+    chatMessages.splice(insertAt, 0, ...orphanIds.map(id => OpenAIWire_Messages.ToolMessage(id, AIX_MISSING_TOOL_RESULT_TEXT)));
+  }
 }
 
 function _fixRemoveEmptyMessages(chatMessages: TRequestMessages): TRequestMessages {
