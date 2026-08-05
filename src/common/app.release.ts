@@ -23,7 +23,7 @@ export const Release = {
 
   // this is here to trigger revalidation of data, e.g. models refresh
   Monotonics: {
-    Aix: 88,
+    Aix: 89,
     NewsVersion: 205,
   },
 
@@ -65,6 +65,7 @@ export const BaseProduct = {
   TermsOfService: 'https://big-agi.com/terms',
   // ecosystem
   DocsBaseSite: 'https://big-agi.com/docs',
+  NewsSite: 'https://big-agi.com/changes',
   OpenSupportDiscord: 'https://discord.gg/MkH4qj2Jp9',
   OpenSourceRepo: 'https://github.com/enricoros/big-agi',
   ReleaseNotes: '',

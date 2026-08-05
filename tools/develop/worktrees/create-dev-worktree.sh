@@ -21,6 +21,7 @@ RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
+CYAN='\033[0;36m'
 GRAY='\033[0;90m'
 WHITE='\033[0;37m'
 BOLD_WHITE='\033[1;37m'
@@ -32,6 +33,7 @@ if [ ! -t 1 ]; then
     GREEN=''
     YELLOW=''
     BLUE=''
+    CYAN=''
     GRAY=''
     WHITE=''
     BOLD_WHITE=''
@@ -43,6 +45,12 @@ print_color() {
     local color=$1
     shift
     printf "%b%s%b\n" "$color" "$*" "$NC"
+}
+
+# Portable file-mtime formatter: GNU date (Linux, Git-Bash) then BSD stat (macOS)
+file_mtime() {
+    date -r "$1" '+%Y-%m-%d' 2>/dev/null \
+        || stat -f '%Sm' -t '%Y-%m-%d' "$1" 2>/dev/null
 }
 
 # Header function
@@ -69,7 +77,27 @@ list_worktrees() {
         BRANCH_NAME=$(echo "$line" | grep -o '\[.*\]' | tr -d '[]')
         # Get any additional info (like 'prunable')
         ADDITIONAL_INFO=$(echo "$line" | sed 's/.*\[\([^]]*\)\]//' | xargs)
-        
+
+        # Worktree creation time: the admin dir's `gitdir` file is written once
+        # at `git worktree add` (only move/repair rewrite it); main worktree has none
+        CREATED_AT=""
+        if [ -f "$WORKTREE_PATH/.git" ]; then
+            ADMIN_DIR=$(sed -n 's/^gitdir: //p' "$WORKTREE_PATH/.git" 2>/dev/null)
+            if [ -n "$ADMIN_DIR" ] && [ -f "$ADMIN_DIR/gitdir" ]; then
+                CREATED_AT=$(file_mtime "$ADMIN_DIR/gitdir")
+            fi
+        fi
+
+        # Current commit subject (truncated) + marker for uncommitted tracked changes
+        COMMIT_SUBJECT=$(git log -1 --format=%s "$COMMIT_HASH" 2>/dev/null)
+        if [ ${#COMMIT_SUBJECT} -gt 44 ]; then
+            COMMIT_SUBJECT="${COMMIT_SUBJECT:0:42}.."
+        fi
+        DIRTY_MARK=" "
+        if [ -d "$WORKTREE_PATH" ] && [ -n "$(git -C "$WORKTREE_PATH" status --porcelain -uno 2>/dev/null | head -1)" ]; then
+            DIRTY_MARK="*"
+        fi
+
         # Convert to relative path (but keep current directory as full path)
         if [ "$WORKTREE_PATH" = "$CURRENT_DIR" ]; then
             # Show full path for current directory
@@ -89,9 +117,12 @@ list_worktrees() {
         fi
         
         # Print with formatted output
-        printf "  • %-50s" "$DISPLAY_PATH"
-        printf " %b%-20s%b" "$BOLD_WHITE" "$BRANCH_NAME" "$NC"
+        printf "  • %-55s" "$DISPLAY_PATH"
+        printf " %b%-24s%b" "$BOLD_WHITE" "$BRANCH_NAME" "$NC"
+        printf " %b%-10s%b" "$CYAN" "$CREATED_AT" "$NC"
         printf " %b%s%b" "$GRAY" "${COMMIT_HASH:0:7}" "$NC"
+        printf "%b%s%b" "$YELLOW" "$DIRTY_MARK" "$NC"
+        printf " %b%-46s%b" "$WHITE" "$COMMIT_SUBJECT" "$NC"
         
         # Add additional info if present
         if [ -n "$ADDITIONAL_INFO" ]; then
@@ -111,9 +142,9 @@ list_worktrees() {
     echo
     
     # Show additional stats
-    WORKTREE_COUNT=$(git worktree list | wc -l)
+    WORKTREE_COUNT=$(git worktree list | wc -l | tr -d '[:space:]')
     if [ $WORKTREE_COUNT -gt 1 ]; then
-        print_color "$GRAY" "Total: $WORKTREE_COUNT worktrees (1 main + $((WORKTREE_COUNT-1)) additional)"
+        print_color "$GRAY" "Total: $WORKTREE_COUNT worktrees (1 main + $((WORKTREE_COUNT-1)) additional)  |  * = uncommitted changes (tracked files)"
     else
         print_color "$GRAY" "Total: 1 worktree (main only)"
     fi
@@ -682,9 +713,12 @@ else
 fi
 echo
 
-# Create the worktree with a new branch at the selected source ref
+# Create the worktree with a new branch at the selected source ref.
+# --no-track: when SOURCE_REF is a remote-tracking ref (e.g. opensource/main),
+# git would otherwise record that remote as the branch upstream and make it the
+# default push target; pushes must default to remote.pushDefault
 echo -n "Creating git worktree... "
-git worktree add "$WORKTREE_PATH" -b "$NEW_BRANCH_NAME" "$SOURCE_REF" >/dev/null 2>&1
+git worktree add "$WORKTREE_PATH" --no-track -b "$NEW_BRANCH_NAME" "$SOURCE_REF" >/dev/null 2>&1
 print_color "$GREEN" "✓"
 
 # Materialize: .idea dirs, .env* files, run configurations, npm install

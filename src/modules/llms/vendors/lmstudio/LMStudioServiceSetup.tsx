@@ -6,6 +6,7 @@ import YouTubeIcon from '@mui/icons-material/YouTube';
 
 import type { DModelsServiceId } from '~/common/stores/llms/llms.service.types';
 import { ExpanderAccordion } from '~/common/components/ExpanderAccordion';
+import { ExternalDocsLink } from '~/common/components/ExternalDocsLink';
 import { FormInputKey } from '~/common/components/forms/FormInputKey';
 import { InlineError } from '~/common/components/InlineError';
 import { isLocalUrl } from '~/common/util/urlUtils';
@@ -48,23 +49,23 @@ export function LMStudioServiceSetup(props: { serviceId: DModelsServiceId }) {
     <ExpanderAccordion
       title={<Typography level='title-sm' sx={{ mr: 'auto' }}>Video Tutorial</Typography>}
       icon={<YouTubeIcon sx={{ color: '#f00' }} />}
-      expandedVariant='solid'
+      // expandedVariant='solid'
       startCollapsed
     >
-      <VideoPlayerYouTube width='100%' height={360} youTubeVideoId='MqXzxVokMDk' playing={true} />
+      {/* play='auto': the accordion-expand click grants unmuted autoplay (the embed mounts on reveal, via its visibility gate), like the pre-2026-07 behavior */}
+      <VideoPlayerYouTube width='100%' height={360} youTubeVideoId='MqXzxVokMDk' title='Running big-AGI locally with LM Studio [TUTORIAL]' play='auto' rounded />
     </ExpanderAccordion>
 
     <Typography level='body-sm'>
       You can use a running <Link href='https://lmstudio.ai/' target='_blank'>LM Studio</Link> instance as a source
-      for local models. Please refer to our <Link
-      level='body-sm' href='https://github.com/enricoros/big-agi/blob/main/docs/config-local-lmstudio.md' target='_blank'>configuration guide</Link> for
+      for local models. Please refer to our <ExternalDocsLink level='body-sm' docPage='connect-lmstudio'>configuration guide</ExternalDocsLink> for
       how to link to your LM Studio instance.
     </Typography>
 
     <FormInputKey
       autoCompleteId='lmstudio-url' label='LM Studio API'
       required noKey
-      rightLabel={<Link level='body-sm' href='https://github.com/enricoros/big-agi/blob/main/docs/config-local-lmstudio.md' target='_blank'>Learn more</Link>}
+      rightLabel={<ExternalDocsLink level='body-sm' docPage='connect-lmstudio'>Learn more</ExternalDocsLink>}
       placeholder='e.g., http://127.0.0.1:1234'
       value={oaiHost} onChange={value => updateSettings({ oaiHost: value })}
     />

@@ -53,7 +53,11 @@ export async function asrxTranscribeBatch(
     return { success: false, errorType: 'asr-no-engine', errorText: 'No ASR engine configured. Please configure a transcription engine in Settings.' };
 
   // 2. Apply profile override from selector (if provided and dialect matches)
-  const effectiveEngine = _engineApplyProfileOverride(engine, selector);
+  let effectiveEngine = _engineApplyProfileOverride(engine, selector);
+
+  // 2b. Caller topics hint wins over the profile policy - only where the capability exists (Deepgram)
+  if (options?.topicsHint !== undefined && effectiveEngine.vendorType === 'deepgram')
+    effectiveEngine = { ...effectiveEngine, profile: { ...effectiveEngine.profile, topics: options.topicsHint } };
 
   // 3. Build wire access from credentials (dereferences 'llms-service')
   const access = _buildBatchWireAccess(effectiveEngine);
@@ -87,6 +91,8 @@ export async function asrxTranscribeBatch(
       ...(output.language ? { language: output.language } : {}),
       ...(output.confidence !== undefined ? { confidence: output.confidence } : {}),
       ...(output.durationMs !== undefined ? { durationMs: output.durationMs } : {}),
+      ...(output.topics?.length ? { topics: output.topics } : {}),
+      ...(output.sentiment ? { sentiment: output.sentiment } : {}),
     };
   } catch (error: any) {
     // abort -> specific error type so callers can distinguish user-stop from failure
