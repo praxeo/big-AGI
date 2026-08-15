@@ -40,16 +40,18 @@ import { chutesAIHeuristic, chutesAIModelsToModelDescriptions } from './openai/m
 import { cohereModelFilter, cohereModelSort, cohereModelToModelDescription } from './openai/models/cohere.models';
 import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
 import { fastAPIHeuristic, fastAPIModels } from './openai/models/fastapi.models';
-import { fireworksAIFetchModels, fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
+import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
 import { groqModelFilter, groqModelSortFn, groqModelToModelDescription, groqValidateModelDefs_DEV } from './openai/models/groq.models';
 import { llmapiHeuristic, llmapiModelsToModelDescriptions } from './openai/models/llmapi.models';
 import { llmsIsNativeOpenAIHost } from '../shared/llm.isomorphic';
 import { minimaxHardcodedModelDescriptions, minimaxHeuristic } from './openai/models/minimax.models';
+import { nousResearchHeuristic, nousResearchModelsToModelDescriptions } from './openai/models/nousresearch.models';
 import { novitaHeuristic, novitaModelsToModelDescriptions } from './openai/models/novita.models';
 import { nvidiaNIMHeuristic, nvidiaNIMModelsToModelDescriptions } from './openai/models/nvidianim.models';
 import { lmStudioFetchModels, lmStudioModelsToModelDescriptions } from './openai/models/lmstudio.models';
 import { localAIModelSortFn, localAIModelToModelDescription } from './openai/models/localai.models';
 import { mistralModels } from './openai/models/mistral.models';
+import { modularModelsToModelDescriptions } from './openai/models/modular.models';
 import { moonshotModelFilter, moonshotModelSortFn, moonshotModelToModelDescription } from './openai/models/moonshot.models';
 import { openRouterInjectVariants, openRouterModelFamilySortFn, openRouterModelToModelDescription } from './openai/models/openrouter.models';
 import { openAIInjectVariants, openAIModelFilter, openAIModelToModelDescription, openAISortModels, openaiValidateModelDefs_DEV } from './openai/models/openai.models';
@@ -386,6 +388,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
     case 'groq':
     case 'localai':
     case 'mistral':
+    case 'modular':
     case 'moonshot':
     case 'nvidianim':
     case 'openai':
@@ -400,11 +403,6 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
 
         // [OpenAI-compatible dialects]: openAI-style fetch models list
         fetchModels: async () => {
-
-          // [FireworksAI] the OpenAI-compatible /v1/models lists only a subset of models;
-          // fetch the control-plane serverless catalog (filter=supports_serverless=true) for the full list
-          if (dialect === 'openai' && fireworksAIHeuristic(oaiUrl))
-            return await fireworksAIFetchModels(oaiUrl, oaiHeaders, signal, _wire);
 
           // Bypass fetch for providers that do NOT have the /v1/models API yet - works in conjunction with the hardcoded models below
           const bypassFetch = (dialect === 'openai' && minimaxHeuristic(oaiUrl)); // [MiniMax]
@@ -436,9 +434,8 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
           }
 
           // NOTE: we don't zod here as it would strip unknown properties needed for some dialects - so we proceed optimistically
-          // NOTE: typed as any[] because the per-dialect shapes differ (e.g. FireworksAI normalizes its serverless catalog)
           // let maybeModels = OpenAIWire_API_Models_List.Response_schema.parse(openAIWireModelsResponse).data || [];
-          let maybeModels: any[] = openAIWireModelsResponse?.data || [];
+          let maybeModels = openAIWireModelsResponse?.data || [];
 
           // de-duplicate by ids (can happen for local servers.. upstream bugs)
           const preCount = maybeModels.length;
@@ -494,6 +491,10 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
             case 'mistral':
               return mistralModels(maybeModels);
 
+            case 'modular':
+              // [Modular] API lists ids only; caps/pricing from manual mappings, unknown ids kept (self-hosted MAX serves anything)
+              return modularModelsToModelDescriptions(maybeModels);
+
             case 'moonshot':
               return maybeModels
                 .filter(moonshotModelFilter)
@@ -523,6 +524,10 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               if (minimaxHeuristic(oaiUrl))
                 return minimaxHardcodedModelDescriptions();
 
+              // [Nous Research] Nous Portal gateway - OpenRouter-style catalog, reuses the OpenRouter mapper
+              if (nousResearchHeuristic(oaiUrl))
+                return nousResearchModelsToModelDescriptions(openAIWireModelsResponse);
+
               // [Novita] special case for model enumeration
               if (novitaHeuristic(oaiUrl))
                 return novitaModelsToModelDescriptions(openAIWireModelsResponse);
@@ -538,8 +543,8 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               // [OpenAI or OpenAI-compatible]: chat-only models, custom sort, manual mapping
               const isNotOpenai = !llmsIsNativeOpenAIHost(access.oaiHost); // native = empty host (uses default) or explicitly api.openai.com
               const models = maybeModels
-                // limit to only 'gpt' and 'non instruct' models
-                .filter(openAIModelFilter)
+                // limit to only 'gpt' and 'non instruct' models (shutdown denies apply to native OpenAI only)
+                .filter(model => openAIModelFilter(model, !isNotOpenai))
                 // to model description
                 .map((model: any): ModelDescriptionSchema => openAIModelToModelDescription(model.id, { isNotOpenai, modelCreated: model.created }))
                 // inject variants
@@ -548,7 +553,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
                 .sort(openAISortModels);
 
               // [DEV] check for stale/unknown model definitions
-              openaiValidateModelDefs_DEV(maybeModels, models);
+              openaiValidateModelDefs_DEV(maybeModels, models, !isNotOpenai);
               return models;
 
             case 'openrouter':
