@@ -48,7 +48,7 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
     parameterSpecs: [{ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high', 'max'] }],
     chatPrice: { input: 1.4, output: 4.4, cache: { cType: 'oai-ac', read: 0.26 } },
     initialTemperature: 1.0,
-    benchmark: { cbaElo: 1471 }, // lmarena: glm-5.2 (max)
+    benchmark: { cbaElo: 1471 }, // lmarena: glm-5.2-max
   },
 
   // GLM-5.1 / GLM-5 Series - Flagship (Agentic Engineering)
@@ -64,7 +64,7 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
     parameterSpecs: _PS_Reasoning,
     chatPrice: { input: 1.4, output: 4.4, cache: { cType: 'oai-ac', read: 0.26 } },
     initialTemperature: 1.0,
-    benchmark: { cbaElo: 1475 }, // lmarena: glm-5.1
+    benchmark: { cbaElo: 1468 }, // lmarena: glm-5.1
   },
   {
     idPrefix: 'glm-5',
@@ -93,26 +93,26 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
   },
 
   // GLM-4.7 Series
-  // 128K context, 128K output. Thinking compulsory when enabled (default: enabled).
+  // 200K context, 128K output. Thinking compulsory when enabled (default: enabled).
   {
     idPrefix: 'glm-4.7',
     label: 'GLM-4.7',
     pubDate: '20251222',
-    description: 'Latest-gen GLM model with 128K context. Thinking mode activated by default.',
-    contextWindow: 131072, // 128K
+    description: 'Latest-gen GLM model with 200K context. Thinking mode activated by default.',
+    contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
     maxCompletionTokens: 131072,
     parameterSpecs: _PS_Reasoning,
     chatPrice: { input: 0.6, output: 2.2, cache: { cType: 'oai-ac', read: 0.11 } },
     initialTemperature: 1.0,
-    benchmark: { cbaElo: 1443 }, // lmarena: glm-4.7
+    benchmark: { cbaElo: 1442 }, // lmarena: glm-4.7
   },
   {
     idPrefix: 'glm-4.7-flashx',
     label: 'GLM-4.7 FlashX', // fast, low cost
     pubDate: '20260119',
     description: 'Fast GLM-4.7 variant with priority routing and higher concurrency. Same model as Flash, better infrastructure.',
-    contextWindow: 131072,
+    contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
     maxCompletionTokens: 131072,
     parameterSpecs: _PS_Reasoning,
@@ -124,7 +124,7 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
     label: 'GLM-4.7 Flash (Free)',
     pubDate: '20260119',
     description: 'Free GLM-4.7 variant. Same model as FlashX but with limited concurrency (1 concurrent request) and lower priority.',
-    contextWindow: 131072,
+    contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
     maxCompletionTokens: 131072,
     parameterSpecs: _PS_Reasoning,
@@ -146,6 +146,7 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
     parameterSpecs: _PS_Reasoning,
     chatPrice: { input: 1.2, output: 4, cache: { cType: 'oai-ac', read: 0.24 } },
     initialTemperature: 0.8, // Z.ai default for vision models
+    benchmark: { cbaElo: 1433 }, // lmarena: glm-5v-turbo
   },
 
   // GLM-4.6V Series (Vision + Reasoning)
@@ -190,13 +191,13 @@ const _knownZAIModels = llmsDefineModels<_ZaiModelDef>()([
   },
 
   // GLM-4.6 Text
-  // 128K context, 128K output. Hybrid thinking (auto-determines whether to think).
+  // 200K context, 128K output. Hybrid thinking (auto-determines whether to think).
   {
     idPrefix: 'glm-4.6',
     label: 'GLM-4.6',
     pubDate: '20250930',
-    description: 'GLM-4.6 model with 128K context/output. Hybrid thinking: auto-determines whether to engage deep reasoning.',
-    contextWindow: 131072,
+    description: 'GLM-4.6 model with 200K context, 128K output. Hybrid thinking: auto-determines whether to engage deep reasoning.',
+    contextWindow: 204800, // 200K
     interfaces: _IF_Reasoning,
     maxCompletionTokens: 131072,
     parameterSpecs: _PS_Reasoning,

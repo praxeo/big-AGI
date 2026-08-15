@@ -6,6 +6,34 @@ import { LLM_IF_Outputs_Image, LLM_IF_Tools_WebSearch } from '~/common/stores/ll
 import type { ModelDescriptionSchema } from './llm.server.types';
 
 
+// -- Uncurated-model label marker --
+
+/**
+ * '[?] ' label prefix - "the list API does not establish what this model IS".
+ * Not an "uncatalogued" badge: API-characterized 0-day arrivals stay unmarked.
+ *
+ * Mark:    type-blind catalogs (ids only), where a video/TTS/embedding id could masquerade as
+ *          chat - nvidianim, modular, sakanaai, moonshot, groq, deepseek, alibaba - plus the
+ *          'super' resolution below (unknown variant of a known family).
+ * Don't:   a type/modality filter proves chat - gemini, xai, together, novita, chutesai, cerebras.
+ *
+ * Readers: llm-registry-sync (marked + null contextWindow = held off the publication push),
+ *          listModels.test, the website (strips brackets, sinks pubDate; own regex, keep in sync).
+ *
+ * Legacy, not unified: bedrock ' [?]' suffix; openai-compat hosts keep a lenient bare '?'
+ * (unknown is the norm there, marking would blank whole services from publication).
+ */
+const LLM_LABEL_UNCURATED = '[?]';
+
+export function llmsLabelUncurated(label: string): string {
+  return `${LLM_LABEL_UNCURATED} ${label}`;
+}
+
+export function llmsIsLabelUncurated(label: string): boolean {
+  return label.startsWith(LLM_LABEL_UNCURATED);
+}
+
+
 // -- Auto-inject implied model interfaces from parameterSpecs --
 
 const _paramIdToInterface: { paramIds: DModelParameterId[], iface: DModelInterfaceV1 }[] = [
@@ -231,7 +259,7 @@ export function fromManualMapping(mappings: ReadonlyArray<KnownModel | KnownLink
   if (variant)
     label += ` [${variant}]`;
   if (resolution === 'super') {
-    label = `[?] ${label}`;
+    label = llmsLabelUncurated(label);
     delete m.hidden;
   } else if (!disableSymlinkLooks && symlinkTarget) {
     // add a symlink icon to the label
