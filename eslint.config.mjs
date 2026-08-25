@@ -92,7 +92,14 @@ export default defineConfig([{
     ...pluginCompat.configs["flat/recommended"],
     settings: {
         // feature-detected in-code (fallback/guard present), so they don't break older browsers
-        polyfills: ["requestIdleCallback", "Intl.Segmenter", "ClipboardItem"],
+        polyfills: ["requestIdleCallback", "Intl.Segmenter", "ClipboardItem", "navigator.wakeLock"],
+    },
+}, {
+    // Node-side code (tools/ scripts, the src tests that run under tsx): the browserslist floor
+    // does not apply - same split as the tools tsconfig project
+    files: ["tools/**", "**/*.test.ts"],
+    rules: {
+        "compat/compat": "off",
     },
 }, {
     // Enrico 2026-07-30: TYPED rules - needs a full type program, so this is the ~15s of `npm run lint`

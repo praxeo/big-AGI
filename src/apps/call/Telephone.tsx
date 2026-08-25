@@ -316,91 +316,107 @@ export function Telephone(props: {
       />
     </OptimaPanelIn>
 
-    <Typography
-      level='h1'
-      sx={{
-        fontSize: { xs: '2.5rem', md: '3rem' },
-        textAlign: 'center',
-        mx: 2,
-      }}
-    >
-      {isConnected ? personaName : 'Hello'}
-    </Typography>
+    <Box sx={{
+      width: '100%',
+      display: { xs: 'contents', md: (isConnected || isEnded) ? 'grid' : 'contents' },
+      gridTemplateColumns: 'minmax(11.5rem, 0.4fr) minmax(0, 1fr)',
+      alignItems: 'center',
+      gap: 3,
+    }}>
 
-    <CallAvatar
-      symbol={persona?.symbol || '?'}
-      imageUrl={persona?.imageUri}
-      isRinging={isRinging}
-      onClick={() => setAvatarClickCount(avatarClickCount + 1)}
-    />
+      {/* Caller details - beside the transcript on desktop */}
+      <Box sx={{ display: { xs: 'contents', md: (isConnected || isEnded) ? 'flex' : 'contents' }, flexDirection: 'column', alignItems: 'center', gap: 1 }}>
+        <Typography
+          level='h1'
+          sx={{
+            fontSize: { xs: '2.5rem', md: '3rem' },
+            textAlign: 'center',
+            mx: 2,
+          }}
+        >
+          {isConnected ? personaName : 'Hello'}
+        </Typography>
 
-    <CallStatus
-      callerName={isConnected ? undefined : personaName}
-      statusText={isRinging ? '' /*'is calling you'*/ : isDeclined ? 'call declined' : isEnded ? 'call ended' : callElapsedTime}
-      regardingText={chatTitle}
-      micError={!isMicEnabled} micErrorMessage={micErrorMessage} speakError={!isTTSEnabled}
-    />
+        <CallAvatar
+          symbol={persona?.symbol || '?'}
+          imageUrl={persona?.imageUri}
+          isRinging={isRinging}
+          onClick={() => setAvatarClickCount(avatarClickCount + 1)}
+        />
 
-    {/* Live Transcript, w/ streaming messages, audio indication, etc. */}
-    {(isConnected || isEnded) && (
-      <Card variant='outlined' sx={{
-        flexGrow: 1,
-        maxHeight: '28%',
-        minHeight: '20%',
-        width: '100%',
+        <CallStatus
+          callerName={isConnected ? undefined : personaName}
+          statusText={isRinging ? '' /*'is calling you'*/ : isDeclined ? 'call declined' : isEnded ? 'call ended' : callElapsedTime}
+          regardingText={chatTitle}
+          micError={!isMicEnabled} micErrorMessage={micErrorMessage} speakError={!isTTSEnabled}
+        />
+      </Box>
 
-        // style
-        // backgroundColor: 'background.surface',
-        borderRadius: 'lg',
-        // boxShadow: 'sm',
+      {/* Live Transcript, w/ streaming messages, audio indication, etc. */}
+      {(isConnected || isEnded) && (
+        <Card variant='outlined' sx={{
+          flexGrow: { xs: 1, md: 0 },
+          height: { md: 'min(56dvh, 34rem)' },
+          minHeight: { xs: '20%', md: '22rem' },
+          maxHeight: { xs: '28%', md: '70dvh' },
+          width: '100%',
+          resize: { md: 'vertical' },
+          overflow: 'auto', // also required by 'resize'
 
-        // children
-        padding: 0, // move this to the ScrollToBottom component
-      }}>
+          // style
+          // backgroundColor: 'background.surface',
+          borderRadius: 'lg',
+          // boxShadow: 'sm',
 
-        <ScrollToBottom stickToBottomInitial>
+          // children
+          padding: 0, // move this to the ScrollToBottom component
+        }}>
 
-          <Box onCopy={clipboardInterceptCtrlCForCleanup} sx={{ minHeight: '100%', p: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          <ScrollToBottom stickToBottomInitial>
 
-            {/* Call Messages [] */}
-            {callMessages.map((message) =>
-              <CallMessage
-                key={message.id}
-                text={messageFragmentsReduceText(message.fragments)}
-                variant={message.role === 'assistant' ? 'solid' : 'soft'}
-                color={message.role === 'assistant' ? 'neutral' : 'primary'}
-                role={message.role}
-              />,
-            )}
+            <Box onCopy={clipboardInterceptCtrlCForCleanup} sx={{ minHeight: '100%', p: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
 
-            {/* Persona streaming text... */}
-            {!!personaTextInterim && (
-              <CallMessage
-                text={personaTextInterim}
-                variant='outlined'
-                color='neutral'
-                role='assistant'
-              />
-            )}
+              {/* Call Messages [] */}
+              {callMessages.map((message) =>
+                <CallMessage
+                  key={message.id}
+                  text={messageFragmentsReduceText(message.fragments)}
+                  variant={message.role === 'assistant' ? 'solid' : 'soft'}
+                  color={message.role === 'assistant' ? 'neutral' : 'primary'}
+                  role={message.role}
+                />,
+              )}
 
-            {/* Listening... */}
-            {recognitionState.isActive && (
-              <CallMessage
-                text={<>{speechInterim?.transcript.trim() || null}{speechInterim?.interimTranscript.trim() ? <i> {speechInterim.interimTranscript}</i> : null}</>}
-                variant={(recognitionState.hasSpeech || !!speechInterim?.transcript) ? 'soft' : 'outlined'}
-                color='primary'
-                role='user'
-              />
-            )}
+              {/* Persona streaming text... */}
+              {!!personaTextInterim && (
+                <CallMessage
+                  text={personaTextInterim}
+                  variant='outlined'
+                  color='neutral'
+                  role='assistant'
+                />
+              )}
 
-          </Box>
+              {/* Listening... */}
+              {recognitionState.isActive && (
+                <CallMessage
+                  text={<>{speechInterim?.transcript.trim() || null}{speechInterim?.interimTranscript.trim() ? <i> {speechInterim.interimTranscript}</i> : null}</>}
+                  variant={(recognitionState.hasSpeech || !!speechInterim?.transcript) ? 'soft' : 'outlined'}
+                  color='primary'
+                  role='user'
+                />
+              )}
 
-          {/* Visibility and actions are handled via Context */}
-          <ScrollToBottomButton />
+            </Box>
 
-        </ScrollToBottom>
-      </Card>
-    )}
+            {/* Visibility and actions are handled via Context */}
+            <ScrollToBottomButton />
+
+          </ScrollToBottom>
+        </Card>
+      )}
+
+    </Box>
 
     {/* Call Buttons */}
     <Box sx={{ width: '100%', display: 'flex', justifyContent: 'space-evenly', gap: 4 }}>

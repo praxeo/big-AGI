@@ -98,7 +98,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     model: model.id,
     messages: chatMessages,
     tools: chatGenerate.tools && _toOpenAITools(chatGenerate.tools, strictToolInvocations),
-    tool_choice: chatGenerate.toolsPolicy && _toOpenAIToolChoice(openAIDialect, chatGenerate.toolsPolicy),
+    tool_choice: chatGenerate.toolsPolicy && _toOpenAIToolChoice(openAIDialect, chatGenerate.toolsPolicy, model),
     parallel_tool_calls: undefined,
     max_tokens: model.maxTokens !== undefined ? model.maxTokens : undefined,
     ...(model.temperature !== null ? { temperature: model.temperature !== undefined ? model.temperature : undefined } : {}),
@@ -171,28 +171,19 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     && openAIDialect !== 'nvidianim' // NVIDIA rejects unknown params and gpt-oss strictly validates reasoning_effort - dedicated block below
     && openAIDialect !== 'perplexity' // Perplexity has its own block below with stricter validation
   ) {
-    // for: 'azure' | 'groq' | 'lmstudio' | 'localai' | 'mistral' | 'openai' | 'togetherai' | 'xai'
+    // for: 'azure' | 'cerebras' | 'cohere' | 'groq' | 'lmstudio' | 'localai' | 'mistral' | 'modular' | 'openai' | 'sakanaai' | 'togetherai' | 'xai'
     payload.reasoning_effort = reasoningEffort;
   }
 
   // [Moonshot] Kimi reasoning effort -> thinking mode; Kimi Code 'k3' also honors reasoning_effort low/high/max (probe-verified 2026-07-18: primary K2.5/K2.6 tolerate the extra field, 'kimi-for-coding' ignores it)
-  // [Z.ai] GLM thinking mode: binary enabled/disabled (supports GLM-4.5 series and higher) - https://docs.z.ai/guides/capabilities/thinking-mode
-  // [DeepSeek, 2026-04-23] V4 thinking control https://api-docs.deepseek.com/guides/thinking_mode
+  // [Z.ai] GLM thinking mode: 'none' -> disabled, else enabled - https://docs.z.ai/guides/capabilities/thinking-mode. reasoning_effort rides
+  //   along: honored on GLM-5.2 (none|high|max) and GLM-5.3 (low|high|max, thinking compulsory - 'disabled' 400s), accepted-and-ignored on
+  //   older GLM (live-probed 2026-08-17). Per-model levels are the catalog enumValues, not re-validated here.
+  // [DeepSeek, 2026-04-23] V4 thinking control https://api-docs.deepseek.com/guides/thinking_mode; 'low' keeps reasoning on but skips
+  //   the hidden agentic preamble - the cheap tier
   if (reasoningEffort && (openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || openAIDialect === 'zai')) {
-    // [Z.ai, 2026-06-13] reasoning_effort is GLM-5.2 only; other GLM models are binary thinking enabled/disabled - https://docs.z.ai/api-reference/llm/chat-completion
-    const supportsEffortLevels = openAIDialect === 'deepseek' || openAIDialect === 'moonshot' || (openAIDialect === 'zai' && model.id.startsWith('glm-5.2'));
-    // [DeepSeek, 2026-07-31] the V4 reasoning_effort enum is none|minimal|low|medium|high|xhigh|max; we expose the
-    // documented low/high/max (+ none -> thinking disabled). 'low' keeps reasoning on while skipping the hidden agentic
-    // preamble, so it is the cheap thinking tier.
-    const allowedEffort = (openAIDialect === 'moonshot' || openAIDialect === 'deepseek') ? ['none', 'low', 'high', 'max'] : supportsEffortLevels ? ['none', 'high', 'max'] : ['none', 'high'];
-    if (!allowedEffort.includes(reasoningEffort)) // domain validation
-      throw new Error(`${openAIDialect} only supports reasoning effort ${allowedEffort.join(', ')}, got '${reasoningEffort}'`);
-
     payload.thinking = { type: reasoningEffort !== 'none' ? 'enabled' : 'disabled' };
-
-    // [DeepSeek, 2026-04-23] DeepSeek also supports effort control for reasoning-enabled requests - set it here as it was carved from the reasoningEffort setter before
-    // [Z.ai, 2026-06-13] GLM-5.2 reasoning_effort takes effect only when thinking is enabled (i.e. effort !== 'none')
-    if (supportsEffortLevels && reasoningEffort !== 'none')
+    if (reasoningEffort !== 'none') // effort takes effect only when thinking is enabled
       payload.reasoning_effort = reasoningEffort;
   }
 
@@ -916,7 +907,7 @@ function _toOpenAITools(itds: AixTools_ToolDefinition[], strictToolInvocations: 
   });
 }
 
-function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsPolicy): NonNullable<TRequest['tool_choice']> {
+function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsPolicy, model: AixAPI_Model): NonNullable<TRequest['tool_choice']> {
   // [Mistral] - supports 'auto', 'none', 'any'
   if (openAIDialect === 'mistral' && itp.type !== 'auto') {
     // Note: we tried adding the 'any' model, but don't feel comfortable with altering our good parsers
@@ -930,10 +921,15 @@ function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsP
     case 'auto':
       return 'auto';
     case 'any':
+      // [Moonshot, 2026-08-17] 'required' 400s while thinking is on (k2.5/k2.6/k2.7-code, probed); K3, moonshot-v1
+      // and thinking-off requests accept it. Degrade to 'auto' rather than hard-fail.
+      if (openAIDialect === 'moonshot' && model.reasoningEffort !== 'none'
+        && !(model.id === 'k3' || model.id.startsWith('kimi-k3') || model.id.startsWith('moonshot-v1')))
+        return 'auto';
       return 'required';
     // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema. [Moonshot] probe-verified: named tool_choice
     // 400s ("tool_choice 'specified' is incompatible with thinking enabled") on all thinking-mode Kimi requests -
-    // always, on the K2.7-code/K3 always-thinking models; 'required' ('any') works.
+    // always, on the K2.7-code/K3 always-thinking models (re-probed 2026-08-17).
     // case 'function_call':
     //   return { type: 'function' as const, function: { name: itp.function_call.name } };
   }

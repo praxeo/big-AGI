@@ -18,7 +18,8 @@ export function minimaxHeuristic(urlOrHost: string | undefined): boolean {
  * - Models: https://platform.minimax.io/docs/release-notes/models.md
  * - Pricing: https://platform.minimax.io/docs/guides/pricing-paygo.md
  * - Text generation: https://platform.minimax.io/docs/guides/text-generation.md
- * - Updated: 2026-08-06
+ * - OpenAI-compatible reference (model enum, max_completion_tokens caps, thinking/service_tier): https://platform.minimax.io/docs/api-reference/text-chat-openai.md
+ * - Updated: 2026-08-24
  */
 type _MiniMaxModelDef = ModelDescriptionSchema & { pubDate: string };
 
@@ -33,13 +34,16 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     contextWindow: 1000000,
     maxCompletionTokens: 131072, // vendor-recommended; live ceiling is 524288 (512K)
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision],
+    // [MiniMax, 2026-08-24] no reasoning switch anymore: `reasoning_effort` is accepted-and-ignored (probed: 'none' still
+    // emits a thinking block, an invalid value doesn't 400), so the none|high spec was inert and is gone. The documented
+    // lever is `thinking: {type: 'disabled'|'adaptive'}` (probed, 0 reasoning tokens), which the 'openai' dialect won't send.
     // tiered PAYG pricing: boundary at 512K input tokens, >512K tier doubles. Priority tier (1.5x) not modeled.
     chatPrice: {
       input: [{ upTo: 512000, price: 0.30 }, { upTo: null, price: 0.60 }],
       output: [{ upTo: 512000, price: 1.20 }, { upTo: null, price: 2.40 }],
       cache: { cType: 'oai-ac', read: [{ upTo: 512000, price: 0.06 }, { upTo: null, price: 0.12 }] },
     },
-    benchmark: { cbaElo: 1445 }, // lmarena: minimax-m3
+    benchmark: { cbaElo: 1444 }, // lmarena: minimax-m3
   },
 
   // M2.7 series
@@ -66,7 +70,7 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     benchmark: { cbaElo: 1416 }, // same weights as minimax-m2.7
   },
 
-  // M2.5 series
+  // M2.5 series - vendor Legacy since 2026-08 (hidden, still served)
   {
     id: 'MiniMax-M2.5',
     label: 'MiniMax M2.5',
@@ -77,6 +81,7 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
     chatPrice: { input: 0.30, output: 1.20, cache: { cType: 'oai-ac', read: 0.03 } },
     benchmark: { cbaElo: 1390 }, // lmarena: minimax-m2.5
+    hidden: true, // vendor Legacy
   },
   {
     id: 'MiniMax-M2.5-highspeed',
@@ -88,6 +93,7 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
     chatPrice: { input: 0.60, output: 2.40, cache: { cType: 'oai-ac', read: 0.03 } },
     benchmark: { cbaElo: 1390 }, // same weights as minimax-m2.5
+    hidden: true, // vendor Legacy
   },
 
   // M2-her - dialogue-first, roleplay and character-driven chat (Jan 2026)
@@ -139,7 +145,7 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     hidden: true, // yield to newer
   },
 
-  // M1 - 1M context
+  // M1 - 1M context. [MiniMax, 2026-08-17] dropped from the docs model table and the price list, still served (probed).
   {
     id: 'MiniMax-M1',
     label: 'MiniMax M1',
@@ -152,7 +158,7 @@ const _knownMiniMaxModels = llmsDefineModels<_MiniMaxModelDef>()([
     hidden: true, // yield to newer
   },
 
-  // MiniMax-Text-01 - legacy
+  // MiniMax-Text-01 - legacy. [MiniMax, 2026-08-17] dropped from the docs model table and the price list, still served (probed).
   {
     id: 'MiniMax-Text-01', // (!) not 'MiniMax-01', which is not served
     label: 'MiniMax Text 01',

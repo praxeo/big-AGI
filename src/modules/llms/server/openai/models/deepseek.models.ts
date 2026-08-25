@@ -1,4 +1,4 @@
-import { LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
+import { LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
 
@@ -10,6 +10,24 @@ export type LlmsDeepseekModelId = typeof _knownDeepseekChatModels[number]['idPre
 
 const IF_4 = [LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn];
 
+// [DeepSeek, 2026-08-21] V4-Flash-Vision-Exp: first vision model - https://api-docs.deepseek.com/updates/
+// - Probed 2026-08-24: image input works, with and without thinking; otherwise flash-identical (effort enum + 'low'
+//   preamble skip, 384K ceiling, tool_choice-under-thinking 400, /responses + Anthropic base). Fingerprint
+//   aa8d6caccae4a22492bb51091cfc8eab; flash/pro unchanged (no swaps); legacy aliases still answer.
+// - Fixes opensource #1181: without an exact entry the id prefix-matched 'deepseek-v4-flash' ('super' resolution)
+//   and inherited LLM_IF_HOTFIX_StripImages - the client itself stripped the images before sending.
+
+// [DeepSeek, 2026-08-17] Peak/off-peak pricing landed - https://api-docs.deepseek.com/quick_start/pricing/
+// - The flat card is gone as of 2026-08-16 16:00 UTC. Peak is 01:00-04:00 and 06:00-10:00 UTC, Mon-Fri (weekday
+//   qualifier on the pricing page by 2026-08-24), off-peak is exactly half everywhere else. pro cache-hit/miss/output: peak 0.044/1.32/3.96, off-peak 0.022/0.66/1.98; flash:
+//   peak 0.014/0.44/1.32, off-peak 0.007/0.22/0.66. The retired flat card was pro 0.435/0.87, flash 0.14/0.28.
+// - chatPrice below carries the PEAK card: there is no time dimension in the pricing schema, so we take the upper
+//   bound and never under-show cost (off-peak requests are over-shown 2x). Revisit if the schema ever gains one.
+// - Re-probed today, all unchanged: /models serves only deepseek-v4-flash + deepseek-v4-pro; both answer on /responses
+//   and on the Anthropic base; live reasoning_effort enum is still none|minimal|low|medium|high|xhigh|max; max_tokens
+//   range [1, 393216]; forced tool_choice still 400s while thinking is on; image parts still rejected at the schema
+//   level; both system_fingerprints unchanged; both legacy aliases still answer, routed to deepseek-v4-flash.
+
 // [DeepSeek, 2026-08-13] V4-Pro 0813: GA release, swapped IN PLACE - https://api-docs.deepseek.com/updates/
 // - Same 'deepseek-v4-pro' id ("simply set the model name to deepseek-v4-pro"); the pricing page MODEL VERSION row now
 //   reads DeepSeek-V4-Pro-0813. Dated ids 400 ("The supported API model names are deepseek-v4-pro or deepseek-v4-flash"),
@@ -19,10 +37,6 @@ const IF_4 = [LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn];
 //   Bench 2.1 72.1 -> 87.9), raw knowledge barely moved (HLE no-tools 37.7 -> 42.7).
 // - Pro's effort mapping now matches flash: 'low' is a real cheaper tier, skipping the ~79-token hidden agentic preamble
 //   (8 vs 87 prompt tokens on the same request). /responses serves pro too now (was 400 'available starting early August 2026').
-// - PRICE RISE scheduled for 2026-08-16 16:00 UTC: the flat card is replaced by peak/off-peak, peak 01:00-04:00 and
-//   06:00-10:00 UTC, off-peak exactly half. pro cache-hit/miss/output peak 0.044/1.32/3.96, off-peak 0.022/0.66/1.98;
-//   flash peak 0.014/0.44/1.32, off-peak 0.007/0.22/0.66. chatPrice below is still today's flat card, which is BELOW
-//   even the new off-peak rate; we have no time dimension, so a tier must be picked at cutover.
 // - Baseline for spotting the NEXT in-place swap, as no other tell exists: system_fingerprint is stable per model,
 //   a307abda487cd1b463329ccb945ce396 (pro) / a26a7955944dc5c60445bff77fac9c8e (flash). Self-report is worthless
 //   (pro claims to be V3, or Claude, or Qwen, depending on the host).
@@ -66,8 +80,8 @@ const _knownDeepseekChatModels = llmsDefineManualMappings([
       { paramId: 'llmVndMiscEffort', enumValues: ['none', 'low', 'high', 'max'] },
     ],
     maxCompletionTokens: 131072, // house cap; live ceiling is 393216 (384K)
-    chatPrice: { input: 0.435, output: 0.87, cache: { cType: 'oai-ac', read: 0.003625 } },
-    benchmark: { cbaElo: 1457 }, // lmarena: deepseek-v4-pro (preview-era score; 0813 only has AutoEval votes so far)
+    chatPrice: { input: 1.32, output: 3.96, cache: { cType: 'oai-ac', read: 0.044 } }, // peak card
+    benchmark: { cbaElo: 1458 }, // lmarena: deepseek-v4-pro (preview-era votes, 54k since 0424; the only 0813 row, -max-20260813, is AutoEval-only at 1465, unranked)
   },
   {
     idPrefix: 'deepseek-v4-flash',
@@ -84,8 +98,24 @@ const _knownDeepseekChatModels = llmsDefineManualMappings([
       { paramId: 'llmVndMiscEffort', enumValues: ['none', 'low', 'high', 'max'] },
     ],
     maxCompletionTokens: 131072, // house cap; live ceiling is 393216 (384K)
-    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.0028 } },
-    benchmark: { cbaElo: 1436 }, // lmarena: deepseek-v4-flash (distinct from the -high-preview entry, 1438)
+    chatPrice: { input: 0.44, output: 1.32, cache: { cType: 'oai-ac', read: 0.014 } }, // peak card
+    benchmark: { cbaElo: 1435 }, // lmarena: deepseek-v4-flash (distinct from the -high-preview entry, 1438)
+  },
+  {
+    idPrefix: 'deepseek-v4-flash-vision-exp',
+    label: 'DeepSeek V4 Flash Vision (Exp)',
+    isPreview: true,
+    pubDate: '20260821',
+    description: 'Experimental vision variant of V4 Flash with 1M context, released by DeepSeek on 2026-08-21. Adds image understanding while matching V4 Flash text capabilities. Supports extended thinking modes, JSON output, and function calling.',
+    contextWindow: 1_048_576, // 1M
+    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Vision, LLM_IF_OAI_Reasoning],
+    parameterSpecs: [
+      // 'low' keeps reasoning on yet skips the hidden agentic preamble (6 vs 85 prompt tokens), so it is cheaper per request
+      { paramId: 'llmVndMiscEffort', enumValues: ['none', 'low', 'high', 'max'] },
+    ],
+    maxCompletionTokens: 131072, // house cap; live ceiling is 393216 (384K)
+    chatPrice: { input: 0.44, output: 1.32, cache: { cType: 'oai-ac', read: 0.014 } }, // peak card, same as flash; images billed as input tokens by dimensions
+    // no benchmark: not on lmarena yet (released 2026-08-21)
   },
   // Legacy aliases - API routes both to deepseek-v4-flash with thinking pre-set
   {
@@ -95,8 +125,8 @@ const _knownDeepseekChatModels = llmsDefineManualMappings([
     contextWindow: 1_048_576,
     interfaces: [...IF_4, LLM_IF_OAI_Reasoning],
     maxCompletionTokens: 65536,
-    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.0028 } },
-    benchmark: { cbaElo: 1436 - 1 }, // lmarena: deepseek-v4-flash - 1 (yield)
+    chatPrice: { input: 0.44, output: 1.32, cache: { cType: 'oai-ac', read: 0.014 } }, // peak card
+    benchmark: { cbaElo: 1435 - 1 }, // lmarena: deepseek-v4-flash - 1 (yield)
     isLegacy: true,
   },
   {
@@ -106,8 +136,8 @@ const _knownDeepseekChatModels = llmsDefineManualMappings([
     contextWindow: 1_048_576,
     interfaces: IF_4,
     maxCompletionTokens: 65536,
-    chatPrice: { input: 0.14, output: 0.28, cache: { cType: 'oai-ac', read: 0.0028 } },
-    benchmark: { cbaElo: 1436 - 2 }, // lmarena: deepseek-v4-flash - 2 (yield)
+    chatPrice: { input: 0.44, output: 1.32, cache: { cType: 'oai-ac', read: 0.014 } }, // peak card
+    benchmark: { cbaElo: 1435 - 2 }, // lmarena: deepseek-v4-flash - 2 (yield)
     isLegacy: true,
   },
 ]);
