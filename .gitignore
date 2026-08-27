@@ -17,6 +17,7 @@
 
 # next.js
 /.next/
+/.next-*/
 /dist/
 /out/
 
@@ -48,7 +49,6 @@ cloudflare-env.d.ts
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 # other
 .idea/
@@ -58,7 +58,9 @@ next-env.d.ts
 /certificates
 .env*.local
 /.run/dev (ENV).run.xml
-/src/modules/3rdparty/aider/scratch*
 
 # Ignore temporary CC files
 /tmpclaude*
+
+# Chrome DevTools workspace binding (per-worktree)
+/public/.well-known/appspecific/com.chrome.devtools.json

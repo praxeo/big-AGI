@@ -8,6 +8,8 @@ import type { IParticleTransmitter } from './IParticleTransmitter';
 import { AIX_OAI_DEFAULT_IMAGE_GEN_MODEL } from '../adapters/openai.responsesCreate';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
 import { aixResilientUnknownValue } from '../../../api/aix.resilience';
+import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
+import { stripXAIDefectiveCitations, XAIDefectiveCitationsFilter } from './xai.transform-citationsLeak';
 
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
 
@@ -326,6 +328,9 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
 
   const R = new ResponseParserStateMachine();
 
+  // [xAI] grok-4.6 leaks internal citation directives into web_search answer text - strip them (see xai.transform-citationsLeak.ts)
+  const xaiCitationsFilter = vendor === 'xai' ? new XAIDefectiveCitationsFilter() : undefined;
+
   return function(pt: IParticleTransmitter, eventData: string) {
 
     // throws on malformed event data
@@ -433,7 +438,7 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
         // Genuine failure: surface the error
         pt.setTokenStopReason('cg-issue');
         pt.setDialectTerminatingIssue(!failedError ? 'Response failed with no error details.'
-          : `${safeErrorString(failedError.code) || 'Error'}: ${safeErrorString(failedError.message) || 'unknown.'}`, IssueSymbols.Generic, 'srv-warn');
+          : `${safeErrorString(failedError.code) || 'Error'}: ${safeErrorString(failedError.message) || 'unknown.'}`, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(failedError));
         break;
       }
 
@@ -465,6 +470,14 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
         // expected the beginning of a new output item
         // BLANK item expected, of type 'message', 'reasoning' or 'function_call'
         R.outputItemEnter(eventType, event.output_index, event.item.type);
+
+        // [gpt-5.4+] message phase ('commentary' vs 'final_answer') is known at item-open, before the first
+        // text delta: forward it now so the client breaks + tags the upcoming text fragment
+        if (event.item.type === 'message') {
+          const messagePhase = event.item.phase;
+          if (messagePhase === 'commentary' || messagePhase === 'final_answer')
+            pt.sendSetVendorState({ p: 'svs', vendor: vendor, state: { messagePhase } });
+        }
         break;
 
       case 'response.output_item.done':
@@ -596,7 +609,7 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
 
       case 'response.reasoning_summary_part.added':
         R.summaryPartEnter(eventType, event.output_index, event.summary_index);
-        R.expectEvents(['response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done', 'response.reasoning_summary_part.done']);
+        R.expectEvents(['response.reasoning_summary_text.delta', 'response.reasoning_summary_text.done', 'response.reasoning_summary_part.done', 'response.reasoning_summary_part.added' /* parts can re-open without a .done in between - see summaryPartEnter */]);
         // nothing else to do, the part is likely empty, and we will incrementally parse it
         break;
 
@@ -614,13 +627,28 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
       case 'response.output_text.delta':
         R.contentPartVisit(eventType, event.output_index, event.content_index);
         // .delta: -> append the text content
-        pt.appendText(R.contentPartInjectSpacer() ? OPENAI_RESPONSES_SAME_PART_SPACER + event.delta : event.delta);
-        if (event.delta) R.hasEmittedText = true;
+        if (!xaiCitationsFilter) {
+          pt.appendText(R.contentPartInjectSpacer() ? OPENAI_RESPONSES_SAME_PART_SPACER + event.delta : event.delta);
+          if (event.delta) R.hasEmittedText = true;
+        } else {
+          // [xAI] strip leaked citation directives, holding back text only while a marker could still be forming
+          const filteredDelta = xaiCitationsFilter.streamingDelta(event.delta);
+          if (filteredDelta) {
+            pt.appendText(R.contentPartInjectSpacer() ? OPENAI_RESPONSES_SAME_PART_SPACER + filteredDelta : filteredDelta);
+            R.hasEmittedText = true;
+          }
+        }
         break;
 
       case 'response.output_text.done':
         R.contentPartVisit(eventType, event.output_index, event.content_index);
         // .text: ignore finalized content, we already transmitted all partials
+        // [xAI] release any non-marker text held back by the citations-leak filter
+        const heldTail = xaiCitationsFilter?.flush();
+        if (heldTail) {
+          pt.appendText(R.contentPartInjectSpacer() ? OPENAI_RESPONSES_SAME_PART_SPACER + heldTail : heldTail);
+          R.hasEmittedText = true;
+        }
         break;
 
       case 'response.output_text.annotation.added': // NEW, CORRECT
@@ -801,11 +829,11 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
         }
 
         // Nothing to salvage - fail now (and seal, so the trailing 'response.failed' echo doesn't re-report)
-        // FIXME: potential point for throwing OperationRetrySignal (using 'srv-warn' for now)
+        // FIXME: potential point for throwing OperationRetrySignal
         R.markResponseSealed();
         pt.updateMetrics(_fromResponseMetrics(undefined, R.parserCreationTimestamp, R.timeToFirstEvent)); // timing even on failure (#1149)
         pt.setTokenStopReason('cg-issue');
-        pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, 'srv-warn');
+        pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, openAIUpstreamErrorLogLevel({ code: event.error?.code ?? event.code, type: event.error?.type }));
         break;
       }
 
@@ -1021,6 +1049,7 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
           const {
             // id: messageId,
             content: messageContent,
+            phase: messagePhase,
             // role: messageRole,
           } = oItem;
 
@@ -1030,12 +1059,17 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
             break;
           }
 
+          // [gpt-5.4+] forward the message phase before the item's text (mirrors the streaming path)
+          if (messagePhase === 'commentary' || messagePhase === 'final_answer')
+            pt.sendSetVendorState({ p: 'svs', vendor: vendor, state: { messagePhase } });
+
           // Message
           for (const content of messageContent) {
             const contentType = content.type;
             switch (contentType) {
               case 'output_text':
-                pt.appendText(content.text || '');
+                // [xAI] strip leaked citation directives (see xai.transform-citationsLeak.ts)
+                pt.appendText(vendor === 'xai' ? stripXAIDefectiveCitations(content.text || '') : (content.text || ''));
 
                 // -> URL Citations: Parse annotations if present
                 if (content.annotations && Array.isArray(content.annotations))
@@ -1197,8 +1231,8 @@ function _forwardResponseError(parsedData: any, pt: IParticleTransmitter) {
     return false;
 
   // Transmit the error as text - note: throw if you want to transmit as 'error'
-  // FIXME: potential point for throwing OperationRetrySignal (using 'srv-warn' for now)
-  pt.setDialectTerminatingIssue(safeErrorString(error) || 'unknown.', IssueSymbols.Generic, 'srv-warn');
+  // FIXME: potential point for throwing OperationRetrySignal
+  pt.setDialectTerminatingIssue(safeErrorString(error) || 'unknown.', IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
   return true;
 }
 
@@ -1411,16 +1445,18 @@ function _forwardDoneCodeInterpreterCallItem(pt: IParticleTransmitter, codeInter
  * The actual search results are typically reflected in the model's text response.
  */
 function _forwardDoneCustomToolCallItem(pt: IParticleTransmitter, customToolCall: Extract<OpenAIWire_API_Responses.Response['output'][number], { type: 'custom_tool_call' }>, opId: string): void {
-  const { name, input } = customToolCall;
+  const { name, input, status } = customToolCall;
 
-  const doneOpts = { opId, state: 'done' } as const;
+  // [xAI] 2026-08-14: x_* tool calls can come back with status 'failed'
+  const isError = status === 'failed';
+  const doneOpts = { opId, state: isError ? 'error' : 'done' } as const;
 
-  // Show a placeholder for the custom tool call (these arrive in output_item.done, so they're completed)
+  // Show a placeholder for the custom tool call (these arrive in output_item.done, so they're terminal)
   // xAI x_search tools include: x_user_search, x_keyword_search, x_semantic_search, x_thread_fetch, ...
   if (name.startsWith('x_'))
-    pt.sendOperationState('search-web', `X search: ${name}${input ? ` (${input.slice(0, 50)}${input.length > 50 ? '...' : ''})` : ''}`, doneOpts);
+    pt.sendOperationState('search-web', isError ? `X search error: ${name}` : `X search: ${name}${input ? ` (${input.slice(0, 50)}${input.length > 50 ? '...' : ''})` : ''}`, doneOpts);
   else
-    pt.sendOperationState('code-exec' /* WEAK cast, this is not a fit */, `Custom tool: ${name}`, doneOpts);
+    pt.sendOperationState('code-exec' /* WEAK cast, this is not a fit */, isError ? `Custom tool error: ${name}` : `Custom tool: ${name}`, doneOpts);
 }
 
 

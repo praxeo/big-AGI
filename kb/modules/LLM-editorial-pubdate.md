@@ -23,7 +23,8 @@ For the forward-looking pipeline (extraction script, snapshot, website consumpti
 
 - **Symlink entries** (`KnownLink`) - inherit the target's `pubDate` via the merge logic in `fromManualMapping`.
 - **Unknown variants resolved through `super`/`fallback`** in `fromManualMapping` for non-Anthropic/non-Gemini vendors - the field is left undefined rather than fabricated.
-- **Dynamic-only vendors** (OpenRouter, TogetherAI, Novita, ChutesAI, FireworksAI, TLUS, Azure, LM Studio, LocalAI, FastAPI, ArceeAI, LLMAPI) - no editorial knob; pubDate flows in only when the underlying lookup or upstream API populates it.
+- **Dynamic-only vendors** (OpenRouter, Novita, ChutesAI, FireworksAI, TLUS, Azure, LM Studio, LocalAI, FastAPI, ArceeAI, LLMAPI) - no editorial knob; pubDate flows in only when the underlying lookup or upstream API populates it.
+- **TogetherAI** graduated to an id-keyed editorial patch map (`_togetherEditorialPubDates`, 2026-07-12) after its `created` proved to be endpoint churn (re-stamped on redeploys: DeepSeek-V4-Pro, released 2026-04-24, carried created=2026-07-12; 28/269 endpoints report 0, including the newest arrivals). `created` never feeds pubDate there; it only drives list order, with the editorial date as placement fallback.
 
 The rationale: today's date is a defensible 0-day proxy only when we know we're seeing a brand-new model the vendor just announced (Anthropic and Gemini's "discovery via official model list" paths). For arbitrary dynamic vendors, fabricating today would mark old/well-known models as new - misleading. Better to omit.
 
@@ -77,14 +78,15 @@ Three categories:
 | MiniMax | Editorial | `openai/models/minimax.models.ts` | `_knownMiniMaxModels` | 10 | 10/10 HIGH |
 | DeepSeek | Hybrid | `openai/models/deepseek.models.ts` | `_knownDeepseekChatModels` | 4 | 4/4 HIGH |
 | Groq | Hybrid (host) | `openai/models/groq.models.ts` | `_knownGroqModels` | 11 | 11/11 HIGH (underlying-model date) |
-| Z.AI / GLM | Hybrid | `openai/models/zai.models.ts` | `_knownZAIModels` | 21 | 21/21 HIGH (`pubDate` type-required, like Anthropic) |
+| Z.AI / GLM | Hybrid | `openai/models/zai.models.ts` | `_knownZAIModels` | 22 | 22/22 HIGH (`pubDate` type-required, like Anthropic) |
+| NVIDIA NIM | Hybrid (3-tier) | `openai/models/nvidianim.models.ts` | `_knownNvidiaNIMModels` | 36 | 36/36 HIGH (`pubDate` type-required; upstream release dates cross-referenced from sibling vendor tables, NOT NVIDIA's onboarding dates; deny-listed ids dropped - the catalog is a stale superset - and unknown ids surface as `[?]` 0-day entries without pubDate; refresh via `tools/develop/nvidianim-catalog-sync/`) |
 | Bedrock | Reuses Anthropic | `bedrock/bedrock.models.ts` | -> `hardcodedAnthropicModels` | (12) | inherited |
 | Ollama | Editorial (catalog) | `ollama/ollama.models.ts` | `OLLAMA_BASE_MODELS` | 209 | **deferred** - see notes |
 | Arcee AI | Dynamic | `openai/models/arceeai.models.ts` | `_arceeKnownModels` | 0 | n/a (empty) |
 | LLMAPI | Dynamic | `openai/models/llmapi.models.ts` | `_llmapiKnownModels` | 0 | n/a (empty) |
 | Alibaba | Dynamic | `openai/models/alibaba.models.ts` | `_knownAlibabaChatModels` | 0 | n/a (empty) |
 | OpenRouter | Dynamic + delegated lookup | `openai/models/openrouter.models.ts` | (parser) | -- | inherited via `llmOrt*Lookup` |
-| TogetherAI | Dynamic | `openai/models/together.models.ts` | (parser) | -- | no |
+| TogetherAI | Dynamic + patch map | `openai/models/together.models.ts` | `_togetherEditorialPubDates` | 4 | editorial-only; API `created` is endpoint churn (re-stamped on redeploys, 28/269 zeros - verified 2026-07-12), never used for pubDate |
 | FireworksAI | Dynamic | `openai/models/fireworksai.models.ts` | (parser) | -- | no |
 | Novita | Dynamic | `openai/models/novita.models.ts` | (parser) | -- | no |
 | ChutesAI | Dynamic | `openai/models/chutesai.models.ts` | (parser) | -- | no |
@@ -103,3 +105,22 @@ Three categories:
 - **Bedrock** finds Anthropic editorial via `llmBedrockFindAnthropicModel` and strips unsupported interfaces - `pubDate` inherits from Anthropic.
 - **Ollama** is deferred: 209 entries keyed by upstream model family (e.g. `qwen3.6`, `kimi-k2`, `glm-4.6`). Each entry's `pubDate` would need to be the upstream creator's release date (Meta, Alibaba, Moonshot, Z.AI, etc.). This is large-scale upstream research; better handled in a follow-up pass once cross-vendor `pubDate` data is consolidated and reusable.
 - **Dynamic-only** vendors get nothing automatic. To add `pubDate` for them we'd have to seed editorial entries (which is what `fromManualMapping`'s mapping mechanism was built for); this is a per-vendor decision and out of scope for the initial rollout.
+
+
+## Uncurated-model marker (`[?]`)
+
+Canonical symbols: `llmsLabelUncurated()` / `llmsIsLabelUncurated()` in `src/modules/llms/server/models.mappings.ts` (the doc comment there is the decision record).
+
+**Semantics**: the `[?] ` label prefix means "the list API does not establish what this model IS" - an ids-only catalog where a video/TTS/embedding id could masquerade as chat (the FLUX-on-Modular failure, 2026-08-14). It is NOT a "not yet editorialized" badge: API-characterized 0-day arrivals stay unmarked so they publish and badge as new.
+
+**Downstream effects** (why the marker must not be applied loosely):
+- `tools/data/llms/llm-registry-sync.ts` drops `[?]`-labeled models with `contextWindow === null` before both its local DB and the PostHog `llms_model_spec` push - they never reach big-agi.com.
+- The website strips bracketed segments from `[?]` labels and sinks the pubDate (no NEW badge, bottom of Released sort). Its detection is an independent regex in the website repo (`posthog.server.ts` / `llm.vendors.rankings.ts`) - keep in sync on change.
+
+**Marked** (type-blind list APIs): `fromManualMapping` 'super' resolution (unknown variant of a known family), plus the 0-day fallbacks in nvidianim, modular, sakanaai, moonshot, groq, deepseek, alibaba, and native OpenAI (Azure included via `isLikelyOpenAI: true`).
+
+**Unmarked** (a type/modality filter proves chat): gemini, xai, together, novita, chutesai, cerebras - each carries an in-file "no '[?]' marker (evaluated 2026-08-14)" comment. Companion rule everywhere: never invent a context window - API value or `null`.
+
+**Exempt** (unknown is the norm; marking would blank whole services): OpenAI-compatible custom hosts (lenient bare `?` fallback, 128K/8K assumption), fastapi, tlusapi, lmstudio, localai, ollama.
+
+**Legacy, not unified**: bedrock's ` [?]` label suffix (real context windows, so no publication effect; unifying would churn pushed specs).

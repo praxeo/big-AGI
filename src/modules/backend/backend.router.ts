@@ -69,6 +69,7 @@ export const backendRouter = createTRPCRouter({
         hasLlmLocalAIKey: !!env.LOCALAI_API_KEY,
         hasLlmMistral: !!env.MISTRAL_API_KEY,
         hasLlmMoonshot: !!env.MOONSHOT_API_KEY,
+        hasLlmNvidiaNIM: !!env.NVIDIANIM_API_KEY || !!env.NVIDIANIM_API_HOST,
         hasLlmOllama: !!env.OLLAMA_API_HOST,
         hasLlmOpenAI: !!env.OPENAI_API_KEY || !!env.OPENAI_API_HOST,
         hasLlmOpenRouter: !!env.OPENROUTER_API_KEY,
@@ -80,7 +81,7 @@ export const backendRouter = createTRPCRouter({
         hasBrowsing: !!env.PUPPETEER_WSS_ENDPOINT || hasCloudflareBrowserBinding,
         hasGoogleCustomSearch: !!env.GOOGLE_CSE_ID && !!env.GOOGLE_CLOUD_API_KEY,
         hasVoiceElevenLabs: !!env.ELEVENLABS_API_KEY,
-        // hashes
+        // hashes - TODO(2026-11): remove hashLlmReconfig + generateLlmEnvConfigHash: unread since LLM-Defs (per-vendor defsV), kept for pre-LLM-Defs clients
         hashLlmReconfig: generateLlmEnvConfigHash(env),
         // build data
         build: Release.buildInfo('backend'),

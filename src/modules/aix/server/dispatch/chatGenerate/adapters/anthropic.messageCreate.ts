@@ -5,7 +5,7 @@ import type { AnthropicHostedFeatures } from '~/modules/llms/server/anthropic/an
 import type { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../../../api/aix.wiretypes';
 import { AnthropicWire_API_Message_Create, AnthropicWire_Blocks } from '../../wiretypes/anthropic.wiretypes';
 
-import { aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxInReferenceTo_To_XMLString } from './adapters.common';
+import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxInReferenceTo_To_XMLString } from './adapters.common';
 
 
 // configuration
@@ -32,7 +32,7 @@ export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: Ai
 
   // Allow/deny auto-adding hosted tools when custom tools are present with a restrictive policy
   const _hasAixCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
-  const _hasAixToolRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' || chatGenerate.toolsPolicy?.type === 'function_call';
+  const _hasAixToolRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
 
   // Dynamic web tools (20260318, was 20260209) require code execution for programmatic tool calling
   // const hasDynamicWebTools = model.vndAntWebDynamic === true && (model.vndAntWebSearch === 'auto' || model.vndAntWebFetch === 'auto');
@@ -163,6 +163,14 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   if (currentMessage)
     chatMessages.push(currentMessage);
 
+  // [Anthropic] Pair every interior tool_use with a tool_result, or the request is rejected wholesale
+  _pairInteriorToolUseBlocks(chatMessages);
+
+  // [Anthropic, 2026-07-10] The API rejects >4 cache_control blocks ("A maximum of 4 blocks with
+  // cache_control may be provided.") - manual 'Cache up to here' flags can stack beyond the auto
+  // policy's 3. Keep the trailing 4: breakpoints cache prefixes, so earlier ones are redundant.
+  _capTrailingCacheBreakpoints(systemMessage, chatMessages, 4);
+
   // If the first (user) message is missing, copy the first line of the system message
   // [Anthropic] October 8th, 2024 release notes: "...we no longer require the first input message to be a user message."
   // if (hackyHotFixStartWithUser && chatMessages.length && chatMessages[0].role !== 'user' && systemMessage?.length) {
@@ -199,12 +207,17 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   }
 
   // [Anthropic, 2026-06-09] Fable 5 / Mythos 5: adaptive is the only thinking mode - 'enabled' (budget_tokens) and 'disabled' return 400
-  const hotFixAdaptiveThinkingOnlyModel = /claude-(fable|mythos)-5/.test(model.id);
+  // [2026-07-24] Opus 5 launch-verified: adaptive-only too ('enabled'/budget_tokens return 400), so 'opus' stays in this regex.
+  // (Opus 5 nuance: 'disabled' is legal at effort <= high, but we coerce to adaptive anyway - single always-thinking entry.)
+  const hotFixAdaptiveThinkingOnlyModel = /claude-(fable|mythos|opus)-5/.test(model.id);
 
-  // HOTFIX: Fable/Mythos 5 reject forced tool use: 400 'tool_choice forces tool use is not compatible with this model.'
+  // HOTFIX: Fable/Mythos 5 ONLY reject forced tool use: 400 'tool_choice forces tool use is not compatible with this model.'
   // (model-level, regardless of thinking config). Downgrade to 'auto' + a system hint - empirically the model
   // reliably calls the tool when instructed. Forced tool use is deprecated AIX-wide, see ToolsPolicy_schema.
-  if (hotFixAdaptiveThinkingOnlyModel && payload.tool_choice && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool')) {
+  // [2026-07-24] Opus 5 EXCLUDED (launch probes): tool_choice 'any'/'tool' return 200 with thinking left to its
+  // adaptive-on default, so requests pass through unchanged (thinking is skipped below when tools are forced).
+  const hotFixNoForcedToolUse = /claude-(fable|mythos)-5/.test(model.id);
+  if (hotFixNoForcedToolUse && payload.tool_choice && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool')) {
     const mustUseHint = payload.tool_choice.type === 'tool'
       ? `IMPORTANT: You MUST respond by calling the \`${payload.tool_choice.name}\` tool. Do not respond with text.`
       : 'IMPORTANT: You MUST respond by calling one of the provided tools. Do not respond with text.';
@@ -380,6 +393,73 @@ export function aixToAnthropicMessageCreate(model: AixAPI_Model, _chatGenerate: 
   return validated.data;
 }
 
+
+/** Enforce the Anthropic 4-breakpoint API limit by un-stamping the earliest (prefix-redundant) breakpoints. */
+function _capTrailingCacheBreakpoints(systemMessage: TRequest['system'], chatMessages: TRequest['messages'], maxBreakpoints: number): void {
+  const stampedBlocks: { cache_control?: unknown }[] = [];
+  for (const block of systemMessage || [])
+    if (block.cache_control)
+      stampedBlocks.push(block);
+  for (const message of chatMessages)
+    for (const block of message.content)
+      if ('cache_control' in block && block.cache_control)
+        stampedBlocks.push(block);
+  for (let i = 0; i < stampedBlocks.length - maxBreakpoints; i++)
+    delete stampedBlocks[i].cache_control;
+}
+
+/**
+ * Anti-wedge: a `tool_use` block with no `tool_result` for its id in the immediately following user
+ * message is a 400 ("tool_use ids were found without tool_result blocks immediately after") that
+ * rejects the whole request. Since the orphan lives in stored history (a run that failed/aborted
+ * before the tool ran, or a tool no client processor claimed), every later turn replays it and gets
+ * the same 400: the conversation is bricked with no in-app way to tell which message is poisoned.
+ *
+ * This synthesizes the stub prescribed in kb/modules/AIX-stateless-roundtrip-retention.md (cat-1),
+ * which also retro-heals conversations already poisoned in users' stores. No-op when well-formed.
+ *
+ * The LAST assistant message is deliberately skipped: a trailing `tool_use` is the in-flight call of
+ * an agentic loop (and pause_turn continuation extends that same trailing message with its own blocks,
+ * after this adapter has run) - synthesizing there would fake the result of a call about to execute.
+ * `server_tool_use` is likewise untouched: hosted tools owe no tool_result.
+ */
+function _pairInteriorToolUseBlocks(chatMessages: TRequest['messages']): void {
+  for (let i = 0; i < chatMessages.length - 1; i++) {
+    const message = chatMessages[i];
+    if (message.role !== 'assistant') continue;
+
+    // client tool calls of this turn, in wire order
+    const toolUseIds: string[] = [];
+    for (const block of message.content)
+      if (block.type === 'tool_use')
+        toolUseIds.push(block.id);
+    if (!toolUseIds.length) continue;
+
+    // the results must be in the next message: if that isn't a user turn (role flip at a flush
+    // boundary), insert one to hold them - it will still sit immediately after the tool_use blocks
+    let resultsMessage = chatMessages[i + 1];
+    if (resultsMessage.role !== 'user') {
+      resultsMessage = { role: 'user', content: [] };
+      chatMessages.splice(i + 1, 0, resultsMessage);
+    }
+
+    const answeredIds = new Set<string>();
+    for (const block of resultsMessage.content)
+      if (block.type === 'tool_result')
+        answeredIds.add(block.tool_use_id);
+
+    const orphanIds = toolUseIds.filter(id => !answeredIds.has(id));
+    if (!orphanIds.length) continue;
+
+    // head-insert, in tool_use order: tool_result blocks lead the user turn, ahead of any user content
+    console.warn(`[Anthropic] Pairing ${orphanIds.length} orphan tool_use block(s) with a placeholder tool_result (messages.${i})`);
+    resultsMessage.content.unshift(...orphanIds.map(id => AnthropicWire_Blocks.ToolResultBlock(
+      id,
+      [AnthropicWire_Blocks.TextBlock(AIX_MISSING_TOOL_RESULT_TEXT, 'pairing.orphan-tool-use')],
+      undefined, // not is_error: the tool did not fail, its result is simply absent from history
+    )));
+  }
+}
 
 function* _generateAnthropicMessagesContentBlocks({ parts, role }: AixMessages_ChatMessage): Generator<{
   role: 'user' | 'assistant',
@@ -566,7 +646,9 @@ function _toAnthropicToolChoice(itp: AixTools_ToolsPolicy): NonNullable<TRequest
       return { type: 'auto' as const };
     case 'any':
       return { type: 'any' as const };
-    case 'function_call':
-      return { type: 'tool' as const, name: itp.function_call.name };
+    // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema (the 'tool' branch of the forced-use
+    // hotfix above stays: it guards the Anthropic wire type, which still admits 'tool')
+    // case 'function_call':
+    //   return { type: 'tool' as const, name: itp.function_call.name };
   }
 }

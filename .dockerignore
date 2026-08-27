@@ -1,15 +1,12 @@
 *
 
 !app/
-!kb/
 !pages/
 !public/
 !src/
-!tools/
-tools/video/node_modules/
-tools/video/out/
 
 !*.mjs
+!tools/develop/gen-llms-defs/
 !middleware_BASIC_AUTH.ts
 !middleware.ts
 !next.config.ts

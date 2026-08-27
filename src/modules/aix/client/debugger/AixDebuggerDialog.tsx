@@ -119,14 +119,14 @@ export function AixDebuggerDialog(props: {
   const willInjectJson = hasInspector && hasInjectorJson;
 
 
-  // [effect] auto-enable inspection ~1s after the very first open (then follow the on/off toggle)
+  // [effect] auto-enable inspection shortly after the very first open (then follow the on/off toggle)
   React.useEffect(() => {
     if (inspectorAutoArmed) return;
     inspectorAutoArmed = true;
     const timeoutId = setTimeout(() => {
       if (!useUIPreferencesStore.getState().aixInspector)
         useUIPreferencesStore.getState().toggleAixInspector();
-    }, 400);
+    }, 160);
     return () => clearTimeout(timeoutId);
   }, []);
 
@@ -282,6 +282,9 @@ export function AixDebuggerDialog(props: {
                   </Link> to see the exact requests to AI models.
                 </>}
             </Typography>
+            {/*<Typography level='body-sm' sx={{ mt: 1 }}>*/}
+            {/*  <ExternalDocsLink level='body-sm' docPage='feature-ai-inspector'>What the inspector shows</ExternalDocsLink>*/}
+            {/*</Typography>*/}
           </>}
           {!activeFrame && !!frames.length && (
             <Typography level='body-sm'>

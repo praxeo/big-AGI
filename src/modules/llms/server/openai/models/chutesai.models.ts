@@ -19,6 +19,13 @@ export function chutesAIHeuristic(hostname: string) {
 
 // [ChutesAI] Models List API schema - as observed at https://llm.chutes.ai/v1/models (2026-04-16)
 // Only `id` is required; all other fields are optional so per-item safeParse tolerates partial payloads.
+// 2026-08-17: every observed field name unchanged, except `premium` which no row carries (possibly non-TEE-only -
+// unverified); two unparsed additions (`chute_id`, `supported_sampling_parameters`).
+// A keyless caller gets only the 14 confidential-compute '-TEE' rows, not the full catalog, so that pass
+// could not check the non-TEE rows. Two of those 14 carry no modality/feature/context_length fields at all
+// (only `max_model_len`) - the reason nothing here may be assumed present.
+// `created` is a per-instance re-stamp, not a release or listing date: two keyless fetches 10 min apart on
+// 2026-08-17 moved it on 12/14 rows (Mistral-Nemo-2407 read 'minutes ago' both times). Same churn class as TogetherAI.
 const _wireChutesAIModelItemSchema = z.object({
 
   id: z.string(), // only strictly required field
@@ -115,6 +122,10 @@ export function chutesAIModelsToModelDescriptions(wireModels: unknown): ModelDes
     if (_chutesDenyListContains.some(contains => model.id.includes(contains)))
       continue;
 
+    // skip non-text-output models (image/video generation): they would masquerade as chat here
+    if (model.output_modalities?.length && !model.output_modalities.includes('text'))
+      continue;
+
     try {
       // label / description
       const label = _prettyModelId(model.id);
@@ -122,8 +133,9 @@ export function chutesAIModelsToModelDescriptions(wireModels: unknown): ModelDes
       const quantStr = model.quantization ? ` (${model.quantization})` : '';
       const description = `${ownerStr || 'Model'}${quantStr} via ChutesAI.`;
 
-      // context window: prefer explicit `context_length`, fall back to legacy `max_model_len`, then 8K
-      const contextWindow = model.context_length || model.max_model_len || 8192;
+      // context window: prefer explicit `context_length`, legacy `max_model_len`, else null (never a guess)
+      // no '[?]' marker (evaluated 2026-08-14): API-characterized (output_modalities drop above) - see llmsLabelUncurated
+      const contextWindow = model.context_length || model.max_model_len || null;
       const maxCompletionTokens = model.max_output_length || undefined;
 
       // interfaces: derive from actual fields rather than assume
@@ -179,7 +191,7 @@ export function chutesAIModelsToModelDescriptions(wireModels: unknown): ModelDes
     }
   }
 
-  // Sort by creation date (newer first), then by id
+  // Sort by `created` (a per-instance re-stamp, so this is refresh order, not age), then by id
   return descriptions.sort((a, b) => {
     if (a.created !== b.created)
       return (b.created || 0) - (a.created || 0);

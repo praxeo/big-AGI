@@ -2,8 +2,10 @@ import * as z from 'zod/v4';
 
 import { LLM_IF_HOTFIX_NoTemperature, LLM_IF_HOTFIX_StripImages, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
-import type { ModelDescriptionSchema } from '../../llm.server.types';
-import { llmsDefineModels, fromManualMapping, KnownModel } from '../../models.mappings';
+import type { DModelParameterId } from '~/common/stores/llms/llms.parameters';
+
+import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
+import { llmsDefineModels, fromManualMapping, KnownModel, llmsLabelUncurated } from '../../models.mappings';
 
 // --- Moonshot Model ID inference (auto-derived from _knownMoonshotModels) ---
 export type LlmsMoonshotModelId = typeof _knownMoonshotModels[number]['idPrefix'];
@@ -27,41 +29,102 @@ const _PS_Reasoning: ModelDescriptionSchema['parameterSpecs'] = [
   { paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] },
 ] as const;
 
+const _PS_ReasoningEffort: ModelDescriptionSchema['parameterSpecs'] = [
+  { paramId: 'llmVndMiscEffort', enumValues: ['none', 'low', 'high', 'max'] },
+] as const;
+
 
 /**
  * Moonshot AI (Kimi) models.
- * - models list and pricing: https://platform.kimi.ai/docs/pricing/chat (was platform.moonshot.ai - now 301 redirect)
- * - API docs: https://platform.kimi.ai/docs/api/chat
- * - updated: 2026-06-26
+ * - models list: https://platform.kimi.ai/docs/models (was platform.moonshot.ai - now 301 redirect)
+ * - pricing: https://platform.kimi.ai/docs/pricing/chat is just an index; per-model pages are chat-k3, chat-k27-code, chat-k26, chat-k25, chat-v1
+ * - API docs: https://platform.kimi.ai/docs/api/chat + https://platform.kimi.ai/docs/api/models-overview (per-model parameter matrix)
+ * - updated: 2026-08-17
  * - NOTE: K2 series (non-2.5/2.6) discontinued on 2026-05-25, removed from API; kept hidden for fallback.
+ * - NOTE: kimi-k2.5 and the moonshot-v1 series are closed to new accounts, with full platform sunset on 2026-08-31.
+ * - NOTE: 'sk-kimi-' subscription keys list a separate 3-model catalog from api.kimi.com/coding (see the Kimi Code section below);
+ *   the two catalogs never mix, as each endpoint only lists its own models.
  */
 type _MoonshotModelDef = KnownModel & { pubDate: string };
 
 const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
 
+  // Kimi Code subscription models - only listed for 'sk-kimi-' keys via api.kimi.com/coding (probe-verified 2026-07-18).
+  // Subscription-billed: no per-token pricing. All support image/video inputs; prompt caching confirmed (cached_tokens in usage).
+  {
+    idPrefix: 'k3',
+    label: 'Kimi K3', // API display_name: 'K3'
+    pubDate: '20260716',
+    description: 'Kimi K3 on the Kimi Code subscription. Native multimodal with adjustable thinking effort. 1M context (Allegretto+ plans; 262K below).',
+    contextWindow: 1048576,
+    maxCompletionTokens: 131072,
+    interfaces: IF_K2_7_CODE,
+    // API think_efforts: valid ['low', 'high', 'max'], default 'max'; 'none' undocumented but probe-verified to disable thinking
+    parameterSpecs: _PS_ReasoningEffort,
+    benchmark: { cbaElo: 1489 }, // same weights as kimi-k3
+  },
+  {
+    idPrefix: 'kimi-for-coding',
+    label: 'Kimi K2.7 Coding', // API display_name: 'K2.7 Coding'
+    pubDate: '20260612',
+    description: 'K2.7 Code on the Kimi Code subscription. Always-on thinking, native multimodal. 256K context.',
+    contextWindow: 262144,
+    maxCompletionTokens: 32768,
+    interfaces: IF_K2_7_CODE,
+    // no effort spec - thinking is always on and reasoning_effort is ignored (probe-verified)
+    benchmark: { cbaElo: 1461 + 2 }, // same weights as kimi-k2.7-code
+  },
+  {
+    idPrefix: 'kimi-for-coding-highspeed',
+    label: 'Kimi K2.7 Coding Highspeed', // API display_name: 'K2.7 Coding Highspeed'
+    pubDate: '20260612',
+    description: 'High-speed K2.7 Code variant on the Kimi Code subscription (Allegretto+ plans). Always-on thinking, native multimodal. 256K context.',
+    contextWindow: 262144,
+    maxCompletionTokens: 32768,
+    interfaces: IF_K2_7_CODE,
+    benchmark: { cbaElo: 1461 + 1 }, // same weights as kimi-k2.7-code-highspeed
+  },
+
+  // Kimi K3 - 1M-context flagship (native multimodal, always-on thinking at 'max' effort)
+  {
+    idPrefix: 'kimi-k3',
+    label: 'Kimi K3',
+    pubDate: '20260716',
+    description: 'Native multimodal flagship (text, image, video inputs) with thinking on by default. 1M context.',
+    contextWindow: 1048576,
+    maxCompletionTokens: 131072, // API default; configurable up to 1M
+    interfaces: IF_K2_7_CODE, // same surface as K2.7-code: Vision, NoTemperature (probe-verified 2026-07-17: temperature != 1 rejected), always-on Reasoning
+    // reasoning_effort low/high/max is now honored on this endpoint too (re-probed 2026-08-04: 20/87/83 reasoning tokens, vs 129
+    // when unset) - it was silently ignored at K3 launch; thinking {type:'disabled'} still zeroes reasoning despite metadata
+    // 'supports_thinking_type: only' and the OpenAPI K3 schema dropping `thinking`, so keep the Off level
+    parameterSpecs: _PS_ReasoningEffort,
+    chatPrice: { input: 3.00, output: 15.00, cache: { cType: 'oai-ac', read: 0.30 } },
+    benchmark: { cbaElo: 1489 }, // kimi-k3-max
+  },
+
   // Kimi K2.7-code Series - Code-focused flagship (native multimodal, always-on thinking)
   {
     idPrefix: 'kimi-k2.7-code',
     label: 'Kimi K2.7 Code',
-    pubDate: '20260601',
+    pubDate: '20260612',
     description: 'Code-focused multimodal model (text, image, video inputs) with always-on thinking. ~180 tok/s output (up to 260 in short contexts for highspeed). 256K context.',
     contextWindow: 262144,
     maxCompletionTokens: 32768,
     interfaces: IF_K2_7_CODE,
     // no _PS_Reasoning - thinking is always on (cannot be disabled)
     chatPrice: { input: 0.95, output: 4.00, cache: { cType: 'oai-ac', read: 0.19 } },
-    benchmark: { cbaElo: 1460 + 2 } // not available yet, assuming kimi-k2.6 + 2
+    benchmark: { cbaElo: 1461 + 2 } // not available yet, assuming kimi-k2.6 + 2
   },
   {
     idPrefix: 'kimi-k2.7-code-highspeed',
     label: 'Kimi K2.7 Code Highspeed',
-    pubDate: '20260601',
+    pubDate: '20260612',
     description: 'High-speed code variant with ~180 tok/s output (up to 260 in short contexts). Native multimodal with always-on thinking. 256K context.',
     contextWindow: 262144,
     maxCompletionTokens: 32768,
     interfaces: IF_K2_7_CODE,
     chatPrice: { input: 1.90, output: 8.00, cache: { cType: 'oai-ac', read: 0.38 } },
-    benchmark: { cbaElo: 1460 + 1 } // not available yet, assuming kimi-k2.6 + 1
+    benchmark: { cbaElo: 1461 + 1 } // not available yet, assuming kimi-k2.6 + 1
   },
 
   // Kimi K2.6 Series - General-purpose flagship (native multimodal, thinking + non-thinking)
@@ -75,15 +138,15 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     interfaces: IF_K2_5,
     parameterSpecs: _PS_Reasoning,
     chatPrice: { input: 0.95, output: 4.00, cache: { cType: 'oai-ac', read: 0.16 } },
-    benchmark: { cbaElo: 1460 } // kimi-k2.6
+    benchmark: { cbaElo: 1461 } // kimi-k2.6
   },
 
-  // Kimi K2.5 Series - still API-listed; pricing page no longer documents it (superseded by K2.6)
+  // Kimi K2.5 Series - still API-listed and priced, but closed to new accounts and sunset on 2026-08-31
   {
     idPrefix: 'kimi-k2.5',
     label: 'Kimi K2.5',
     pubDate: '20260127',
-    description: 'Supports vision (images/videos), thinking mode, and Agent tasks. 256K context.',
+    description: 'Supports vision (images/videos), thinking mode, and Agent tasks. 256K context. Sunset on 2026-08-31.',
     contextWindow: 262144,
     maxCompletionTokens: 32768,
     interfaces: IF_K2_5,
@@ -120,7 +183,7 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     interfaces: IF_K2_REASON,
     // parameterSpecs: [{ paramId: 'llmVndMoonshotWebSearch' }],
     chatPrice: { input: 0.60, output: 2.50, cache: { cType: 'oai-ac', read: 0.15 } },
-    benchmark: { cbaElo: 1417 + 2 }, // UNKNOWN +2 over 0905, to be at the top here
+    benchmark: { cbaElo: 1418 + 2 }, // UNKNOWN +2 over 0905, to be at the top here
   },
 
   // K2
@@ -150,7 +213,7 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     // parameterSpecs: [{ paramId: 'llmVndMoonshotWebSearch' }],
     chatPrice: { input: 0.60, output: 2.50, cache: { cType: 'oai-ac', read: 0.15 } },
     isPreview: true,
-    benchmark: { cbaElo: 1417 }, // kimi-k2-0711-preview
+    benchmark: { cbaElo: 1418 }, // kimi-k2-0711-preview
   },
   {
     hidden: true,
@@ -166,12 +229,12 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     isPreview: true,
   },
 
-  // Legacy Moonshot V1 Models (deprecated, prefer K2 series)
+  // Legacy Moonshot V1 Models (deprecated, closed to new accounts, sunset on 2026-08-31)
   {
     idPrefix: 'moonshot-v1-128k',
     label: 'V1 128K',
     pubDate: '20240206',
-    description: 'Legacy V1 model with 128K context. Deprecated - use Kimi K2 Instruct instead.',
+    description: 'Legacy V1 model with 128K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],
     chatPrice: { input: 2.00, output: 5.00 },
@@ -181,7 +244,7 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     idPrefix: 'moonshot-v1-32k',
     label: 'V1 32K',
     pubDate: '20240206',
-    description: 'Legacy V1 model with 32K context. Deprecated - use Kimi K2 Instruct instead.',
+    description: 'Legacy V1 model with 32K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],
     chatPrice: { input: 1.00, output: 3.00 },
@@ -191,20 +254,20 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     idPrefix: 'moonshot-v1-8k',
     label: 'V1 8K',
     pubDate: '20240206',
-    description: 'Legacy V1 model with 8K context. Deprecated - use Kimi K2 Instruct instead.',
+    description: 'Legacy V1 model with 8K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 8192,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn],
     chatPrice: { input: 0.20, output: 2.00 },
     hidden: true,
   },
 
-  // Vision Models
+  // Vision Models (same 2026-08-31 sunset as the rest of the V1 series)
   {
     // hidden: false, not hidden - only non-hidden vision for now
     idPrefix: 'moonshot-v1-128k-vision-preview',
     label: 'V1 128K Vision (Preview)',
     pubDate: '20250115',
-    description: 'Legacy vision model with 128K context. Preview variant - use moonshot-v1-vision for production.',
+    description: 'Legacy vision model with 128K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 131072,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
     chatPrice: { input: 2.00, output: 5.00 },
@@ -214,7 +277,7 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     idPrefix: 'moonshot-v1-32k-vision-preview',
     label: 'V1 32K Vision (Preview)',
     pubDate: '20250115',
-    description: 'Legacy vision model with 32K context. Preview variant - use moonshot-v1-vision for production.',
+    description: 'Legacy vision model with 32K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 32768,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
     chatPrice: { input: 1.00, output: 3.00 },
@@ -225,7 +288,7 @@ const _knownMoonshotModels = llmsDefineModels<_MoonshotModelDef>()([
     idPrefix: 'moonshot-v1-8k-vision-preview',
     label: 'V1 8K Vision (Preview)',
     pubDate: '20250115',
-    description: 'Legacy vision model with 8K context. Preview variant - use moonshot-v1-vision for production.',
+    description: 'Legacy vision model with 8K context. Sunset on 2026-08-31 - use Kimi K3 instead.',
     contextWindow: 8192,
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision],
     chatPrice: { input: 0.20, output: 2.00 },
@@ -274,9 +337,10 @@ export function moonshotModelToModelDescription(_model: unknown): ModelDescripti
   const description = fromManualMapping(_knownMoonshotModels, model.id, model.created, undefined, {
     // NOTE: default: let us know if any of these show up
     idPrefix: model.id,
-    label: model.id.replaceAll(/[_-]/g, ' '),
-    description: 'Unknown Moonshot Model',
-    contextWindow: model.context_length || 128000,
+    label: llmsLabelUncurated(model.id.replaceAll(/[_-]/g, ' ')),
+    description: 'New Moonshot arrival, not yet curated - capabilities unverified.',
+    contextWindow: model.context_length || null, // API value when present; null (not a guess) otherwise
+    // optimistic capability leeway for 0-day arrivals; rein in when cataloged
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching],
     hidden: model.id.startsWith('moonshot-'), // hide older
   });
@@ -287,6 +351,47 @@ export function moonshotModelToModelDescription(_model: unknown): ModelDescripti
 
   return description;
 }
+
+// --- OpenRouter inheritance ---
+
+const _ORT_MOONSHOT_IF_ALLOWLIST: ReadonlySet<string> = new Set([
+  LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning,
+] as const);
+
+// only the thinking spec travels (StripImages/NoTemperature are native-endpoint quirks, $web_search is Moonshot-direct only)
+const _ORT_MOONSHOT_PARAM_ALLOWLIST: ReadonlySet<string> = new Set([
+  'llmVndMiscEffort',
+] as const satisfies DModelParameterId[]);
+
+/**
+ * Lookup for OpenRouter: match an OR Moonshot model ID to a known hardcoded Kimi model.
+ * @param orModelName - The model name after stripping 'moonshotai/' (e.g. 'kimi-k3'; '~moonshotai/kimi-latest' arrives as its alias_target)
+ */
+export function llmOrtMoonshotLookup(orModelName: string): OrtVendorLookupResult | undefined {
+
+  // OR drops the '-preview' suffix on the K2 ids
+  const ortMoonshotRefMap: Record<string, string> = {
+    'kimi-k2-0905': 'kimi-k2-0905-preview',
+    'kimi-k2': 'kimi-k2-0711-preview',
+  };
+  const entry = _knownMoonshotModels.find(m => m.idPrefix === (ortMoonshotRefMap[orModelName] ?? orModelName));
+  if (!entry?.interfaces) return undefined;
+
+  const interfaces = entry.interfaces.filter(i => _ORT_MOONSHOT_IF_ALLOWLIST.has(i));
+
+  // K3 through OR: reasoning.enabled=false is accepted but ignored (probed 2026-08-17), so 'Off' would lie - drop it
+  const dropOffLevel = entry.idPrefix === 'kimi-k3';
+
+  const parameterSpecs = entry.parameterSpecs
+    ?.filter(spec => _ORT_MOONSHOT_PARAM_ALLOWLIST.has(spec.paramId))
+    .map(spec =>
+      (dropOffLevel && spec.enumValues?.includes('none')) ? { ...spec, enumValues: spec.enumValues.filter(v => v !== 'none') }
+        : { ...spec },
+    );
+
+  return { pubDate: entry.pubDate, interfaces, parameterSpecs };
+}
+
 
 export function moonshotModelSortFn(a: ModelDescriptionSchema, b: ModelDescriptionSchema): number {
   // sort hidden at the end

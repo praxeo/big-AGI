@@ -95,6 +95,8 @@ export function aixToXAIResponses(
   }
 
   // Reasoning
+  // - grok-4.6:                  low/medium/high/xhigh (always-on reasoning, 'none' rejected; vendor default high)
+  // - grok-4.5:                  low/medium/high/xhigh (always-on reasoning, 'none' rejected)
   // - grok-4.3:                  none/low(default)/medium/high
   // - grok-4.20-multi-agent:     low/medium/high/xhigh (4 vs 16 agents)
   // - grok-4.20 reasoning/non-reasoning: no effort param (slug selects mode)
@@ -467,8 +469,9 @@ function _toXAIToolChoice(policy: AixTools_ToolsPolicy): XAIWire_Responses_Tools
       return 'auto';
     case 'any':
       return 'required';
-    case 'function_call':
-      return { type: 'function', name: policy.function_call.name };
+    // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema
+    // case 'function_call':
+    //   return { type: 'function', name: policy.function_call.name };
     default:
       const _exhaustiveCheck: never = policy;
       throw new Error(`Unsupported XAI tools policy type: ${(policy as any).type}`);

@@ -6,6 +6,34 @@ import { LLM_IF_Outputs_Image, LLM_IF_Tools_WebSearch } from '~/common/stores/ll
 import type { ModelDescriptionSchema } from './llm.server.types';
 
 
+// -- Uncurated-model label marker --
+
+/**
+ * '[?] ' label prefix - "the list API does not establish what this model IS".
+ * Not an "uncatalogued" badge: API-characterized 0-day arrivals stay unmarked.
+ *
+ * Mark:    type-blind catalogs (ids only), where a video/TTS/embedding id could masquerade as
+ *          chat - nvidianim, modular, sakanaai, moonshot, groq, deepseek, alibaba - plus the
+ *          'super' resolution below (unknown variant of a known family).
+ * Don't:   a type/modality filter proves chat - gemini, xai, together, novita, chutesai, cerebras.
+ *
+ * Readers: llm-registry-sync (marked + null contextWindow = held off the publication push),
+ *          listModels.test, the website (strips brackets, sinks pubDate; own regex, keep in sync).
+ *
+ * Legacy, not unified: bedrock ' [?]' suffix; openai-compat hosts keep a lenient bare '?'
+ * (unknown is the norm there, marking would blank whole services from publication).
+ */
+const LLM_LABEL_UNCURATED = '[?]';
+
+export function llmsLabelUncurated(label: string): string {
+  return `${LLM_LABEL_UNCURATED} ${label}`;
+}
+
+export function llmsIsLabelUncurated(label: string): boolean {
+  return label.startsWith(LLM_LABEL_UNCURATED);
+}
+
+
 // -- Auto-inject implied model interfaces from parameterSpecs --
 
 const _paramIdToInterface: { paramIds: DModelParameterId[], iface: DModelInterfaceV1 }[] = [
@@ -61,13 +89,14 @@ export function llmsAutoImplyInterfaces(model: ModelDescriptionSchema): ModelDes
  * @param vendor - Vendor name for logging
  * @param apiIds - Model IDs from the API
  * @param knownIds - Model IDs defined locally
- * @param options - Optional: { checkUnknown: boolean, apiFilter: (id) => boolean }
+ * @param options - Optional: { checkUnknown: boolean, apiFilter: (id) => boolean, ignoreStale: string[] }
  */
-export function llmDevCheckModels_DEV(vendor: string, apiIds: string[], knownIds: string[], options?: { checkUnknown?: boolean; apiFilter?: (id: string) => boolean }): void {
-  const { checkUnknown = true, apiFilter } = options || {};
+export function llmDevCheckModels_DEV(vendor: string, apiIds: string[], knownIds: string[], options?: { checkUnknown?: boolean; apiFilter?: (id: string) => boolean; ignoreStale?: string[] }): void {
+  const { checkUnknown = true, apiFilter, ignoreStale } = options || {};
 
-  // Stale: known but not in API
-  const stale = knownIds.filter(k => !apiIds.includes(k));
+  // Stale: known but not in API - minus the deliberately dormant defs (docs-official aliases that generate
+  // fine but never list, delisted-but-pinned ids), which are stale by construction and would fire forever
+  const stale = knownIds.filter(k => !apiIds.includes(k) && !ignoreStale?.includes(k));
   if (stale.length)
     console.log(`[DEV] ${vendor}: stale model defs (remove): [ ${stale.join(', ')} ]`);
 
@@ -231,11 +260,11 @@ export function fromManualMapping(mappings: ReadonlyArray<KnownModel | KnownLink
   if (variant)
     label += ` [${variant}]`;
   if (resolution === 'super') {
-    label = `[?] ${label}`;
+    label = llmsLabelUncurated(label);
     delete m.hidden;
   } else if (!disableSymlinkLooks && symlinkTarget) {
     // add a symlink icon to the label
-    label = `🔗 ${label} → ${symlinkTarget/*.replace(known.idPrefix, '')*/}`;
+    label = `🔗 ${label} -> ${symlinkTarget/*.replace(known.idPrefix, '')*/}`;
 
     // add an automated 'points to...' to the description, lifted from the base model
     if (!description.includes('Points to '))

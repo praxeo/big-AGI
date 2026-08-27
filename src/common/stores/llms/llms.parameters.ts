@@ -168,7 +168,7 @@ export const DModelParameterRegistry = {
     label: 'Reasoning Effort',
     type: 'enum',
     description: 'Controls how much effort the model spends on reasoning.',
-    values: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+    values: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'], // [2026-07-09, OpenAI] 'max' added with GPT-5.6
     // undefined means vendor default
   }),
 
@@ -176,8 +176,8 @@ export const DModelParameterRegistry = {
     label: 'Thinking',
     type: 'enum',
     description: 'Enable or disable extended thinking mode.',
-    values: ['none', 'high', 'max'],
-    // 'max' is for now DeepSeek V4-specific (reasoning_effort=max); other vendors restrict via enumValues
+    values: ['none', 'low', 'high', 'max'],
+    // 'max' is DeepSeek V4 + Kimi Code k3; 'low' is Kimi Code k3-specific; other vendors restrict via enumValues
     // undefined means vendor default (usually 'high', i.e. thinking enabled)
   }),
 
@@ -400,6 +400,15 @@ export const DModelParameterRegistry = {
     // we used to have the writeFactoryValue to true, but we don't basically use/want this anymore
     // undefined means off
   },
+
+  llmVndOaiReasoningMode: _enumDef({
+    // [2026-07-09, OpenAI] GPT-5.6+ Responses API reasoning.mode - 'pro' replaces the standalone '-pro' models
+    label: 'Reasoning Mode',
+    type: 'enum',
+    description: 'Pro mode performs additional model work for difficult tasks, billed at standard token rates',
+    values: ['standard', 'pro'],
+    // undefined means vendor default ('standard')
+  }),
 
   llmVndOaiVerbosity: _enumDef({
     label: 'Verbosity',

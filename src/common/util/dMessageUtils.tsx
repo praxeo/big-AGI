@@ -12,6 +12,7 @@ import VisibilityOffOutlinedIcon from '@mui/icons-material/VisibilityOffOutlined
 import { SystemPurposeId, SystemPurposes } from '../../data';
 
 import { llmsGetVendorIcon } from '~/modules/llms/components/LLMVendorIcon';
+import { t2iIsPainterName } from '~/modules/t2i/t2i.config';
 
 import type { MetricsChatGenerateCost_Md } from '~/common/stores/metrics/metrics.chatgenerate';
 import type { DMessage, DMessageGenerator, DMessageRole } from '~/common/stores/chat/chat.message';
@@ -137,10 +138,7 @@ export function makeMessageAvatarIcon(
 
     case 'assistant':
       const isDownload = messageGeneratorName === 'web';
-      const isTextToImage =
-        messageGeneratorName?.startsWith('GPT Image') // sync this with t2i.client.ts
-        || messageGeneratorName?.startsWith('DALL·E')
-        || messageGeneratorName === 'Prodia';
+      const isTextToImage = t2iIsPainterName(messageGeneratorName);
       const isReact = messageGeneratorName?.startsWith('react-');
 
       // Extra appearance
@@ -389,6 +387,15 @@ export function prettyShortChatModelName(model: string | undefined): string {
 
   // TODO: fully reform this function to be using information from the DLLM, rather than this manual mapping
 
+  // Variant ids ('base::variant', see LLMS_VARIANT_SEPARATOR) - any vendor: prettify the base alone, then re-append the variant
+  const variantIndex = model.indexOf('::');
+  if (variantIndex !== -1) {
+    // const variant = model.slice(variantIndex + 2);
+    return prettyShortChatModelName(model.slice(0, variantIndex));
+    // we decide to not show the variantm, since the model will be overwritten by the real returned model anyways, and so we skip it for this first second..
+    // + (' ' + variant.split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '));
+  }
+
   // [Gemini / Google] short-circuit canonical 'models/' prefix before OpenAI regex, to avoid substring collisions (e.g. '-computer-use-' in 'models/gemini-2.5-computer-use-...')
   if (model.startsWith('models/'))
     return _prettyGeminiModelName(model.slice(7));
@@ -417,6 +424,10 @@ export function prettyShortChatModelName(model: string | undefined): string {
       // price variants
       .replace('-pro', ' Pro')
       .replace('-preview', ' (preview)')
+      // GPT-5.6+ capability tiers
+      .replace('-sol', ' Sol')
+      .replace('-terra', ' Terra')
+      .replace('-luna', ' Luna')
       // .replace('-latest', ' latest') // covered by catch-all
       // size (covered by catch-all)
       // .replace('-mini', ' mini')
@@ -476,7 +487,7 @@ export function prettyShortChatModelName(model: string | undefined): string {
   }
   // [xAI]
   if (model.includes('grok-')) {
-    if (['grok-code', 'grok-4', 'grok-3', 'grok-2'].some(m => model.includes(m))) {
+    if (['grok-code', 'grok-build', 'grok-4', 'grok-3', 'grok-2'].some(m => model.includes(m))) {
       return model
         .replace('xai-', '')
         .replace('-beta', '')
@@ -509,11 +520,30 @@ export function prettyShortChatModelName(model: string | undefined): string {
       .replace(/-x$/, ' X')
       .replace(/-32b.*$/, ' 32B');
   }
-  // [Sakana.ai] fugu, fugu-ultra, fugu-ultra-20260615 (service prefix already stripped by the auto-label heuristic)
+  // [Cohere] Command / Aya / North families - guarded on Cohere-exclusive shapes (command-a/-r, not bare 'command-'
+  // which is a generic word; c4ai/aya/north-mini/tiny-aya are Cohere-only) + the 'cohere/' aggregator form.
+  if (model.startsWith('command-a') || model.startsWith('command-r') || model.startsWith('c4ai-') || model.startsWith('north-mini') || model.startsWith('tiny-aya') || model.startsWith('cohere/') || model.startsWith('cohere-')) {
+    return model
+      .replace(/^cohere[/-]/, '')                // strip aggregator prefix (e.g. openrouter 'cohere/...')
+      .replace(/-\d{2}-20\d{2}$/, '')            // strip -MM-YYYY snapshot date (e.g. -05-2026)
+      .replace('north-mini-code-1-0', 'North Mini Code')
+      .replace('c4ai-', '')                      // Aya research prefix
+      .replace('command-r-plus', 'Command R+')
+      .replace('command-r7b', 'Command R7B')
+      .replace('command-a', 'Command A')
+      .replace('command-r', 'Command R')
+      .replace('aya-expanse', 'Aya Expanse')
+      .replace('aya-vision', 'Aya Vision')
+      .replace('tiny-aya', 'Tiny Aya')
+      .replace(/\b(\d+)b\b/i, '$1B')             // 32b -> 32B
+      .split('-').map(s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s).join(' ')
+      .trim();
+  }
+  // [Sakana.ai] fugu, fugu-ultra, fugu-ultra-v1.1 / -20260615 (service prefix already stripped by the auto-label heuristic)
   if (model === 'fugu' || model.startsWith('fugu-')) {
     return model
       .replace(/-20\d{6}$/, '') // strip dated snapshot suffix (e.g. -20260615)
-      .split('-').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' ');
+      .split('-').map(s => /^v\d/.test(s) ? s : s.charAt(0).toUpperCase() + s.slice(1)).join(' '); // keep version tokens as-is (v1.1, not V1.1)
   }
   // [FireworksAI]
   if (model.includes('accounts/')) {

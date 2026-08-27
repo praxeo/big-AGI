@@ -50,7 +50,7 @@ It comes packed with **world-class features** like Beam, and is praised for its 
 
 ### What makes Big-AGI different:
 
-**Intelligence**: with [Beam & Merge](https://big-agi.com/beam) for multi-model de-hallucination, native search, and bleeding-edge AI models like Opus 4.7 1M, GPT 5.5, Gemini 3.1, DeepSeek V4 or Grok 4.3 -
+**Intelligence**: with [Beam & Merge](https://big-agi.com/beam) for multi-model de-hallucination, native search, and bleeding-edge AI models like Opus 5, GPT 5.6, Gemini 3.7, Kimi K3 or Grok 4.6 -
 **Control**: with personas, data ownership, requests inspection, unlimited usage with API keys, and *no vendor lock-in* -
 and **Speed**: with a local-first, over-powered, zero-latency, madly optimized web app.
 
@@ -151,6 +151,7 @@ NOTE: this is a powerful tool - if you need a toy UI or clone, this ain't it.
 ## Release Notes
 
 👉 **[See the Live Release Notes](https://big-agi.com/changes)**
+- Open 2.1.0: **Weights Dust** **Opus 5**, **GPT-5.6**, **Gemini 3.7**, **Kimi K3**, multi-vendor Transcription, Cerebras/NVIDIA NIM/Sakana/Cohere
 - Open 2.0.5: **Roberto** **Opus 4.7 1M**, **GPT-5.5**, **DeepSeek V4**, Anthropic Containers/Skills, resumable Deep Research, MiniMax & Arcee AI
 - Open 2.0.4: **Hyper Params** **Opus 4.6**, **GPT-5.4**, **Gemini 3.1 Pro**, AWS Bedrock, parameter accuracy, Anthropic continuation/Fast mode
 - Open 2.0.3: **Red Carpet** **Kimi K2.5**, **Gemini 3 Flash**, **GPT 5.2**, Google Drive, Inworld, Novita.ai, Speech/UX improvements
@@ -343,7 +344,7 @@ Configure 100s of AI models from 20+ providers:
 | Opensource Servers  | [LocalAI](https://localai.io/) · [Ollama](https://ollama.com/)                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | Local Servers       | [LM Studio](https://lmstudio.ai/) (non-open)                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | Multimodal services | [Anthropic](https://anthropic.com) · [AWS Bedrock](https://aws.amazon.com/bedrock/) · [Azure](https://azure.microsoft.com/en-us/products/ai-services/openai-service) · [Google Gemini](https://ai.google.dev/) · [OpenAI](https://platform.openai.com/docs/overview)                                                                                                                                                                                                                       |
-| LLM services        | [Alibaba](https://www.alibabacloud.com/en/product/modelstudio) · [DeepSeek](https://deepseek.com) · [Groq](https://wow.groq.com/) · [Mistral](https://mistral.ai/) · [Moonshot](https://www.moonshot.cn/) · [OpenRouter](https://openrouter.ai/) · [Perplexity](https://www.perplexity.ai/) · [Together AI](https://www.together.ai/) · [xAI](https://x.ai/) · [Z.ai](https://z.ai/) |
+| LLM services        | [Alibaba](https://www.alibabacloud.com/en/product/modelstudio) · [DeepSeek](https://deepseek.com) · [Groq](https://wow.groq.com/) · [Mistral](https://mistral.ai/) · [Moonshot](https://www.moonshot.cn/) · [NVIDIA NIM](https://build.nvidia.com/) · [OpenRouter](https://openrouter.ai/) · [Perplexity](https://www.perplexity.ai/) · [Together AI](https://www.together.ai/) · [xAI](https://x.ai/) · [Z.ai](https://z.ai/) |
 | OpenAI-compatible   | Any OpenAI-compatible endpoint - models, pricing, and capabilities are auto-detected                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Image services      | OpenAI · Google Gemini (Nano Banana) · LocalAI                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | Speech services     | [ElevenLabs](https://elevenlabs.io) · [Inworld](https://inworld.ai) · [OpenAI TTS](https://platform.openai.com/docs/guides/text-to-speech) · LocalAI · Browser (Web Speech API)                                                                                                                                                                                                                                                                                                            |
@@ -354,7 +355,6 @@ Configure 100s of AI models from 20+ providers:
 |:--------------|:---------------------------------------------------------------------------------------------------------------| 
 | Web Browse    | [Browserless](https://www.browserless.io/) · [Puppeteer](https://pptr.dev/)-based                              |
 | Web Search    | [Google CSE](https://programmablesearchengine.google.com/)                                                     |
-| Observability | [Helicone](https://www.helicone.ai)                                                                            |
 
 ---
 

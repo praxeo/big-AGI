@@ -9,11 +9,10 @@ const SERVER_DEBUG_FETCH_HEADERS = false; // log response headers (rate limits, 
 
 
 //
-// NOTE: This file is used in the server-side code, and not in the client-side code.
+// Fetches data from external APIs, throwing TRPC errors on failure: connection, HTTP and parsing.
 //
-// It is used to fetch data from external APIs, and throw TRPC errors on failure.
-//
-// It handles connection errors, HTTP errors, and parsing errors.
+// NOT server-only despite the name: three CSF entry points (AIX chat, model listing, Speex TTS)
+// pull this into the browser bundle.
 //
 
 // JSON fetcher
@@ -231,8 +230,13 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
 
     // NOTE: This may log too much - for instance a 404 not found, etc.. - so we're putting it under the flag
     //       Consider we're also throwing the same, so there will likely be further logging.
-    if (SERVER_DEBUG_WIRE || SERVER_LOG_FETCHERS_ERRORS)
-      console.log(`[${method}] [${moduleName} network issue]: "${errorString}"`, { error, _cause, debugCleanUrl, urlShown: prettyShowUrl });
+    if (SERVER_DEBUG_WIRE || SERVER_LOG_FETCHERS_ERRORS) {
+      if (prettyShowUrl && !SERVER_DEBUG_WIRE)
+        // expected user-misconfig (unreachable/wrong URL): compact line - the thrown error carries the full message to the client
+        console.log(`[${method}] [${moduleName} network issue]: ${connErrorName} -> ${debugCleanUrl || url}`);
+      else
+        console.log(`[${method}] [${moduleName} network issue]: "${errorString}"`, { error, _cause, debugCleanUrl, urlShown: prettyShowUrl });
+    }
 
     // -> throw Connection error: will be a 400 (BAD_REQUEST), with preserved cause
     throw new TRPCFetcherError({

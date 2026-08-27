@@ -1,7 +1,7 @@
 import type { Immutable } from '~/common/types/immutable.types';
 import { getImageAsset } from '~/common/stores/blob/dblobs-portability';
 
-import { DLLM, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoWebP, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_StripSys0, LLM_IF_HOTFIX_Sys0ToUsr0 } from '~/common/stores/llms/llms.types';
+import { DLLM, LLM_IF_ANT_PromptCaching, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoWebP, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_StripSys0, LLM_IF_HOTFIX_Sys0ToUsr0 } from '~/common/stores/llms/llms.types';
 import { DMessage, DMessageRole, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, MESSAGE_FLAG_VND_ANT_CACHE_AUTO, MESSAGE_FLAG_VND_ANT_CACHE_USER, messageHasUserFlag } from '~/common/stores/chat/chat.message';
 import { DMessageFragment, DMessageImageRefPart, DMessageZyncAssetReferencePart, isContentOrAttachmentFragment, isToolResponseFunctionCallPart, isVoidThinkingFragment } from '~/common/stores/chat/chat.fragments';
 import { Is } from '~/common/util/pwaUtils';
@@ -17,6 +17,7 @@ import type { AixAPIChatGenerate_Request, AixMessages_ModelMessage, AixMessages_
 // configuration
 const MODEL_IMAGE_RESCALE_MIMETYPE = !Is.Browser.Safari ? 'image/webp' : 'image/jpeg';
 const MODEL_IMAGE_RESCALE_QUALITY = 0.90;
+const AIX_WIRE_IMAGE_MIMETYPES: string[] = ['image/jpeg', 'image/png', 'image/webp']; // keep in sync with InlineImagePart_schema (aix.wiretypes.ts)
 const IGNORE_CGR_NO_IMAGE_DEREFERENCE = true; // set to false to raise an exception, otherwise the CGR will continue skipping the part
 const AUTO_SYSTEM_IMAGES_INDEX = true; // set to false to disable the small index of images (in system instruction)
 
@@ -131,7 +132,7 @@ export async function aixCGR_SystemMessage_FromDMessageOrThrow(
                     switch (at) {
                       case 'audio':
                         // dereference the Zync Audio Asset, converting it to an inline buffer
-                        throw '[DEV] audio assets from the user are not supported yet';
+                        throw new Error('[DEV] audio assets from the user are not supported yet');
 
                       case 'image':
                         // dereference the Zync Image Asset, converting it to an inline image
@@ -321,7 +322,7 @@ export async function aixCGR_ChatSequence_FromDMessagesOrThrow(
 
                       case 'audio':
                         // dereference the Zync Audio Asset, converting it to an inline buffer
-                        throw '[DEV] audio assets from the user are not supported yet';
+                        throw new Error('[DEV] audio assets from the user are not supported yet');
 
                       default:
                         const _exhaustiveCheck: never = at;
@@ -469,7 +470,7 @@ export async function aixCGR_ChatSequence_FromDMessagesOrThrow(
 
                       case 'audio':
                         // dereference the Zync Audio Asset, converting it to an inline buffer
-                        throw '[DEV] audio assets from the assistant are not supported yet';
+                        throw new Error('[DEV] audio assets from the assistant are not supported yet');
 
                       default:
                         const _exhaustiveCheck: never = at;
@@ -637,7 +638,21 @@ export async function aixConvertImageRefToInlineImageOrThrow(imageRefPart: DMess
     }
   }
 
-  return _clientCreateAixInlineImagePart(base64Data, mimeType || dataRef.mimeType);
+  // resolve the effective mime type (stored value, falling back to the data reference's)
+  mimeType = mimeType || dataRef.mimeType as any;
+
+  // wire-compat gate: the AIX schema only accepts jpeg/png/webp, but stored assets can carry
+  // other types (e.g. a small gif that never needed resizing) - transcode those here, which
+  // also heals legacy blobs; on undecodable images this throws, and callers drop just this
+  // image instead of the whole request failing server-side validation
+  if (!AIX_WIRE_IMAGE_MIMETYPES.includes(mimeType)) {
+    const imageBlob = await convert_Base64WithMimeType_To_Blob(base64Data, mimeType, 'aixConvertImageRefToInlineImage.wireGate');
+    const convertedOp = await imageBlobConvertType(imageBlob, MODEL_IMAGE_RESCALE_MIMETYPE, MODEL_IMAGE_RESCALE_QUALITY);
+    base64Data = await convert_Blob_To_Base64(convertedOp.blob, 'aixConvertImageRefToInlineImage.wireGate');
+    mimeType = convertedOp.blob.type as any;
+  }
+
+  return _clientCreateAixInlineImagePart(base64Data, mimeType);
 }
 
 function _clientCreateAixInlineImagePart(base64: string, mimeType: string): AixParts_InlineImagePart {
@@ -662,6 +677,13 @@ export async function clientHotFixGenerateRequest_ApplyAll(llmInterfaces: DLLM['
 }> {
 
   let workaroundsCount = 0;
+
+  // Strip cache-breakpoint hints for models without explicit prompt-caching support. The auto-breakpoint
+  // policy flags messages regardless of the active model (and flags persist when switching models), so
+  // acting adapters (Anthropic, OpenRouter) must only see hints when the model advertises the capability.
+  // Silent: this is the normal path for most models, not a workaround.
+  if (!llmInterfaces.includes(LLM_IF_ANT_PromptCaching))
+    clientHotFixGenerateRequest_StripCacheHints(aixChatGenerate);
 
   // Apply the remove-sys0 hot fix - at the time of doing it, Gemini Image Generation does not use the system instructions
   if (llmInterfaces.includes(LLM_IF_HOTFIX_StripSys0))
@@ -689,6 +711,18 @@ export async function clientHotFixGenerateRequest_ApplyAll(llmInterfaces: DLLM['
 
 }
 
+
+/** Remove meta_cache_control parts in-place - for models without explicit prompt-caching support. */
+function clientHotFixGenerateRequest_StripCacheHints(aixChatGenerate: AixAPIChatGenerate_Request): void {
+  const stripParts = (parts: { pt: string }[]) => {
+    for (let i = parts.length - 1; i >= 0; i--)
+      if (parts[i].pt === 'meta_cache_control')
+        parts.splice(i, 1);
+  };
+  if (aixChatGenerate.systemMessage)
+    stripParts(aixChatGenerate.systemMessage.parts);
+  aixChatGenerate.chatSequence.forEach(message => stripParts(message.parts));
+}
 
 /**
  * Hot fix for models that don't support vision input and we need to perform the fix ahead of AIX send.

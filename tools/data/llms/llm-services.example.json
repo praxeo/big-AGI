@@ -83,6 +83,14 @@
     "oaiHost": "",
     "heliKey": ""
   },
+  "nvidianim": {
+    "_comment": "NVIDIA NIM (build.nvidia.com) - curated catalog, free hosted endpoint",
+    "dialect": "nvidianim",
+    "oaiKey": "YOUR_NVIDIANIM_API_KEY_HERE",
+    "oaiOrg": "",
+    "oaiHost": "",
+    "heliKey": ""
+  },
   "cerebras": {
     "dialect": "cerebras",
     "oaiKey": "YOUR_CEREBRAS_API_KEY_HERE",
@@ -96,6 +104,14 @@
     "oaiKey": "YOUR_MINIMAX_API_KEY_HERE",
     "oaiOrg": "",
     "oaiHost": "https://api.minimax.io",
+    "heliKey": ""
+  },
+  "nous": {
+    "_comment": "Nous Portal (OpenRouter-style catalog) @ inference-api.nousresearch.com (no first-class dialect; uses openai dialect + host)",
+    "dialect": "openai",
+    "oaiKey": "YOUR_NOUS_API_KEY_HERE",
+    "oaiOrg": "",
+    "oaiHost": "https://inference-api.nousresearch.com",
     "heliKey": ""
   },
   "zai": {
@@ -151,5 +167,13 @@
     "bedrockSecretAccessKey": "",
     "bedrockSessionToken": null,
     "bedrockRegion": "us-east-1"
+  },
+  "modular": {
+    "_comment": "Modular Cloud (api.modular.com) - shared endpoints, curated catalog + day-zero fallback",
+    "dialect": "modular",
+    "oaiKey": "YOUR_MODULAR_API_KEY_HERE",
+    "oaiOrg": "",
+    "oaiHost": "",
+    "heliKey": ""
   }
 }

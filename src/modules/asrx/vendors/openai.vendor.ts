@@ -16,17 +16,19 @@ export const ASRxVendorOpenAI: IASRxVendor<'openai'> = {
     'openai',
   ],
 
-  // Skip auto-link when oaiHost is set to a non-OpenAI endpoint. OpenAI-compatible
-  // proxies (ChutesAI, MiniMax, self-hosted, ...) advertise the chat/completions
-  // surface but usually don't implement /v1/audio/transcriptions. Users wanting
-  // transcription against a proxy can still add a manual OpenAI engine.
+  // Skip auto-link when oaiHost is set to a non-OpenAI endpoint (OpenAI-compatible
+  // proxies usually don't implement /v1/audio/transcriptions), or when the service
+  // has no client-side key: transcription is CSF-only, and a server-side env key is
+  // unreachable from the browser (no server transcription route, unlike chat/T2I).
+  // Users can still add a manual OpenAI engine for either case.
   shouldAutoLinkFromLLMSource: (source) => {
-    return llmsIsNativeOpenAIHost((source?.setup as Partial<DOpenAIServiceSettings> | undefined)?.oaiHost?.trim());
+    const setup = source?.setup as Partial<DOpenAIServiceSettings> | undefined;
+    return !!setup?.oaiKey && llmsIsNativeOpenAIHost(setup.oaiHost?.trim());
   },
 
   capabilities: {
-    languageDetection: false, // whisper auto-detects but the simple response doesn't return it
-    diarization: false,
+    languageDetection: true,  // gpt-transcribe reports detected ISO codes (languages[]); whisper-1 via verbose_json; gpt-4o-transcribe doesn't report it
+    diarization: true,        // via the gpt-4o-transcribe-diarize model (profile.diarize)
     interimResults: false,    // batch only
     wordTimestamps: true,     // via verbose_json response_format (whisper-1)
   },

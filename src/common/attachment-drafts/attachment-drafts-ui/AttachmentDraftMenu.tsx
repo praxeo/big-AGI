@@ -5,6 +5,7 @@ import { Box, Button, ButtonGroup, Checkbox, Chip, CircularProgress, Divider, Li
 import ClearIcon from '@mui/icons-material/Clear';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import ExpandLessIcon from '@mui/icons-material/ExpandLess';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -14,6 +15,8 @@ import VerticalAlignBottomIcon from '@mui/icons-material/VerticalAlignBottom';
 import VisibilityIcon from '@mui/icons-material/Visibility';
 
 import { CloseablePopup } from '~/common/components/CloseablePopup';
+import { ExternalDocsLink } from '~/common/components/ExternalDocsLink';
+import { InlineTextarea } from '~/common/components/InlineTextarea';
 import { DMessageAttachmentFragment, DMessageDocPart, DMessageImageRefPart, isDocPart, isImageRefPart, isZyncAssetImageReferencePartWithLegacyDBlob } from '~/common/stores/chat/chat.fragments';
 import { LiveFileIcon } from '~/common/livefile/liveFile.icons';
 import { copyToClipboard } from '~/common/util/clipboardUtils';
@@ -62,6 +65,7 @@ export function AttachmentDraftMenu(props: {
 }) {
 
   // state
+  const [isRenaming, setIsRenaming] = React.useState(false);
   const [showDetails, setShowDetails] = React.useState(DEFAULT_DETAILS_OPEN);
 
   // external state
@@ -117,6 +121,25 @@ export function AttachmentDraftMenu(props: {
     onClose();
     attachmentDraftsStoreApi.getState().removeAttachmentDraft(draftId);
   }, [draftId, attachmentDraftsStoreApi, onClose]);
+
+  const handleRenameBegin = React.useCallback(() => {
+    setIsRenaming(true);
+  }, []);
+
+  const handleRenameCancel = React.useCallback(() => {
+    setIsRenaming(false);
+  }, []);
+
+  const handleRenameConfirm = React.useCallback((newName: string) => {
+    setIsRenaming(false);
+    if (newName.trim() && newName.trim() !== draft.label)
+      attachmentDraftsStoreApi.getState().renameAttachmentDraft(draftId, newName);
+  }, [attachmentDraftsStoreApi, draft.label, draftId]);
+
+  const handleRenameKeyDown = React.useCallback((event: React.KeyboardEvent) => {
+    // keep typing local: the InlineTextarea handles Enter/Escape, and the MenuList must not typeahead-navigate
+    event.stopPropagation();
+  }, []);
 
   const handleSetConverterIdx = React.useCallback(async (converterIdx: number | null) => {
     return attachmentDraftsStoreApi.getState().toggleAttachmentDraftConverterAndConvert(draftId, converterIdx);
@@ -293,6 +316,10 @@ export function AttachmentDraftMenu(props: {
                       : draft.outputWarnings?.length ? '' /* printed below */
                         : <>Unknown warning</>}
 
+              <Box sx={{ mt: 1 }}>
+                <ExternalDocsLink level='body-sm' docPage='feature-attachments'>Supported formats</ExternalDocsLink>
+              </Box>
+
               {/* Explicit output warnings */}
               {!!draft.outputWarnings?.length && draft.outputWarnings.map((w, widx) =>
                 <Box key={'ow-' + widx} sx={{ fontSize: 'sm', color: 'warning.softColor', py: 1 }}>⚠️ {w}</Box>)
@@ -462,6 +489,26 @@ export function AttachmentDraftMenu(props: {
           </Box>
         )}
       </MenuItem>}
+
+      {/* Rename: menu item, or inline editor while renaming */}
+      {!isRenaming ? (
+        <MenuItem onClick={handleRenameBegin} disabled={isConverting}>
+          <ListItemDecorator><EditRoundedIcon /></ListItemDecorator>
+          Rename
+        </MenuItem>
+      ) : (
+        <ListItem onKeyDown={handleRenameKeyDown}>
+          <InlineTextarea
+            initialText={draft.label}
+            placeholder='Attachment name'
+            disableAutoSaveOnBlur /* focus is contended in a MenuList - commit with Enter only, so a stray blur can't close/save the editor */
+            blurOnDone
+            onEdit={handleRenameConfirm}
+            onCancel={handleRenameCancel}
+            sx={{ flex: 1, minWidth: 200 }}
+          />
+        </ListItem>
+      )}
 
       {/* Remove */}
       <MenuItem onClick={handleRemove}>

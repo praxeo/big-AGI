@@ -176,7 +176,6 @@ https://github.com/enricoros/big-AGI/assets/1590910/a6b8e172-0726-4b03-a5e5-10cf
 - **OpenAI 1106 Chat Models**: Experience the cutting-edge capabilities of the latest OpenAI models
 - **SDXL Support**: Enhance your image generation with SDXL support for Prodia
 - **Cloudflare OpenAI API Gateway**: Integrate with Cloudflare for a robust API gateway
-- **Helicone for Anthropic**: Utilize Helicone's tools for Anthropic models
 
 For Developers:
 
@@ -247,10 +246,9 @@ For Developers:
 - **Context** - Attach or [Drag & Drop files](../docs/pixels/feature_drop_target.png) to add them to the prompt 📁
 - **Syntax highlighting** - for multiple languages 🌈
 - **Code Execution: Sandpack** -
-  [now on branch]((https://github.com/enricoros/big-agi/commit/f678a0d463d5e9cf0733f577e11bd612b7902d89)) `variant-code-execution`
+  [now on branch](https://github.com/enricoros/big-agi/commit/f678a0d463d5e9cf0733f577e11bd612b7902d89) `variant-code-execution`
 - Chat with GPT-4 and 3.5 Turbo 🧠💨
 - Real-time streaming of AI responses ⚡
 - **Voice Input** 🎙️ - works great on Chrome / Windows
 - Integration: **[Paste.gg](../docs/pixels/feature_paste_gg.png)** integration for chat sharing 📥
-- Integration: **[Helicone](https://www.helicone.ai/)** integration for API observability 📊
 - 🌙 Dark model - Wide mode ⛶

@@ -14,13 +14,16 @@ import { AnthropicIcon } from '~/common/components/icons/vendors/AnthropicIcon';
 import { AzureIcon } from '~/common/components/icons/vendors/AzureIcon';
 import { BedrockIcon } from '~/common/components/icons/vendors/BedrockIcon';
 import { CerebrasIcon } from '~/common/components/icons/vendors/CerebrasIcon';
+import { CohereIcon } from '~/common/components/icons/vendors/CohereIcon';
 import { DeepseekIcon } from '~/common/components/icons/vendors/DeepseekIcon';
 import { GeminiIcon } from '~/common/components/icons/vendors/GeminiIcon';
 import { GroqIcon } from '~/common/components/icons/vendors/GroqIcon';
 import { LMStudioIcon } from '~/common/components/icons/vendors/LMStudioIcon';
 import { LocalAIIcon } from '~/common/components/icons/vendors/LocalAIIcon';
 import { MistralIcon } from '~/common/components/icons/vendors/MistralIcon';
+import { ModularIcon } from '~/common/components/icons/vendors/ModularIcon';
 import { MoonshotIcon } from '~/common/components/icons/vendors/MoonshotIcon';
+import { NvidiaIcon } from '~/common/components/icons/vendors/NvidiaIcon';
 import { OllamaIcon } from '~/common/components/icons/vendors/OllamaIcon';
 import { OpenAIIcon } from '~/common/components/icons/vendors/OpenAIIcon';
 import { OpenRouterIcon } from '~/common/components/icons/vendors/OpenRouterIcon';
@@ -42,13 +45,16 @@ const vendorIcons: Record<ModelVendorId, React.FunctionComponent<SvgIconProps>> 
   azure: AzureIcon,
   bedrock: BedrockIcon,
   cerebras: CerebrasIcon,
+  cohere: CohereIcon,
   deepseek: DeepseekIcon,
   googleai: GeminiIcon,
   groq: GroqIcon,
   lmstudio: LMStudioIcon,
   localai: LocalAIIcon,
   mistral: MistralIcon,
+  modular: ModularIcon,
   moonshot: MoonshotIcon,
+  nvidianim: NvidiaIcon,
   ollama: OllamaIcon,
   openai: OpenAIIcon,
   openrouter: OpenRouterIcon,

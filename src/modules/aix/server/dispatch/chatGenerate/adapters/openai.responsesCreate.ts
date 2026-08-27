@@ -6,7 +6,7 @@ import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixM
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Items, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
 
 import { aixDocPart_to_OpenAITextContent, aixMetaRef_to_OpenAIText, aixTexts_to_OpenAIInstructionText } from './openai.chatCompletions';
-import { aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String } from './adapters.common';
+import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String } from './adapters.common';
 
 
 // configuration
@@ -59,7 +59,12 @@ export function aixToOpenAIResponses(
   // const strictJsonOutput = !!model.strictJsonOutput;
   const strictToolInvocations = !!model.strictToolInvocations;
 
-  const { requestInput, requestInstructions } = _toOpenAIResponsesRequestInput(chatGenerate.systemMessage, chatGenerate.chatSequence, model.vndOaiContainerId);
+  // emitMessagePhase: harmless on older OpenAI models (accepted and ignored), off for Azure (may lag this schema)
+  const { requestInput, requestInstructions } = _toOpenAIResponsesRequestInput(chatGenerate.systemMessage, chatGenerate.chatSequence, model.vndOaiContainerId, !isDialectAzure);
+
+  // Pair every interior function_call with a function_call_output, or the request is rejected wholesale
+  _pairInteriorFunctionCalls(requestInput);
+
   const payload: TRequest = {
 
     // Model configuration
@@ -118,9 +123,8 @@ export function aixToOpenAIResponses(
 
 
   // Reasoning
+  // [2026-07-09, OpenAI] 'max' effort is valid since GPT-5.6 (was Responses-rejected before then) - per-model domain validation is left to the API
   const reasoningEffort = model.reasoningEffort; // ?? model.vndOaiReasoningEffort;
-  if (reasoningEffort === 'max') // domain validation
-    throw new Error(`OpenAI Responses API does not support '${reasoningEffort}' reasoning effort`);
 
   if (reasoningEffort) {
     payload.reasoning = {
@@ -132,7 +136,21 @@ export function aixToOpenAIResponses(
     ].some(_id => model.id === _id || model.id.startsWith(_id + '-'));
     if (reasoningEffort !== 'none' && !model.forceNoStream && !specialExclusions)
       payload.reasoning.summary = 'detailed';
+
+    // [2026-02-24, OpenAI] Retained reasoning: 'all_turns' makes gpt-5.4+ consume the reasoning items we
+    // replay ('auto' is provider discretion). The user lever is what we send (chat 'Reasoning traces'
+    // policy); the API only bills consumed items, so this is free when little/nothing is sent.
+    // Gate: gpt-5.4+ (older models 400 on 'all_turns'), not Azure (may lag), not effort 'none'.
+    const gptGen = /^gpt-(\d+)(?:\.(\d+))?/.exec(model.id);
+    const supportsAllTurns = !!gptGen && (+gptGen[1] > 5 || (+gptGen[1] === 5 && +(gptGen[2] || 0) >= 4));
+    if (supportsAllTurns && reasoningEffort !== 'none' && !isDialectAzure)
+      payload.reasoning.context = 'all_turns';
   }
+
+  // [2026-07-09, OpenAI] GPT-5.6+ Reasoning Mode: 'pro' performs additional model work for the hardest problems, billed at
+  // standard token rates (replaces standalone '-pro' models); orthogonal to effort, verified working with streaming
+  if (model.vndOaiReasoningMode)
+    payload.reasoning = { ...payload.reasoning, mode: model.vndOaiReasoningMode };
 
   // ALWAYS REQUEST Reasoning items: always include encrypted_content if there's any reasoning done; we had this inside the
   // former block, but models can reason even if reasoningEffort === undefined;
@@ -154,7 +172,7 @@ export function aixToOpenAIResponses(
 
   // Allow/deny auto-adding hosted tools when custom tools are present
   const hasCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
-  const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' || chatGenerate.toolsPolicy?.type === 'function_call';
+  const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
   const skipHostedToolsDueToCustomTools = hasCustomTools && hasRestrictivePolicy;
 
   // Tool: Web Search: for search and deep research models
@@ -179,7 +197,7 @@ export function aixToOpenAIResponses(
       const webSearchTool: TRequestTool = model.id.includes('-deep-research') ? {
         type: 'web_search_preview', // HOTFIX for deep research models, which only seem to support the outdated 'web_search_preview' tool
       } : isDialectSakana ? {
-        type: 'web_search', // [Sakana.ai] bare tool only - advanced options (context size, location, access) are not supported
+        type: 'web_search', // [Sakana.ai] bare tool - context size is tolerated since ~2026-07 but undocumented (location/access unverified), so keep emitting bare
       } : {
         type: 'web_search',
         search_context_size: model.vndOaiWebSearchContext ?? undefined,
@@ -275,7 +293,7 @@ export function aixToOpenAIResponses(
 }
 
 
-function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage | null, chatSequence: AixMessages_ChatMessage[], sessionContainerId: string | undefined): { requestInput: TRequestInput[], requestInstructions: TRequest['instructions'] } {
+function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage | null, chatSequence: AixMessages_ChatMessage[], sessionContainerId: string | undefined, emitMessagePhase: boolean): { requestInput: TRequestInput[], requestInstructions: TRequest['instructions'] } {
 
   /**
    * Instructions to the model
@@ -335,15 +353,17 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
     return newMessage;
   }
 
-  function modelMessage() {
-    // Ensure the last message is a model message, or create a new one
+  function modelMessage(phase?: 'commentary' | 'final_answer') {
+    // Reuse the last assistant message only when the phase matches; a mismatch (incl. tagged vs untagged)
+    // starts a new message item, mirroring the upstream item boundaries.
     let lastMessage = chatMessages.length ? chatMessages[chatMessages.length - 1] : undefined;
-    if (lastMessage && lastMessage.type === 'message' && lastMessage.role === 'assistant')
+    if (lastMessage && lastMessage.type === 'message' && lastMessage.role === 'assistant' && lastMessage.phase === phase)
       return lastMessage;
     const newMessage: ModelMessage = {
       type: 'message',
       role: 'assistant',
       content: [],
+      ...(phase ? { phase } : {}), // assistant-only field, resent verbatim on replay
     };
     chatMessages.push(newMessage);
     return newMessage;
@@ -490,7 +510,7 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
           switch (mPt) {
 
             case 'text':
-              modelMessage().content.push({
+              modelMessage(emitMessagePhase ? modelPart._vnd?.openai?.phase : undefined).content.push({
                 type: 'output_text',
                 text: modelPart.text,
               });
@@ -602,6 +622,37 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
   };
 }
 
+/**
+ * Anti-wedge: a `function_call` item with no `function_call_output` for its call_id is a 400 ("No
+ * tool output found for function call ...") that rejects the whole request. The orphan lives in
+ * stored history (a run that failed/aborted before the tool ran, or a tool no client processor
+ * claimed), so every later turn replays it and gets the same 400 - the conversation is bricked
+ * until the message is deleted.
+ *
+ * Synthesizes the stub prescribed in kb/modules/AIX-stateless-roundtrip-retention.md (cat-1), which
+ * also retro-heals conversations already poisoned in users' stores. No-op when well-formed.
+ * The LAST item is skipped: a trailing call is the in-flight call of an agentic loop.
+ * Hosted calls (code_interpreter_call and friends) carry their own outputs and are untouched.
+ */
+function _pairInteriorFunctionCalls(requestInput: TRequestInput[]): void {
+
+  // outputs may sit anywhere after their call, so collect them all first
+  const answeredIds = new Set<string>();
+  for (const item of requestInput)
+    if ('type' in item && item.type === 'function_call_output')
+      answeredIds.add(item.call_id);
+
+  for (let i = requestInput.length - 2; i >= 0; i--) {
+    const item = requestInput[i];
+    if (!('type' in item) || item.type !== 'function_call') continue;
+    if (answeredIds.has(item.call_id)) continue;
+
+    // insert right after the call, the canonical position for its output
+    console.warn(`[OpenAI Responses] Pairing an orphan function_call with a placeholder output (input.${i})`);
+    requestInput.splice(i + 1, 0, { type: 'function_call_output', call_id: item.call_id, output: AIX_MISSING_TOOL_RESULT_TEXT });
+  }
+}
+
 function _toOpenAIResponsesTools(itds: AixTools_ToolDefinition[], strictToolInvocations: boolean): NonNullable<TRequestTool[]> {
   return itds.map(itd => {
     const itdType = itd.type;
@@ -641,8 +692,9 @@ function _toOpenAIResponsesToolChoice(itp: AixTools_ToolsPolicy): NonNullable<TR
       return 'auto';
     case 'any':
       return 'required';
-    case 'function_call':
-      return { type: 'function' as const, name: itp.function_call.name };
+    // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema
+    // case 'function_call':
+    //   return { type: 'function' as const, name: itp.function_call.name };
     default:
       const _exhaustiveCheck: never = itpType;
       throw new Error(`Unsupported tools policy type: ${itpType}`);
