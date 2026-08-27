@@ -119,6 +119,7 @@ export const LLMS_DEFS_EXTRA_BUCKETS = {
       'openai/models/openai.models.ts',
       'openai/models/openrouter.models.ts',
       'openai/models/tlusapi.models.ts',
+      'openai/models/unsloth.models.ts',
       'openai/wiretypes/fireworksai.wiretypes.ts',
       'openai/wiretypes/llmapi.wiretypes.ts',
       'openai/wiretypes/novita.wiretypes.ts',

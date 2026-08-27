@@ -13,6 +13,7 @@ import { CloudflareIcon } from '~/common/components/icons/vendors/CloudflareIcon
 import { MiniMaxIcon } from '~/common/components/icons/vendors/MiniMaxIcon';
 import { NousResearchIcon } from '~/common/components/icons/vendors/NousResearchIcon';
 import { NovitaAIIcon } from '~/common/components/icons/vendors/NovitaAIIcon';
+import { UnslothIcon } from '~/common/components/icons/vendors/UnslothIcon';
 
 
 /**
@@ -30,7 +31,7 @@ interface VerifiedProvider {
   label: string;
   host: string;
   description: string;
-  category: 'Example Proxies' | 'Example Providers';
+  category: 'Example Proxies' | 'Example Providers' | 'Local Servers';
   docsUrl?: string; // optional link to provider docs
   hostMatch?: string; // substring to match against current host (defaults to host)
   icon?: React.ComponentType<{ sx?: object }>; // optional icon component
@@ -48,6 +49,8 @@ const OPENAI_COMPATIBLE_PROVIDERS: VerifiedProvider[] = [
   { id: 'novita', label: 'Novita AI', host: 'https://api.novita.ai/openai', hostMatch: 'novita.ai', category: 'Example Providers', description: 'Budget open model inference', docsUrl: 'https://novita.ai/docs', icon: NovitaAIIcon },
   // Example Proxies
   { id: 'cloudflare', label: 'Cloudflare AI Gateway', host: 'https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai', hostMatch: 'gateway.ai.cloudflare.com', category: 'Example Proxies', description: 'Caching and analytics gateway', docsUrl: 'https://developers.cloudflare.com/ai-gateway/', icon: CloudflareIcon },
+  // Local Servers
+  { id: 'unsloth', label: 'Unsloth', host: 'http://localhost:8888', hostMatch: 'localhost:8888', category: 'Local Servers', description: 'Local GGUF serving and fine-tuning (Studio / unsloth run)', docsUrl: 'https://unsloth.ai/docs/basics/api', icon: UnslothIcon },
 ];
 
 // Find matching provider based on current host value
