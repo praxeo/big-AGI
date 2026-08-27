@@ -59,6 +59,7 @@ import { sakanaAIModelsToModelDescriptions } from './openai/models/sakanaai.mode
 import { perplexityHardcodedModelDescriptions, perplexityInjectVariants } from './openai/models/perplexity.models';
 import { tlusApiHeuristic, tlusApiTryParse } from './openai/models/tlusapi.models';
 import { togetherAIModelsToModelDescriptions } from './openai/models/together.models';
+import { unslothHeuristic, unslothModelsToModelDescriptions } from './openai/models/unsloth.models';
 import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.models';
 import { zaiCuratedModelDescriptions, zaiDiscoverModels, zaiModelSort } from './openai/models/zai.models';
 
@@ -535,6 +536,10 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               // [LLM API] OpenAI-compatible gateway with rich model metadata
               if (llmapiHeuristic(oaiUrl))
                 return llmapiModelsToModelDescriptions(openAIWireModelsResponse);
+
+              // [Unsloth] local Studio/CLI server - detected by the owned_by marker stamped on every model entry
+              if (unslothHeuristic(maybeModels))
+                return unslothModelsToModelDescriptions(maybeModels);
 
               // [FastChat] make the best of the little info
               if (fastAPIHeuristic(maybeModels))
