@@ -219,6 +219,16 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (model.vndUnslothThinking)
     payload.chat_template_kwargs = { ...payload.chat_template_kwargs, enable_thinking: model.vndUnslothThinking !== 'none' };
 
+  // [Unsloth, local server] server-side web search: Unsloth runs its own tool loop and returns the grounded
+  // answer as plain text. `enabled_tools` MUST be sent - omitting it enables every local tool (python, terminal,
+  // edit_file). permission_mode 'off' skips the confirmation gate (which can only prompt over its own UI) while
+  // KEEPING the execution sandbox on - unlike 'full'/bypass_permissions, which we never send.
+  if (model.vndUnslothWebSearch === 'auto') {
+    payload.enable_tools = true;
+    payload.enabled_tools = ['web_search'];
+    payload.permission_mode = 'off';
+  }
+
   // [OpenAI, 2026-02-04] Verbosity control - official OpenAI parameter (low/medium/high, default: medium)
   if (model.vndOaiVerbosity) {
     // [OpenRouter, 2025-01-20] Also supported via OpenRouter for Anthropic Claude Opus 4.5, GPT-5 family
