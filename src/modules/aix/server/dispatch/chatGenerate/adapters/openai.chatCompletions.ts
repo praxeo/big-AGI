@@ -216,8 +216,14 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   // [Unsloth, local server] 'enable_thinking'-style templates (Qwen3 family) ignore reasoning_effort entirely;
   // their only gate is the boolean, which Unsloth lifts out of chat_template_kwargs into its native control
   // (studio/backend/routes/inference.py). Only Unsloth-listed models carry this param, so no other host sees it.
-  if (model.vndUnslothThinking)
-    payload.chat_template_kwargs = { ...payload.chat_template_kwargs, enable_thinking: model.vndUnslothThinking !== 'none' };
+  if (model.vndUnslothThinking) {
+    const unslothThinkingOn = model.vndUnslothThinking !== 'none';
+    payload.chat_template_kwargs = { ...payload.chat_template_kwargs, enable_thinking: unslothThinkingOn };
+    // Sent alongside the gate: 'enable_thinking_effort' templates (GLM-5.x) grade on it, plain 'enable_thinking'
+    // templates (Qwen3) ignore it, so one control drives both styles (server: _request_reasoning_kwargs).
+    if (unslothThinkingOn)
+      payload.reasoning_effort = model.vndUnslothThinking;
+  }
 
   // [Unsloth, local server] server-side web search: Unsloth runs its own tool loop and returns the grounded
   // answer as plain text. `enabled_tools` MUST be sent - omitting it enables every local tool (python, terminal,

@@ -65,7 +65,10 @@ const _unslothWebSearchOptions = [
 ] as const;
 
 const _unslothThinkingOptions = [
-  { value: 'high', label: 'On', description: 'Think before answering' } as const,
+  { value: 'max', label: 'Max', description: 'Hardest thinking' } as const,
+  { value: 'high', label: 'High', description: 'Deep reasoning' } as const,
+  { value: 'medium', label: 'Medium', description: 'Balanced' } as const,
+  { value: 'low', label: 'Low', description: 'Light thinking' } as const,
   { value: 'none', label: 'Off', description: 'Answer directly' } as const,
   { value: _UNSPECIFIED, label: 'Default', description: 'Model default' } as const,
 ] as const;
@@ -77,7 +80,7 @@ export function llmParametersFilterEffortOptions<T extends { value: string, labe
   const filtered = options.filter(o => o.value === _UNSPECIFIED || allowedSet.has(o.value));
   // 'Thinking' label nuance: on a graded model (low/max present) 'high' is a rung on the scale -> 'High';
   // on a pure toggle ({none,high}, e.g. Qwen/GLM/Nemotron) it just means enabled -> 'On'
-  if (registryKey === 'llmVndMiscEffort' && !allowedSet.has('low') && !allowedSet.has('max'))
+  if ((registryKey === 'llmVndMiscEffort' || registryKey === 'llmVndUnslothThinking') && !allowedSet.has('low') && !allowedSet.has('max'))
     return filtered.map(o => o.value === 'high' ? { ...o, label: 'On' } as T : o);
   return filtered;
 }
@@ -249,7 +252,7 @@ export function LLMParametersEditor(props: {
 
 
   // enum options: one memo for all vendors, filtered to each model's allowed values (via parameterSpec.enumValues)
-  const { antEffortOptions, gemEffortOptions, oaiEffortOptions, miscEffortOptions, oaiWebSearchOptions } = React.useMemo(() => {
+  const { antEffortOptions, gemEffortOptions, oaiEffortOptions, miscEffortOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
     // web search: filter to the model's allowed levels; when restricted to a single level (e.g. Sakana's
     // bare on/off web_search), relabel that lone level as a plain "On" (the "Off" entry is kept as-is).
     const ws = llmParametersFilterEffortOptions(_webSearchContextOptions, modelParamSpec['llmVndOaiWebSearchContext'], 'llmVndOaiWebSearchContext');
@@ -259,6 +262,7 @@ export function LLMParametersEditor(props: {
       gemEffortOptions: llmParametersFilterEffortOptions(_gemEffortOptions, modelParamSpec['llmVndGemEffort'], 'llmVndGemEffort'),
       oaiEffortOptions: llmParametersFilterEffortOptions(_oaiEffortOptions, modelParamSpec['llmVndOaiEffort'], 'llmVndOaiEffort'),
       miscEffortOptions: llmParametersFilterEffortOptions(_miscEffortOptions, modelParamSpec['llmVndMiscEffort'], 'llmVndMiscEffort'),
+      unslothThinkingOptions: llmParametersFilterEffortOptions(_unslothThinkingOptions, modelParamSpec['llmVndUnslothThinking'], 'llmVndUnslothThinking'),
       oaiWebSearchOptions: ws?.map(o => (wsOnOff && o.value !== _UNSPECIFIED) ? { ...o, label: 'On' } : o) ?? null,
     };
   }, [modelParamSpec]);
@@ -510,7 +514,7 @@ export function LLMParametersEditor(props: {
       />
     )}
     {/* Unsloth Thinking (boolean template gate) */}
-    {showParam('llmVndUnslothThinking') && (
+    {showParam('llmVndUnslothThinking') && unslothThinkingOptions && (
       <FormSelectControl
         title='Thinking'
         tooltip='Enable or disable thinking mode on the local model'
@@ -519,7 +523,7 @@ export function LLMParametersEditor(props: {
           if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndUnslothThinking');
           else onChangeParameter({ llmVndUnslothThinking: value });
         }}
-        options={_unslothThinkingOptions}
+        options={unslothThinkingOptions}
       />
     )}
     {/* Unsloth server-side Web Search */}

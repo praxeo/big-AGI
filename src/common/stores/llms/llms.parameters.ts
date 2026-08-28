@@ -494,8 +494,10 @@ export const DModelParameterRegistry = {
   llmVndUnslothThinking: _enumDef({
     label: 'Thinking',
     type: 'enum',
-    description: 'Enable or disable thinking mode (local template toggle).',
-    values: ['none', 'high'],
+    description: 'Thinking mode for the local model. Levels apply on templates that grade effort; others treat any level as on.',
+    // One control for both of Unsloth's gate styles ('enable_thinking' and 'enable_thinking_effort'), so the
+    // control keeps its identity when /v1/status is unavailable (model not resident) and only its options narrow.
+    values: ['none', 'low', 'medium', 'high', 'max'],
     // undefined means the model's load-time default
   }),
 

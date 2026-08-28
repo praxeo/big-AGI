@@ -100,8 +100,22 @@ export function unslothModelsToModelDescriptions(wireModels: OpenAIWire_API_Mode
       if (!!a.loaded !== !!b.loaded) return a.loaded ? -1 : 1; // loaded first
       return a.id.localeCompare(b.id);
     })
-    // /v1/status describes the RESIDENT model only, so it informs the loaded entry and nothing else
-    .map(model => _unslothModelToModelDescription(model, model.loaded ? status : null));
+    // /v1/status describes the RESIDENT model only, so it informs that entry and nothing else
+    .map(model => _unslothModelToModelDescription(model, _unslothStatusDescribes(model, status) ? status : null));
+}
+
+
+/**
+ * Whether /v1/status describes THIS entry. The `loaded` flag is the primary signal; `model_identifier` is
+ * consulted too because a manual load keys the resident entry by path while the listing advertises the repo id,
+ * which would otherwise drop the server's own capabilities and fall back to name guesses.
+ */
+function _unslothStatusDescribes(model: UnslothWire_API_Models_List.Model, status: UnslothWire_API_Status.Response | null | undefined): boolean {
+  if (!status) return false;
+  if (model.loaded) return true;
+  const identifier = status.model_identifier?.toLowerCase();
+  const modelId = model.id.toLowerCase();
+  return !!identifier && modelId.length > 3 && (identifier === modelId || identifier.includes(modelId));
 }
 
 
@@ -190,32 +204,30 @@ function _unslothReasoningControls(model: UnslothWire_API_Models_List.Model, sta
           descriptor: '[reasoning: effort]',
         };
 
-      case 'enable_thinking_effort':
-        // GLM-5.x style: 'none' disables, a named level enables at that level (Unsloth derives the gate from it)
-        return {
-          interfaces: [LLM_IF_OAI_Reasoning],
-          parameterSpecs: [{ paramId: 'llmVndMiscEffort', enumValues: ['none', ...(levels.length ? levels : ['high'])] }],
-          descriptor: '[reasoning: on/off + effort]',
-        };
-
       case 'enable_thinking':
-        // Qwen3 family: a BOOLEAN gate. `reasoning_effort` is ignored by these templates, so this is the
-        // only control that moves them - sent as chat_template_kwargs.enable_thinking by the OpenAI adapter.
+      case 'enable_thinking_effort':
+        // Both are a gate; 'enable_thinking_effort' (GLM-5.x) additionally grades it. ONE control covers both,
+        // so it keeps its identity when the status is unavailable and only its options narrow. The adapter sends
+        // the gate as chat_template_kwargs.enable_thinking plus the level as reasoning_effort, and each template
+        // honors the field it understands.
         return {
           interfaces: [LLM_IF_OAI_Reasoning],
-          parameterSpecs: [{ paramId: 'llmVndUnslothThinking', enumValues: ['none', 'high'] }],
-          descriptor: '[reasoning: on/off]',
+          parameterSpecs: [{ paramId: 'llmVndUnslothThinking', enumValues: ['none', ...(levels.length ? levels : ['high'])] }],
+          descriptor: levels.length ? '[reasoning: on/off + effort]' : '[reasoning: on/off]',
         };
     }
   }
 
-  // -- name heuristics (unloaded catalog entries: no template to inspect) --
+  // -- no server truth (the model is not resident): name heuristics --
+  // Deliberately the SAME control the status path emits, so a refresh taken while the model is idle-unloaded
+  // does not change the control's shape - only which levels it offers. A level on a gate-only template still
+  // turns thinking on (the template just ignores the grade), so this degrades honestly rather than misleading.
   const idLc = model.id.toLowerCase();
   if (idLc.includes('gpt-oss'))
     return { interfaces: [LLM_IF_OAI_Reasoning], parameterSpecs: [{ paramId: 'llmVndOaiEffort', enumValues: ['low', 'medium', 'high'] }], descriptor: null };
   if (/glm[-_.]?5/.test(idLc))
-    return { interfaces: [LLM_IF_OAI_Reasoning], parameterSpecs: [{ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high', 'max'] }], descriptor: null };
+    return { interfaces: [LLM_IF_OAI_Reasoning], parameterSpecs: [{ paramId: 'llmVndUnslothThinking', enumValues: ['none', 'high', 'max'] }], descriptor: null };
   if (/qwen[-_.]?3|qwq|deepseek-r1|deepseek-v[34]|magistral|exaone-deep|smallthinker|nemotron|reason|think/.test(idLc))
-    return { interfaces: [LLM_IF_OAI_Reasoning], parameterSpecs: [{ paramId: 'llmVndUnslothThinking', enumValues: ['none', 'high'] }], descriptor: null };
+    return { interfaces: [LLM_IF_OAI_Reasoning], parameterSpecs: [{ paramId: 'llmVndUnslothThinking', enumValues: ['none', 'low', 'high'] }], descriptor: null };
   return _none;
 }
