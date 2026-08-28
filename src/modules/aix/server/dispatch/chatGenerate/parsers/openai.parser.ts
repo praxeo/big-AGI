@@ -47,6 +47,10 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
   // [OpenRouter] Provider routing info - extracted from raw JSON before Zod strips it
   let openRouterProviderInfraSent = false;
 
+  // [Unsloth] open server-side tool operation, so its status frames render as one card
+  let unslothOpId: string | null = null;
+  let unslothOpCount = 0;
+
   // Supporting structure to accumulate the assistant message
   const accumulator: {
     content: string | null;
@@ -87,6 +91,35 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
     // [OpenRouter/others] transmits upstream errors pre-parsing (object wouldn't be valid)
     if (_forwardOpenRouterDataError(chunkData, pt))
       return;
+
+    /**
+     * [Unsloth, 2026-08-28] The local server runs its own server-side tool loop (web search) and
+     * interleaves custom SSE events into the OpenAI stream. None carry id/choices/model, so they
+     * fail the chunk schema outright ("Invalid input at id/choices/model").
+     * We surface the human-readable status as a web-search operation and drop the rest of the
+     * loop's chatter. Deliberately an allow-list: error frames must keep reaching the handling above.
+     */
+    if (!chunkData?.['choices'] && typeof chunkData?.['type'] === 'string') {
+      const unslothEventType = chunkData['type'];
+
+      if (unslothEventType === 'tool_status') {
+        const statusText = typeof chunkData['content'] === 'string' ? chunkData['content'].trim() : '';
+        if (statusText) {
+          // a new status opens the operation, subsequent ones update the same card
+          if (!unslothOpId) unslothOpId = `unsloth-tool-${++unslothOpCount}`;
+          pt.sendOperationState('search-web', statusText, { opId: unslothOpId });
+        } else if (unslothOpId) {
+          // Unsloth emits an empty status to clear its own badge - close the operation
+          pt.sendOperationState('search-web', 'Search complete', { opId: unslothOpId, state: 'done' });
+          unslothOpId = null;
+        }
+        return;
+      }
+
+      // remaining tool-loop chatter: nothing renderable, and all of it would break the schema
+      if (['heartbeat', 'tool_start', 'tool_end', 'tool_output', 'tool_args', 'metadata', 'reasoning_summary'].includes(unslothEventType))
+        return;
+    }
 
     // [OpenAI] Obfuscation message with no data -> skip
     if (!chunkData?.['choices'] && chunkData?.['obfuscation']) {
