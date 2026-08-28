@@ -133,8 +133,14 @@ function _unslothModelToModelDescription(model: UnslothWire_API_Models_List.Mode
     ...reasoningInterfaces,
   ];
 
+  // Server-side web search rides Unsloth's tool loop, so it needs a tool-capable model. Offered on the resident
+  // model when the server says it supports tools, and optimistically on catalog entries (no template to inspect).
+  // Inert unless the server's tool policy allows it (`unsloth studio` defaults to off, `--disable-tools` forces off).
+  const toolCapable = status ? (status.supports_tools ?? false) : true;
+
   const parameterSpecs: NonNullable<ModelDescriptionSchema['parameterSpecs']> = [
     ...reasoningSpecs,
+    ...(toolCapable ? [{ paramId: 'llmVndUnslothWebSearch' } as const] : []),
     { paramId: 'llmForceNoStream' }, // SSE does not survive some tunnels (e.g. Cloudflare quick tunnels)
   ];
 

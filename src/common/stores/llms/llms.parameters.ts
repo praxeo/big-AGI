@@ -500,6 +500,15 @@ export const DModelParameterRegistry = {
   }),
 
 
+  llmVndUnslothWebSearch: _enumDef({ // implies: LLM_IF_Tools_WebSearch
+    label: 'Web Search',
+    type: 'enum',
+    description: 'Let the local model search the web to ground its answers (runs on the Unsloth server).',
+    values: ['auto'],
+    // undefined means off - no server-side tools are requested at all
+  }),
+
+
   // xAI-specific parameters
 
   llmVndXaiCodeExecution: _enumDef({

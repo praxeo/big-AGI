@@ -78,7 +78,7 @@ export function aixCreateModelFromLLMOptions(
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
     llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
-    llmVndUnslothThinking,
+    llmVndUnslothThinking, llmVndUnslothWebSearch,
     llmVndOrtWebSearch,
     llmVndPerplexityDateFilter, llmVndPerplexitySearchMode,
     llmVndXaiCodeExecution, llmVndXaiSearchInterval, llmVndXaiWebSearch, llmVndXaiXSearch, llmVndXaiXSearchHandles,
@@ -139,6 +139,7 @@ export function aixCreateModelFromLLMOptions(
 
     // Unsloth - kept OUT of the unified effort field: it is a boolean template gate, not an effort level
     ...(llmVndUnslothThinking ? { vndUnslothThinking: llmVndUnslothThinking } : {}),
+    ...(llmVndUnslothWebSearch === 'auto' ? { vndUnslothWebSearch: llmVndUnslothWebSearch } : {}),
 
     // Anthropic - (vndAntContainerId, vndAntTransformInlineFiles are set in the decorate function)
     ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget === -1 ? 'adaptive' as const : llmVndAntThinkingBudget } : {}),

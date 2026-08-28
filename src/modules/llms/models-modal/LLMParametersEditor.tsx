@@ -59,6 +59,11 @@ const _miscEffortOptions = [
   { value: _UNSPECIFIED, label: 'Default', description: 'Model Default' } as const,
 ] as const;
 
+const _unslothWebSearchOptions = [
+  { value: 'auto', label: 'On', description: 'Model may search the web to ground answers' } as const,
+  { value: _UNSPECIFIED, label: 'Off', description: 'No server-side tools (default)' } as const,
+] as const;
+
 const _unslothThinkingOptions = [
   { value: 'high', label: 'On', description: 'Think before answering' } as const,
   { value: 'none', label: 'Off', description: 'Answer directly' } as const,
@@ -295,6 +300,7 @@ export function LLMParametersEditor(props: {
     llmVndOaiCodeInterpreter,
     llmVndOaiVerbosity,
     llmVndUnslothThinking,
+    llmVndUnslothWebSearch,
     llmVndOrtWebSearch,
     llmVndPerplexityDateFilter,
     llmVndPerplexitySearchMode,
@@ -514,6 +520,19 @@ export function LLMParametersEditor(props: {
           else onChangeParameter({ llmVndUnslothThinking: value });
         }}
         options={_unslothThinkingOptions}
+      />
+    )}
+    {/* Unsloth server-side Web Search */}
+    {showParam('llmVndUnslothWebSearch') && (
+      <FormSelectControl
+        title='Web Search'
+        tooltip='Let the local model search the web to ground its answers (runs on the Unsloth server, which must allow tools)'
+        value={llmVndUnslothWebSearch ?? _UNSPECIFIED}
+        onChange={(value) => {
+          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndUnslothWebSearch');
+          else onChangeParameter({ llmVndUnslothWebSearch: value });
+        }}
+        options={_unslothWebSearchOptions}
       />
     )}
 

@@ -48,6 +48,7 @@ const _paramIdToInterface: { paramIds: DModelParameterId[], iface: DModelInterfa
       'llmVndOaiWebSearchContext',
       'llmVndOrtWebSearch',
       'llmVndPerplexitySearchMode',
+      'llmVndUnslothWebSearch',
       'llmVndXaiWebSearch',
       'llmVndXaiXSearch',
     ],

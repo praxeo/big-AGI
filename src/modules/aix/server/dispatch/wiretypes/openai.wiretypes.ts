@@ -477,6 +477,15 @@ export namespace OpenAIWire_API_Chat_Completions {
     // (verified live: `{thinking: false}` suppresses `reasoning_content` on Nemotron 3; accepted as a no-op elsewhere)
     chat_template_kwargs: z.record(z.string(), z.union([z.boolean(), z.string(), z.number()])).optional(),
 
+    // [Unsloth, 2026-08-28] server-side tool loop on the local server: the model runs the named tools
+    // (here: web_search only) and returns the grounded answer as text. `enabled_tools` must accompany
+    // `enable_tools`, or EVERY local tool is enabled (python, terminal, edit_file). `permission_mode`
+    // 'off' skips the confirmation gate - which can only prompt over Unsloth's own UI - while keeping
+    // the execution sandbox on ('full'/bypass_permissions would disable it, and we never send those).
+    enable_tools: z.boolean().optional(),
+    enabled_tools: z.array(z.string()).optional(),
+    permission_mode: z.enum(['ask', 'auto', 'off']).optional(),
+
     seed: z.number().int().optional(),
     stop: z.array(z.string()).optional(), // Up to 4 sequences where the API will stop generating further tokens.
     user: z.string().optional(),

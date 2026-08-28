@@ -121,6 +121,7 @@ const ModelParameterSpec_schema = z.object({
     'llmVndPerplexitySearchMode',
     // Unsloth
     'llmVndUnslothThinking',
+    'llmVndUnslothWebSearch',
     // xAI
     'llmVndXaiCodeExecution',
     'llmVndXaiSearchInterval',
