@@ -550,7 +550,7 @@ export namespace AixWire_API {
 
     // Unsloth (local server): boolean thinking gate for 'enable_thinking'-style templates (Qwen3 family),
     // which ignore reasoning_effort - sent as chat_template_kwargs.enable_thinking
-    vndUnslothThinking: z.enum(['none', 'high']).optional(),
+    vndUnslothThinking: z.enum(['none', 'low', 'medium', 'high', 'max']).optional(),
     vndUnslothWebSearch: z.enum(['auto']).optional(), // server-side web_search tool loop
     vndOaiContainerId: z.string().optional(), // [Responses] reuse a prior code-interpreter session container (caller checks expiry before setting)
     vndOaiImageGeneration: z.enum(['mq', 'hq', 'hq_edit', 'hq_png']).optional(),
