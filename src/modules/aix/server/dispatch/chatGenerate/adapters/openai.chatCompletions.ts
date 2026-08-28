@@ -213,6 +213,12 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   }
 
 
+  // [Unsloth, local server] 'enable_thinking'-style templates (Qwen3 family) ignore reasoning_effort entirely;
+  // their only gate is the boolean, which Unsloth lifts out of chat_template_kwargs into its native control
+  // (studio/backend/routes/inference.py). Only Unsloth-listed models carry this param, so no other host sees it.
+  if (model.vndUnslothThinking)
+    payload.chat_template_kwargs = { ...payload.chat_template_kwargs, enable_thinking: model.vndUnslothThinking !== 'none' };
+
   // [OpenAI, 2026-02-04] Verbosity control - official OpenAI parameter (low/medium/high, default: medium)
   if (model.vndOaiVerbosity) {
     // [OpenRouter, 2025-01-20] Also supported via OpenRouter for Anthropic Claude Opus 4.5, GPT-5 family

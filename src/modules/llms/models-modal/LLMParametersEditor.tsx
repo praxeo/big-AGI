@@ -59,6 +59,12 @@ const _miscEffortOptions = [
   { value: _UNSPECIFIED, label: 'Default', description: 'Model Default' } as const,
 ] as const;
 
+const _unslothThinkingOptions = [
+  { value: 'high', label: 'On', description: 'Think before answering' } as const,
+  { value: 'none', label: 'Off', description: 'Answer directly' } as const,
+  { value: _UNSPECIFIED, label: 'Default', description: 'Model default' } as const,
+] as const;
+
 export function llmParametersFilterEffortOptions<T extends { value: string, label: string }>(options: readonly T[], spec: DModelParameterSpecAny | undefined, registryKey: keyof typeof DModelParameterRegistry): T[] | null {
   if (!spec) return null;
   const registry = DModelParameterRegistry[registryKey];
@@ -288,6 +294,7 @@ export function LLMParametersEditor(props: {
     llmVndOaiImageGeneration,
     llmVndOaiCodeInterpreter,
     llmVndOaiVerbosity,
+    llmVndUnslothThinking,
     llmVndOrtWebSearch,
     llmVndPerplexityDateFilter,
     llmVndPerplexitySearchMode,
@@ -494,6 +501,19 @@ export function LLMParametersEditor(props: {
           else onChangeParameter({ llmVndMiscEffort: value });
         }}
         options={miscEffortOptions}
+      />
+    )}
+    {/* Unsloth Thinking (boolean template gate) */}
+    {showParam('llmVndUnslothThinking') && (
+      <FormSelectControl
+        title='Thinking'
+        tooltip='Enable or disable thinking mode on the local model'
+        value={llmVndUnslothThinking ?? _UNSPECIFIED}
+        onChange={(value) => {
+          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndUnslothThinking');
+          else onChangeParameter({ llmVndUnslothThinking: value });
+        }}
+        options={_unslothThinkingOptions}
       />
     )}
 

@@ -547,6 +547,10 @@ export namespace AixWire_API {
 
     // OpenAI
     vndOaiCodeInterpreter: z.enum(['off', 'auto']).optional(),
+
+    // Unsloth (local server): boolean thinking gate for 'enable_thinking'-style templates (Qwen3 family),
+    // which ignore reasoning_effort - sent as chat_template_kwargs.enable_thinking
+    vndUnslothThinking: z.enum(['none', 'high']).optional(),
     vndOaiContainerId: z.string().optional(), // [Responses] reuse a prior code-interpreter session container (caller checks expiry before setting)
     vndOaiImageGeneration: z.enum(['mq', 'hq', 'hq_edit', 'hq_png']).optional(),
     vndOaiReasoningMode: z.enum(['standard', 'pro']).optional(), // [2026-07-09, OpenAI] [Responses] GPT-5.6+ reasoning.mode - 'pro' performs additional model work, billed at standard rates
