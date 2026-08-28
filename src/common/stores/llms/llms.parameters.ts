@@ -484,6 +484,22 @@ export const DModelParameterRegistry = {
   }),
 
 
+  // Unsloth-specific
+
+  /**
+   * [Unsloth] Boolean thinking gate for 'enable_thinking'-style templates (Qwen3 family).
+   * These templates ignore `reasoning_effort` entirely, so the unified effort params cannot drive them;
+   * this rides out as `chat_template_kwargs.enable_thinking`, which Unsloth lifts into its native control.
+   */
+  llmVndUnslothThinking: _enumDef({
+    label: 'Thinking',
+    type: 'enum',
+    description: 'Enable or disable thinking mode (local template toggle).',
+    values: ['none', 'high'],
+    // undefined means the model's load-time default
+  }),
+
+
   // xAI-specific parameters
 
   llmVndXaiCodeExecution: _enumDef({

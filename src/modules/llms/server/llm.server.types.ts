@@ -119,6 +119,8 @@ const ModelParameterSpec_schema = z.object({
     // Perplexity
     'llmVndPerplexityDateFilter',
     'llmVndPerplexitySearchMode',
+    // Unsloth
+    'llmVndUnslothThinking',
     // xAI
     'llmVndXaiCodeExecution',
     'llmVndXaiSearchInterval',
