@@ -1,0 +1,52 @@
+{
+  // Cloudflare Workers configuration for big-AGI, deployed via the OpenNext adapter.
+  // Docs: https://opennext.js.org/cloudflare  ·  https://developers.cloudflare.com/workers/wrangler/configuration/
+  // See docs/deploy-cloudflare.md for the full deployment guide.
+  "$schema": "node_modules/wrangler/config-schema.json",
+
+  "name": "big-agi",
+
+  // OpenNext emits the Worker entrypoint and static assets here (via `opennextjs-cloudflare build`).
+  "main": ".open-next/worker.js",
+
+  // >= 2024-09-23 is required by OpenNext; >= 2025-04-01 is required for wrangler vars/secrets to
+  // appear on `process.env` (big-AGI reads all server config from process.env - see src/server/env.server.ts).
+  "compatibility_date": "2025-09-01",
+
+  // - nodejs_compat: required, gives the Worker the Node.js runtime OpenNext targets
+  // - global_fetch_strictly_public: routes fetch() to the public internet (big-AGI calls many external
+  //   provider APIs, e.g. OpenAI/Anthropic/Gemini), and lets the Worker fetch its own static assets
+  "compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
+
+  // Static assets (.next/static, /public, etc.) served directly from Cloudflare's edge.
+  "assets": {
+    "directory": ".open-next/assets",
+    "binding": "ASSETS"
+  },
+
+  // Worker logs / metrics in the Cloudflare dashboard.
+  "observability": {
+    "enabled": true
+  },
+
+  // [browse] Cloudflare Browser Rendering binding, used by src/modules/browse (src/modules/browse/browse.router.ts).
+  // Needs the Workers Paid plan with Browser Rendering enabled; no resource id required.
+  "browser": { "binding": "MYBROWSER" }
+
+  // ---------------------------------------------------------------------------------------------------
+  // OPTIONAL BINDINGS - uncomment and configure to enable the corresponding feature on Cloudflare.
+  // (Secrets/API keys are NOT set here - use `wrangler secret put NAME` or the dashboard. See the deploy guide.)
+  //
+  // 1) ISR/SSG cache in R2 (only needed if you enable Next incremental cache in open-next.config.ts):
+  // "r2_buckets": [
+  //   { "binding": "NEXT_INC_CACHE_R2_BUCKET", "bucket_name": "big-agi-cache" }
+  // ],
+  //
+  // 2) Web browsing is already enabled above via the `browser` binding (MYBROWSER).
+  //
+  // 3) Sharing / ChatGPT-share import (Prisma over Postgres) - low-latency pooled DB access:
+  // "hyperdrive": [
+  //   { "binding": "HYPERDRIVE", "id": "<your-hyperdrive-id>" }
+  // ]
+  // ---------------------------------------------------------------------------------------------------
+}

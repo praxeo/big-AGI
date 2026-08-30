@@ -1,0 +1,57 @@
+# Deploy big-AGI to Cloudflare Workers (via the OpenNext adapter) - PARALLEL to Vercel.
+#
+# This runs ONLY for the dedicated Cloudflare branch and never touches your Vercel production, which
+# deploys from `v2-dev`. Do NOT merge the Cloudflare branch into `v2-dev`. See docs/deploy-cloudflare.md.
+#
+# One-time setup (repo Settings > Secrets and variables > Actions):
+#   - CLOUDFLARE_API_TOKEN   a token with the "Edit Cloudflare Workers" template
+#   - CLOUDFLARE_ACCOUNT_ID  your Cloudflare account id
+# Provider API keys are NOT set here - they are Worker secrets:  wrangler secret put OPENAI_API_KEY  (etc.)
+#
+# Until both secrets exist, the job builds and SKIPS the deploy (stays green). Once set, pushes auto-deploy.
+
+name: Deploy to Cloudflare Workers
+
+on:
+  push:
+    branches:
+      - claude/cloudflare-deployment-migration-kg8rmh   # the dedicated Cloudflare deploy branch (NOT v2-dev)
+  workflow_dispatch:                                     # ...or trigger a deploy manually
+
+concurrency:
+  group: cloudflare-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Build and deploy (OpenNext)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build the Worker bundle
+        run: npm run cf:build
+
+      - name: Deploy to Cloudflare Workers
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' && env.CLOUDFLARE_ACCOUNT_ID != '' }}
+        run: npx opennextjs-cloudflare deploy
+
+      - name: Deploy skipped (secrets not set)
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' || env.CLOUDFLARE_ACCOUNT_ID == '' }}
+        run: echo "::notice::Build OK. Skipping deploy - add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID repo secrets to enable auto-deploy."

@@ -14,10 +14,14 @@
     "prebuild": "node tools/develop/gen-llms-defs/generate-llms-defs.mjs",
     "build": "next build",
     "start": "next start",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy",
+    "cf:typegen": "wrangler types --env-interface CloudflareEnv cloudflare-env.d.ts",
     "lint": "eslint .",
     "tscheck": "tsc --noEmit --pretty && tsc --noEmit --pretty -p tools/tsconfig.json",
     "test": "cross-env NODE_ENV=development tsx --test \"src/**/*.test.ts\"",
-    "postinstall": "prisma generate --no-hints",
+    "postinstall": "prisma generate --no-hints && node tools/patch/expose-react-dom-server-edge.mjs",
     "gen:icon-sprites": "node tools/develop/gen-icon-sprites/generate-llm-sprites.ts",
     "db:push": "prisma db push",
     "db:studio": "prisma studio",
@@ -28,6 +32,7 @@
     "schema": "src/server/prisma/schema.prisma"
   },
   "dependencies": {
+    "@cloudflare/puppeteer": "^1.1.0",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
@@ -39,7 +44,7 @@
     "@googleworkspace/drive-picker-react": "^0.2.0",
     "@mui/icons-material": "^5.18",
     "@mui/joy": "5.0.0-beta.52",
-    "@next/bundle-analyzer": "~15.1.12",
+    "@next/bundle-analyzer": "~15.5.20",
     "@prisma/client": "~5.22.0",
     "@tanstack/react-query": "^5.101.4",
     "@tanstack/react-virtual": "^3.14.10",
@@ -60,7 +65,7 @@
     "idb-keyval": "^6.2.5",
     "mammoth": "^1.12.1",
     "nanoid": "^6.0.1",
-    "next": "~15.1.12",
+    "next": "~15.5.20",
     "nprogress": "^0.2.0",
     "pdfjs-dist": "5.4.54",
     "posthog-js": "^1.418.10",
@@ -86,6 +91,7 @@
     "zustand": "5.0.15"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.20.1",
     "@posthog/nextjs-config": "~1.6",
     "@types/node": "^22",
     "@types/nprogress": "^0.2.3",
@@ -96,12 +102,13 @@
     "@types/turndown": "^5.0.6",
     "cross-env": "^10.1.0",
     "eslint": "^9",
-    "eslint-config-next": "~15.1.12",
+    "eslint-config-next": "~15.5.20",
     "eslint-plugin-compat": "^7.0.2",
     "prettier": "^3.9.6",
     "prisma": "~5.22.0",
     "tsx": "^4.23.12",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wrangler": "^4.108.0"
   },
   "engines": {
     "node": "^26.0.0 || ^24.0.0 || ^22.0.0"

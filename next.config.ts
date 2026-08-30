@@ -3,6 +3,15 @@ import type { WebpackConfigContext } from 'next/dist/server/config-shared';
 import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 
+// [Cloudflare/OpenNext] Expose Cloudflare bindings to `next dev` when explicitly developing against
+// Cloudflare (set OPEN_NEXT_DEV=1). Kept dynamic + guarded so the default `next dev` is unchanged, and
+// production/standalone/docker `next start` (which prunes devDependencies) never imports the adapter.
+if (process.env.OPEN_NEXT_DEV) {
+  void import('@opennextjs/cloudflare')
+    .then(({ initOpenNextCloudflareForDev }) => initOpenNextCloudflareForDev())
+    .catch((err) => console.warn(' 🧠 big-AGI: OpenNext dev bindings unavailable:', err?.message || err));
+}
+
 // Build information: from CI, or git commit hash
 let buildHash = process.env.NEXT_PUBLIC_BUILD_HASH || process.env.GITHUB_SHA || process.env.VERCEL_GIT_COMMIT_SHA; // Docker or custom, GitHub Actions, Vercel
 try {
@@ -54,7 +63,16 @@ let nextConfig: NextConfig = {
 
   // [puppeteer] https://github.com/puppeteer/puppeteer/issues/11052
   // NOTE: we may not be needing this anymore, as we use '@cloudflare/puppeteer'
-  serverExternalPackages: ['puppeteer-core'],
+  // [Cloudflare/OpenNext] The @emotion/* packages ship an `edge-light` export variant that the Worker
+  // bundler (esbuild) resolves to a file that isn't present, breaking the build. Keeping the whole family
+  // external makes the Worker resolve their normal Node build at runtime. Harmless on other targets - Next
+  // externalizes node_modules for the server bundle anyway. See docs/deploy-cloudflare.md.
+  serverExternalPackages: [
+    'puppeteer-core',
+    '@emotion/react', '@emotion/cache', '@emotion/styled', '@emotion/server', '@emotion/serialize',
+    '@emotion/utils', '@emotion/sheet', '@emotion/hash', '@emotion/memoize', '@emotion/unitless',
+    '@emotion/weak-memoize', '@emotion/is-prop-valid', '@emotion/use-insertion-effect-with-fallbacks',
+  ],
 
   webpack: (config: any, { isServer, webpack /*, dev, nextRuntime*/ }: WebpackConfigContext) => {
     // @mui/joy: anything material gets redirected to Joy
