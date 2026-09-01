@@ -31,16 +31,18 @@ const _togetherAIDenyList: string[] = [
   'test/test',
 ];
 
-// Retired from serverless but still listed WITH a non-zero price (so the 0/0 'not serverless-priced' rule below
-// does not catch them): a chat call returns 400 'Unable to access non-serverless model'. /v1/models exposes no
-// field that separates the two - only a live probe or the docs serverless table does, so this is an exact-id list.
-// Full sweep 2026-08-17 (1-token probe over all 75 priced chat rows): 27 answer, 47 return that 400, and
-// zai-org/GLM-4.5-Air-FP8 answers a persistent 503. 33 of the 47 carry an explicit removal date on
-// https://docs.together.ai/docs/deprecations, and the 27 survivors match the chat rows on
-// https://docs.together.ai/docs/serverless-models except two: that page also carries Prism-ML/Ternary-Bonsai-27B
-// (serverless but 0/0-priced, so outside the 75) and omits arize-ai/qwen-2-1.5b-instruct (priced 0.1/0.1 and
-// answering) - re-run the sweep when either page moves.
-// Accepted cost: a user who owns a dedicated endpoint for one of these ids no longer sees it.
+// Retired from serverless but still priced non-zero, so the 0/0 rule below misses them: chat calls return
+// 400 'Unable to access non-serverless model'. /v1/models has no field for this - only a live probe or the
+// docs serverless table separates the two, hence this exact-id list.
+// Sweep 2026-08-28 (1-token probe, 72 priced chat rows): 19 alive (3 Qwen3.x-Plus/Max streaming-only), 51
+// non-serverless 400, GLM-4.5-Air-FP8 503, Kimi-K2.7-Code 500 then 400. Matches the chat rows on
+// https://docs.together.ai/docs/serverless-models except Prism-ML/Ternary-Bonsai-27B (0/0-priced) and
+// arize-ai/qwen-2-1.5b-instruct (priced, answering, undocumented).
+// Sweep 2026-08-31 (74 priced rows): all 53 entries below still dead (Kimi-K2.6 now errors 'all configured
+// deployments are stopped' instead of the non-serverless 400 - still dead); 21 alive, +Qwen3.8-Flash (new,
+// streaming-only like the other Qwen Plus/Max tiers) and +GLM-5.3 (relisted and serving, see pubDates below).
+// Membership rotates fast in both directions ('created' gets re-stamped) - probe, never trust this list's age.
+// Accepted cost: a user with a dedicated endpoint for one of these ids no longer sees it.
 const _togetherAIRetiredIds = new Set<string>([
   // zai-org
   'zai-org/GLM-5.1', // deprecated 2026-07-10 (row now labeled 'GLM 5.1 FP4')
@@ -56,6 +58,7 @@ const _togetherAIRetiredIds = new Set<string>([
   'Qwen/Qwen2.5-14B-Instruct',
   'Qwen/Qwen2.5-72B-Instruct',
   'Qwen/Qwen2.5-72B-Instruct-Turbo',
+  'Qwen/Qwen2.5-7B-Instruct-Turbo', // retired between the 2026-08-17 and -27 sweeps
   'Qwen/Qwen2.5-Coder-32B-Instruct',
   'Qwen/Qwen2.5-VL-72B-Instruct',
   'Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8',
@@ -81,6 +84,7 @@ const _togetherAIRetiredIds = new Set<string>([
   'deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B',
   'deepseek-ai/DeepSeek-R1-Distill-Qwen-14B',
   'deepseek-ai/DeepSeek-V3.1',
+  'deepseek-ai/DeepSeek-V4-Pro', // off serverless 2026-08-28; docs keep only the -0813 id
   'deepseek-ai/deepseek-coder-33b-instruct',
   // mistralai
   'mistralai/Ministral-3-14B-Instruct-2512',
@@ -94,7 +98,10 @@ const _togetherAIRetiredIds = new Set<string>([
   'arcee-ai/trinity-mini',
   'google/gemma-2-27b-it',
   'moonshotai/Kimi-K2.5-fp4',
+  'moonshotai/Kimi-K2.6', // retired between the 2026-08-17 and -27 sweeps
+  'moonshotai/Kimi-K2.7-Code', // 500 on the 08-28 sweep, standard 400 on re-probe
   'nvidia/Llama-3.1-Nemotron-70B-Instruct-HF',
+  'nvidia/nemotron-3-ultra-550b-a55b', // off serverless 2026-08-28
   'nvidia/NVIDIA-Nemotron-Nano-9B-v2',
 ]);
 
@@ -106,7 +113,8 @@ const _togetherAIRetiredIds = new Set<string>([
 // Sweep 2026-08-17: every serverless model was probed at 3 image sizes. A real vision endpoint scales
 // prompt_tokens with pixel count; a text-only one either 400s ('is not a multimodal model' /
 // 'Multimodal processing failed') or silently drops the part for a flat placeholder cost (gpt-oss +0,
-// Qwen2.5-7B-Turbo +6 at every size) - flat cost is NOT vision.
+// Qwen2.5-7B-Turbo +6 at every size) - flat cost is NOT vision. Gemma exception (2026-08-27): its
+// fixed-size encoder is flat at ~+256/image yet passes a color-identification check - a ~256 step IS vision.
 const _togetherVisionMatches: readonly (string | RegExp)[] = [
   'vision', '-vl', 'llava', 'pixtral', // explicitly tagged
   'llama-4', // Llama 4 Scout/Maverick
@@ -120,7 +128,9 @@ const _togetherVisionMatches: readonly (string | RegExp)[] = [
   'gemma-3n', // Gemma 3n E2B/E4B are multimodal
   /gemma-3-(4b|12b|27b)/, // Gemma 3 4B+ are multimodal (1B/270M are text-only)
   /qwen3\.[56]-/, 'qwen3.7-plus', // Qwen 3.5/3.6 (all variants) and 3.7-Plus take image (3.7-Max does not)
+  'qwen3.8-flash', // scaling (123 -> 843 prompt tokens) + color check 2026-08-31; NOT all of qwen3.8: Together's Qwen3.8-2.4T-A95B is a text-only NVFP4 quant ('is not a multimodal model'), unlike Fireworks' serving of the same weights
   /glm-\d[\d.]*v\b/, // Z.ai vision line (GLM-4.5V, GLM-5V)
+  'glm-5.3-flash', // multimodal Flash base, scaling+color check 2026-08-27 (the glm-5.3 text flagship rejects images), see zai.models.ts
   '-omni', // omni-modal (Nemotron 3 Nano Omni)
   '-ocr', // OCR models are image-in by definition
 ];
@@ -134,9 +144,11 @@ const _togetherVisionMatches: readonly (string | RegExp)[] = [
 // Editorial release dates for Together-hosted third-party models, keyed by Together model id.
 // The ONLY source of pubDate for this vendor (besides the manual mappings above); keep dates
 // consistent with the publisher's own catalog where we have one (e.g. deepseek.models.ts).
+// Keys for currently-retired ids stay - the serverless set rotates back, and a deleted date must be re-researched.
 const _togetherEditorialPubDates: Record<string, string> = {
   'openai/gpt-oss-120b': '20250805', // = groq.models.ts / cerebras.models.ts 'gpt-oss-120b'
   'openai/gpt-oss-20b': '20250805',
+  'Qwen/Qwen3.5-9B': '20260302', // HF public 2026-03-02, follow-up to the 20260225 Qwen3.5 open-weights drop (no alibaba.models.ts id)
   'google/gemma-4-31B-it': '20260402', // = gemini.models.ts 'models/gemma-4-31b-it'
   'Qwen/Qwen3.6-Plus': '20260402', // = alibaba.models.ts 'qwen3.6-plus'
   'moonshotai/Kimi-K2.6': '20260420', // = moonshot.models.ts 'kimi-k2.6' (fireworksai.models.ts still says 20260417)
@@ -155,7 +167,9 @@ const _togetherEditorialPubDates: Record<string, string> = {
   'meta-models/Muse-Glimmer-30B': '20260810', // Meta announcement (HF repo 2026-08-09)
   'Qwen/Qwen3.8-2.4T-A95B': '20260812', // = alibaba.models.ts 'qwen3.8-2.4t-a95b'
   'deepseek-ai/DeepSeek-V4-Pro-0813': '20260813', // 0813 GA weights, unlike the undated id above
-  'zai-org/GLM-5.3': '20260814', // = zai.models.ts 'glm-5.3' - id pre-announced on together.ai/models/glm-5-3, still 404 on generation 2026-08-17
+  'zai-org/GLM-5.3': '20260814', // = zai.models.ts 'glm-5.3' - pre-announced then delisted by 2026-08-27; relisted and serving as of 2026-08-31
+  'zai-org/GLM-5.3-Flash': '20260825', // = zai.models.ts 'glm-5.3-flash' (HF weights 2026-08-25)
+  'Qwen/Qwen3.8-Flash': '20260826', // no alibaba.models.ts id yet: OpenRouter listing date - true up if DashScope lands one
 };
 
 /** 'YYYYMMDD' -> Unix epoch seconds (UTC midnight), 0 when absent - for list placement only */
@@ -190,7 +204,7 @@ export function togetherAIModelsToModelDescriptions(wireModels: unknown): ModelD
       if (!_togetherAllowTypes.includes(model.type))
         return false;
 
-      // NOTE: shall we filter out the non-running models?
+      // NOTE: do not filter on `running` - it is false on all 276 rows (2026-08-28), serverless ones included.
 
       // filter-out retired-but-still-priced ids
       if (_togetherAIRetiredIds.has(model.id))
@@ -208,7 +222,7 @@ export function togetherAIModelsToModelDescriptions(wireModels: unknown): ModelD
       // no '[?]' marker (evaluated 2026-08-14): API-characterized (`type` filter above) - see llmsLabelUncurated
       const contextWindow = model.context_length || null;
       // pricing: input/output 0/0 means 'not serverless-priced' (dedicated/LoRA-only endpoints,
-      // 92/160 chat models on 2026-07-12), NOT free - Together's actual free tier uses explicit
+      // 96/169 chat models on 2026-08-27), NOT free - Together's actual free tier uses explicit
       // '-Free' id suffixes (none listed today), which we keep honoring as truly free.
       // Exception (2026-08-17): Prism-ML/Ternary-Bonsai-27B is 0/0 yet serverless and priced 'Free' on
       // docs/serverless-models, so it surfaces with no price rather than as free

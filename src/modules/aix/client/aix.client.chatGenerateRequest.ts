@@ -3,7 +3,7 @@ import { getImageAsset } from '~/common/stores/blob/dblobs-portability';
 
 import { DLLM, LLM_IF_ANT_PromptCaching, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_NoWebP, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_StripSys0, LLM_IF_HOTFIX_Sys0ToUsr0 } from '~/common/stores/llms/llms.types';
 import { DMessage, DMessageRole, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, MESSAGE_FLAG_VND_ANT_CACHE_AUTO, MESSAGE_FLAG_VND_ANT_CACHE_USER, messageHasUserFlag } from '~/common/stores/chat/chat.message';
-import { DMessageFragment, DMessageImageRefPart, DMessageZyncAssetReferencePart, isContentOrAttachmentFragment, isToolResponseFunctionCallPart, isVoidThinkingFragment } from '~/common/stores/chat/chat.fragments';
+import { DMessageFragment, DMessageImageRefPart, DMessageZyncAssetReferencePart, hostedResourceMutedText, isContentOrAttachmentFragment, isToolResponseFunctionCallPart, isVoidThinkingFragment } from '~/common/stores/chat/chat.fragments';
 import { Is } from '~/common/util/pwaUtils';
 import { convert_Base64WithMimeType_To_Blob, convert_Blob_To_Base64 } from '~/common/util/blobUtils';
 import { imageBlobConvertType, imageBlobResizeIfNeeded, LLMImageResizeMode } from '~/common/util/imageUtils';
@@ -360,11 +360,24 @@ export async function aixCGR_ChatSequence_FromDMessagesOrThrow(
             uMsg.parts.push(uFragment.part);
             break;
 
+          case 'hosted_resource':
+            // URL-referenced media (user-added video): lower to a media_url wire part - pure JSON, no dereference
+            // NOTE: 'url' comes from the user, is the first one we make come from them - however the others are usually only in assistant messages, we haven't tried roundtripping them
+            if (uFragment.part.resource.via === 'url') {
+              if (uFragment.part.muted)
+                uMsg.parts.push({ pt: 'text', text: hostedResourceMutedText(uFragment.part.resource) }); // muted: the referent stays, the media tokens don't
+              else {
+                const { url, mediaKind, mimeType } = uFragment.part.resource;
+                uMsg.parts.push({ pt: 'media_url', mediaKind, url, ...(mimeType ? { mimeType } : {}) });
+              }
+            } else
+              console.warn('aixCGR_FromDMessages: unexpected Non-User hosted resource via', uFragment.part.resource.via);
+            break;
+
           // skipped (non-user)
           case 'error':
           case 'tool_invocation':
           case 'tool_response':
-          case 'hosted_resource':
             console.warn('aixCGR_FromDMessages: unexpected Non-User fragment part type', (uFragment.part as any).pt);
             break;
 

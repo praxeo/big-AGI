@@ -1,6 +1,6 @@
 import * as z from 'zod/v4';
 
-import { LLM_IF_ANT_PromptCaching, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image } from '~/common/stores/llms/llms.types';
+import { LLM_IF_ANT_PromptCaching, LLM_IF_Inputs_Video, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image } from '~/common/stores/llms/llms.types';
 import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
@@ -34,9 +34,9 @@ const orModelFamilyOrder = [
   // Other major providers
   'mistralai/', 'meta-llama/', 'amazon/', 'cohere/',
   // Specialized/AI companies
-  'perplexity/', 'inflection/', 'inclusionai/', 'arcee-ai/', 'thinkingmachines/', 'sakana/',
+  'perplexity/', 'inclusionai/', 'arcee-ai/', 'thinkingmachines/', 'sakana/', 'upstage/', 'nex-agi/',
   // Chinese majors (surfaced on OpenRouter directly)
-  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'baidu/', 'stepfun/', 'meituan/',
+  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'baidu/', 'stepfun/', 'meituan/', 'kwaipilot/',
   // Research/open models
   'nvidia/', 'microsoft/', 'nousresearch/', 'ibm-granite/', 'poolside/', 'xiaomi/',
 ] as const;
@@ -44,15 +44,17 @@ const orModelFamilyOrder = [
 // llmVndMiscEffort thinking levels we expose, in canonical order ('xhigh' deliberately absent) - see llms.parameters.ts
 const _MISC_EFFORTS = ['low', 'high', 'max'] as const;
 
+// llmVndOaiEffort levels, canonical ascending order ('none' handled separately) - see llms.parameters.ts
+const _OAI_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+// [2026-08-28] re-checked against the live catalog: 'openai/gpt-3.5-turbo' still hides 4 ids, the Claude 1/2/instant,
+// PaLM 2, Llama 2 and dated gpt-4-0314 prefixes matched zero models and were dropped. 'meta-llama/llama-3-' also
+// matches nothing today but stays: Meta rotates its OR listing, and it must not catch 3.1/3.2/3.3/4 when it returns.
 const orOldModelIDs = [
-  // Older OpenAI models (no longer on OR but kept for safety)
-  'openai/gpt-3.5-turbo', 'openai/gpt-4-0314', 'openai/gpt-4-32k-0314',
-  // Older Anthropic models
-  'anthropic/claude-1', 'anthropic/claude-2', 'anthropic/claude-instant-',
-  // Older Google models
-  'google/palm-2-',
-  // Older Meta models (Llama 2 and Llama 3.0; keeps 3.1/3.2/3.3/4 visible)
-  'meta-llama/llama-3-', 'meta-llama/llama-2-',
+  // Older OpenAI models
+  'openai/gpt-3.5-turbo',
+  // Older Meta models (Llama 3.0 only)
+  'meta-llama/llama-3-',
 ] as const;
 
 // exact ids, not prefixes: 'openai/gpt-4' is the 2023 8K model still listed at $30/$60, but as a prefix it
@@ -100,7 +102,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
 
   // drop ':batch' variants: async batch tiers (50%-off resold vendor batch APIs) can't serve
   // synchronous chat; they'd list as half-price chat models and fail or queue on send.
-  // They came back and stayed: 61 across 8 vendors as of 2026-08-17 (was 17 openai/* at the 2026-07-22 debut).
+  // They came back and stayed: 31 across 7 vendors as of 2026-08-28 (17 openai/* at the 2026-07-22 debut, 60 on 08-27).
   // Before ever removing this gate, re-verify the semantics:
   // - if batch stays async (jobs API / delayed delivery), keep the gate; proper support means a batch
   //   job surface (submit/poll/retrieve) outside the chat list, a product feature not a parser change
@@ -118,10 +120,10 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   if (model.id.startsWith('google/lyria-') || model.id === 'anthropic/claude-opus-4.7-fast')
     return null;
 
-  // the 11 '~vendor/model-latest' aliases are full members of their vendor family: resolve them to the
+  // the 12 '~vendor/model-latest' aliases are full members of their vendor family: resolve them to the
   // model they point at (`alias_target`) everywhere (vendor inheritance, visibility), or they'd fall
   // through to the generic branch - dropping the '~' alone leaves refs like 'claude-opus-latest', which
-  // no vendor index can look up (verified: all 11 missed their native interfaces/params before this)
+  // no vendor index can look up (verified: all missed their native interfaces/params before this)
   const modelIdUnaliased = model.alias_target?.slug || _orUnalias(model.id);
 
 
@@ -135,14 +137,15 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   const pricing = model.pricing;
 
   // [OpenRouter, 2026-08-06] `pricing.overrides` are long-context surcharge tiers, ascending by
-  // `min_prompt_tokens` (e.g. google/gemini-2.5-pro: 1.25/10 up to 200K, then 2.50/15 above it). 59 of the
-  // 414 listed models are tiered today (Gemini Pro, GPT-5.x, Grok 4.x, Qwen, Claude Sonnet 4.x, Sakana Fugu):
-  // without folding them in, long prompts would be costed at the cheapest tier.
-  // [OpenRouter, 2026-08-16] time-of-day overrides (utc_start/utc_end, no min_prompt_tokens) are a peak/off-peak
-  // schedule, not context tiers - separated here and folded as the peak below.
+  // `min_prompt_tokens` (e.g. google/gemini-2.5-pro: 1.25/10 up to 200K, then 2.50/15 above it). 48 of the
+  // 388 listed models are tiered today (Qwen, GPT-5.x, Gemini Pro, Grok 4.x, ByteDance Seed, Claude Sonnet 4.x,
+  // Sakana Fugu): without folding them in, long prompts would be costed at the cheapest tier.
+  // [OpenRouter, 2026-08-16] time-of-day overrides (utc_start/utc_end and, since 2026-08-27, day-of-week utc_days,
+  // no min_prompt_tokens) are a peak/off-peak schedule, not context tiers - separated here and folded as the peak
+  // below; 3 models today (deepseek-v4-pro-0813, deepseek-v4-flash-vision-exp, tencent/hy3).
   const contextTiers = pricing.overrides?.filter((tier): tier is typeof tier & { min_prompt_tokens: number } => typeof tier.min_prompt_tokens === 'number');
   const priceTiers = contextTiers?.length ? contextTiers : undefined;
-  const clockTiers = pricing.overrides?.filter(tier => tier.min_prompt_tokens === undefined && (tier.utc_start !== undefined || tier.utc_end !== undefined));
+  const clockTiers = pricing.overrides?.filter(tier => tier.min_prompt_tokens === undefined && (tier.utc_start !== undefined || tier.utc_end !== undefined || tier.utc_days !== undefined));
 
   /** per-token price string -> our per-1M price, tiered when the model has long-context overrides */
   function _orPricePerM(field: 'prompt' | 'completion' | 'input_cache_read' | 'input_cache_write'): NonNullable<ModelDescriptionSchema['chatPrice']>['input'] {
@@ -176,29 +179,35 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   const cacheWritePrice = _orPricePerM('input_cache_write');
   const cacheReadPrice = _orPricePerM('input_cache_read');
 
-  const chatPrice: ModelDescriptionSchema['chatPrice'] = {
+  // [OpenRouter] the 6 'openrouter/*' routers (auto, fusion, pareto-code, ...) quote '-1': the price is only
+  // known after routing. Emit no price at all - a raw -1 becomes -$1,000,000/M, and 'free' would be a lie.
+  const isPostRoutingPrice = typeof inputPrice === 'number' && inputPrice < 0;
+
+  const chatPrice: ModelDescriptionSchema['chatPrice'] | undefined = isPostRoutingPrice ? undefined : {
     input: inputPrice || 'free',
     output: outputPrice || 'free',
   };
 
-  if (cacheWritePrice && cacheReadPrice) {
-    // if writing, assume anthropic-style
-    chatPrice.cache = {
-      cType: 'ant-bp',
-      read: cacheReadPrice,
-      write: cacheWritePrice,
-      duration: 300, // 5 minutes default
-    };
-  } else if (cacheReadPrice) {
-    // if only reading, assume openai-style
-    chatPrice.cache = {
-      cType: 'oai-ac',
-      read: cacheReadPrice,
-    };
+  if (chatPrice) {
+    if (cacheWritePrice && cacheReadPrice) {
+      // if writing, assume anthropic-style
+      chatPrice.cache = {
+        cType: 'ant-bp',
+        read: cacheReadPrice,
+        write: cacheWritePrice,
+        duration: 300, // 5 minutes default
+      };
+    } else if (cacheReadPrice) {
+      // if only reading, assume openai-style
+      chatPrice.cache = {
+        cType: 'oai-ac',
+        read: cacheReadPrice,
+      };
+    }
   }
 
   // -- Pricing: free --
-  const seemsFree = chatPrice.input === 'free' && chatPrice.output === 'free';
+  const seemsFree = chatPrice?.input === 'free' && chatPrice.output === 'free';
   if (seemsFree)
     label += ' · 🎁'; // Free? Discounted?
 
@@ -221,6 +230,13 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   // input: vision
   if (model.architecture?.input_modalities?.includes('image'))
     interfaces.push(LLM_IF_OAI_Vision);
+  // input: video - the chatCompletions adapter lowers media_url parts to OR's 'video_url' extension
+  // Gemini-only: the catalog flags ~70 models with `video`, but a live probe (2026-08-27, YouTube
+  // watch URL, one latest model per family) showed only Gemini ingests it - the others error
+  // upstream (direct-file-only decoders, 'not supported', no endpoints) or silently drop the video
+  // (MiniMax: empty answer, 26 prompt tokens). Re-probe before widening.
+  if (model.architecture?.input_modalities?.includes('video') && model.id.includes('gemini'))
+    interfaces.push(LLM_IF_Inputs_Video);
 
   // output: image
   if (model.architecture?.output_modalities?.includes('image'))
@@ -267,7 +283,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   // the others did not - so 'gemma-4-31b-it:free' missed its def). ':free' only, NOT a blanket /:.*$/: vendor ref
   // maps key their deny entries by the full suffixed id (openai.models.ts: 'gpt-4o:extended': null), and stripping
   // every suffix would hand the lookup the base id and silently un-deny the variant.
-  // OR lists 18 non-':batch' colon ids today: 17x ':free' + 1x ':thinking' (2026-08-17).
+  // OR lists 18 non-':batch' colon ids today, all ':free' (2026-08-27; the one ':thinking' id is gone).
   const llmRef = modelIdUnaliased.replace(/^[^/]+\//, '').replace(/:free$/, '');
   let initialTemperature: number | undefined;
   let pubDate: string | undefined;
@@ -416,22 +432,33 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       break;
 
     default:
-      // 0-day: generic reasoning models with no upstream-specific vendor mapping get the shared
-      // on/off/Default thinking toggle (llmVndMiscEffort). OpenRouter's unified reasoning API (2025-11-11)
-      // translates it via the OAI-compatible branch in openai.chatCompletions.ts to `reasoning: { enabled }`:
-      // 'high' -> enabled:true, 'none' -> enabled:false, unset ('Default') -> no field (model default).
-      // We pin enumValues to ['none', 'high'] (binary on/off, no effort levels) since generic models may
-      // not honor effort granularity. Guard: only when the model advertises reasoning AND no equivalent
-      // reasoning control is already present (so we never double up or override a vendor-specific one)
-      // AND reasoning is not mandatory (where 'none' 400s and a binary on/off is meaningless - same rule
-      // as the xAI/Moonshot/Z.ai/DeepSeek branch above; hits Qwen thinking, MiniMax M2.x, StepFun, ...).
-      if (interfaces.includes(LLM_IF_OAI_Reasoning) && !model.reasoning?.mandatory && !parameterSpecs.some(p =>
+      // 0-day: generic reasoning models with no upstream-specific vendor mapping. OpenRouter's unified reasoning
+      // API (2025-11-11) translates whatever we send via the OAI-compatible branch in openai.chatCompletions.ts
+      // to `reasoning: { enabled, effort }`: 'none' -> enabled:false, any other level -> enabled:true + effort,
+      // unset ('Default') -> no field (model default).
+      // Guard: only when the model advertises reasoning AND no equivalent reasoning control is already present
+      // (so we never double up or override a vendor-specific one).
+      if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p =>
         p.paramId === 'llmVndMiscEffort'
         || p.paramId === 'llmVndAntEffort' || p.paramId === 'llmVndAntThinkingBudget'
         || p.paramId === 'llmVndGemEffort' || p.paramId === 'llmVndGeminiThinkingBudget'
         || p.paramId === 'llmVndOaiEffort',
-      ))
-        parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
+      )) {
+        // [OpenRouter, 2026-08-28] use OR's per-model `supported_efforts` where it exists: it is the only truth we
+        // have for these families (no native defs to inherit from), and the binary fallback was both lossy and
+        // sometimes wrong - it offered 'high' to models whose ladder excludes it (qwen3.8-27b is xhigh/medium/low,
+        // nemotron-3-super is medium/low only) and dropped the ladder entirely for the mandatory ones (Meta Muse,
+        // qwen3.8-max, stepfun/step-3.7-flash got NO control at all). llmVndOaiEffort, not llmVndMiscEffort: its
+        // registry spans minimal..max, so xhigh/medium/minimal survive instead of collapsing onto a single tier.
+        // 'none' rides along only when OR says reasoning is disableable (mandatory models 400 on it).
+        const orLadder = _OAI_EFFORTS.filter(e => model.reasoning?.supported_efforts?.includes(e));
+        if (orLadder.length >= 2)
+          parameterSpecs.push({ paramId: 'llmVndOaiEffort', enumValues: model.reasoning?.mandatory ? orLadder : ['none', ...orLadder] });
+        else if (!model.reasoning?.mandatory)
+          // no usable ladder: shared on/off/Default toggle. Skipped when reasoning is mandatory, where a binary
+          // on/off is meaningless - same rule as the xAI/Moonshot/Z.ai/DeepSeek branch above.
+          parameterSpecs.push({ paramId: 'llmVndMiscEffort', enumValues: ['none', 'high'] });
+      }
       break;
   }
 
@@ -474,7 +501,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
     maxCompletionTokens,
     interfaces,
     // benchmark: ...
-    chatPrice,
+    ...(chatPrice !== undefined && { chatPrice }),
     hidden,
     parameterSpecs,
     ...(initialTemperature !== undefined && { initialTemperature }),

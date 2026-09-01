@@ -10,6 +10,7 @@ import type { ModelVendorId } from '~/modules/llms/vendors/vendors.registry';
 
 import type { DLLM, DLLMId } from './llms.types';
 import type { DModelDomainId } from './model.domains.types';
+import { getLLMPubDate, isLLMHidden, LLM_IF_Inputs_Video } from './llms.types';
 
 
 /**
@@ -91,8 +92,7 @@ export const EditorialDefaults = {
     { vendor: 'xai',        modelId: 'grok-4.3' },
     { vendor: 'moonshot',   modelId: 'kimi-k3' },
     { vendor: 'moonshot',   modelId: 'kimi-k2.6' },
-    // HELD 2026-08-16: glm-5.3 (released 2026-08-14) is Coding-Plan-only on Z.ai - pay-as-you-go keys 403 code 1220 (docs: 'API coming soon'). Uncomment when the standard API opens.
-    // { vendor: 'zai',        modelId: 'glm-5.3' },
+    { vendor: 'zai',        modelId: 'glm-5.3' }, // 2026-08-27: standard API GA (was Coding-Plan-only at launch)
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'deepseek',   modelId: 'deepseek-v4-pro' },
     // NVIDIA NIM: free trial catalog, tail picks (native vendors above always win when configured; z-ai/glm-5.2 dropped: NVIDIA EOL 2026-08-24)
@@ -121,7 +121,7 @@ export const EditorialDefaults = {
     { vendor: 'xai',        modelId: 'grok-4.6' }, // xAI frontier for coding/agentic; new Grok Build default (2026-08-12)
     { vendor: 'xai',        modelId: 'grok-4.5' },
     { vendor: 'xai',        modelId: 'grok-build-0.1' },
-    // { vendor: 'zai',        modelId: 'glm-5.3' }, // HELD 2026-08-16: Coding-Plan-only (pay-as-you-go keys 403); +50% over 5.2 on Z.ai's code bench - top Z.ai pick once the standard API opens. Uncomment to restore.
+    { vendor: 'zai',        modelId: 'glm-5.3' }, // 2026-08-27: standard API GA; +50% over 5.2 on Z.ai's code bench
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'zai',        modelId: 'glm-5' },
     { vendor: 'moonshot',   modelId: 'kimi-k2.6' },
@@ -149,6 +149,7 @@ export const EditorialDefaults = {
     { vendor: 'moonshot',   modelId: 'kimi-k2.5' },
     { vendor: 'xai',        modelId: 'grok-4.20-0309-non-reasoning' },
     { vendor: 'xai',        modelId: 'grok-4.3' },
+    { vendor: 'zai',        modelId: 'glm-5.3-flash' }, // 2026-08-27: 18B active, $0.15/$0.5 - the actual Z.ai fast tier (5.2 was a pre-flash placeholder)
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'deepseek',   modelId: 'deepseek-v4-flash' },
     // NVIDIA NIM: free trial catalog, tail picks (nemotron-3-nano-30b-a3b and nemotron-nano-9b-v2 dropped: NVIDIA EOL 2026-08-25)
@@ -204,6 +205,42 @@ export function llmsEditorialPickForDomain(
   }
   return undefined;
 }
+
+// --- Capability picks (editorial suggestions outside the domain system) ---
+
+/** Video-input hint copy - surfaced by the composer when a video URL is pasted on a non-capable model. */
+export const EditorialVideoInput = {
+  hintSwitch: `This model can't watch videos`,
+  actionSwitch: (modelLabel: string) => `Use ${modelLabel}`,
+  hintSetup: `Add a Gemini model to have the AI watch videos`,
+  actionSetup: 'Models',
+} as const;
+
+/**
+ * Pick the model to suggest for video-URL input: Gemini models only - most recent (pubDate desc),
+ * visible before hidden, native Google AI service breaking ties.
+ * Gemini-only because URL video (YouTube fetch) is a Gemini capability: other models may carry
+ * LLM_IF_Inputs_Video (e.g. Qwen video models on OpenRouter) but don't take URL-referenced video.
+ * NOTE: there's an argument for preferring CHEAP capable models instead - video is
+ * input-token heavy - revisit if the suggestion proves expensive in practice.
+ */
+export function llmsEditorialVideoInputPick(llms: ReadonlyArray<DLLM>): DLLM | undefined {
+  const capable = llms.filter(llm => llm.interfaces.includes(LLM_IF_Inputs_Video) && _isGeminiFamily(llm));
+  if (capable.length < 2) return capable[0];
+  return [...capable].sort((a, b) =>
+    ((isLLMHidden(a) ? 1 : 0) - (isLLMHidden(b) ? 1 : 0))
+    || ((getLLMPubDate(b)?.getTime() ?? 0) - (getLLMPubDate(a)?.getTime() ?? 0))
+    || ((a.vId === 'googleai' ? 0 : 1) - (b.vId === 'googleai' ? 0 : 1)),
+  )[0];
+}
+
+/** Gemini on any service: the native Google AI vendor, or a gemini-named ref elsewhere (e.g. OpenRouter `google/gemini-*`). */
+function _isGeminiFamily(llm: DLLM): boolean {
+  if (llm.vId === 'googleai') return true;
+  const llmRef = llm.initialParameters?.llmRef;
+  return typeof llmRef === 'string' && llmRef.toLowerCase().includes('gemini');
+}
+
 
 /** Tolerant id match: exact `llmRef`, dated-suffix prefix on `llmRef`, or service-prefixed DLLM id (e.g. `anthropic-1-claude-opus-4-7`). */
 function _editorialMatch(llm: DLLM, editorialId: string): boolean {

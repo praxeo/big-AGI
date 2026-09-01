@@ -91,6 +91,7 @@ export function useChatDrawerRenderItems(
   filterHasImageAssets: boolean,
   filterHasDocFragments: boolean,
   filterIsArchived: boolean,
+  filterOlderThanDays: number | null,
   grouping: ChatNavGrouping,
   searchSorting: ChatSearchSorting,
   showRelativeSize: boolean,
@@ -123,11 +124,16 @@ export function useChatDrawerRenderItems(
       const conversationsInFolder = !activeFolder ? conversations
         : conversations.filter(_c => activeFolder.conversationIds.includes(_c.id));
 
+      // filter 1.5: last-activity older than the selected cutoff
+      const ageCutoffMs = filterOlderThanDays === null ? null : Date.now() - filterOlderThanDays * 24 * 60 * 60 * 1000;
+      const conversationsInAge = ageCutoffMs === null ? conversationsInFolder
+        : conversationsInFolder.filter(_c => (_c.updated || _c.created || 0) < ageCutoffMs);
+
       // filter 2: preparation: lowercase the query
       const { isSearching, lcTextQuery } = isDrawerSearching(filterByQuery);
 
       // transform (the conversations into ChatNavigationItemData) + filter2 (if searching)
-      const chatNavItems = conversationsInFolder
+      const chatNavItems = conversationsInAge
         .map((_c): ChatNavigationItemData | null => {
 
           // optimized reduction to find stars/images/docs/and lowercased text for search
@@ -294,12 +300,13 @@ export function useChatDrawerRenderItems(
                 : filterHasImageAssets ? 'No image results'
                   : filterHasStars ? 'No starred results'
                     : filterIsArchived ? 'No archived conversations'
-                      : isSearching ? 'Text not found'
-                        : 'No conversations in folder',
+                      : filterOlderThanDays !== null ? 'No older conversations'
+                        : isSearching ? 'Text not found'
+                          : 'No conversations in folder',
         });
       } else {
         // filtering reminder (will be rendered with a clear button too)
-        if (filterHasBeamOpen || filterHasStars || filterHasImageAssets || filterHasDocFragments || filterIsArchived) {
+        if (filterHasBeamOpen || filterHasStars || filterHasImageAssets || filterHasDocFragments || filterIsArchived || filterOlderThanDays !== null) {
           renderNavItems.unshift({
             type: 'nav-item-info-message',
             message: `${filterIsArchived ? 'Showing' : 'Filtering by'} ${[
@@ -308,6 +315,7 @@ export function useChatDrawerRenderItems(
               filterHasImageAssets && 'images',
               filterHasDocFragments && 'attachments',
               filterIsArchived && 'archived',
+              filterOlderThanDays !== null && 'age',
             ].filter(Boolean).join(', ')}`,
           });
         }

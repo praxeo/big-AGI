@@ -1,7 +1,7 @@
 import type { GeminiWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/gemini.wiretypes';
 
 import type { DModelParameterId } from '~/common/stores/llms/llms.parameters';
-import { LLM_IF_GEM_CodeExecution, LLM_IF_GEM_Interactions, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_StripSys0, LLM_IF_HOTFIX_Sys0ToUsr0, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
+import { LLM_IF_GEM_CodeExecution, LLM_IF_GEM_Interactions, LLM_IF_HOTFIX_NoStream, LLM_IF_HOTFIX_StripImages, LLM_IF_HOTFIX_StripSys0, LLM_IF_HOTFIX_Sys0ToUsr0, LLM_IF_Inputs_Video, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
 import { Release } from '~/common/app.release';
 
 import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../llm.server.types';
@@ -18,7 +18,11 @@ const GEMINI_DEFAULT_TEMPERATURE = 1.0; // NOTE: Google deprecated the temperatu
 const geminiChatInterfaces: GeminiWire_API_Models_List.Model['supportedGenerationMethods'] = ['generateContent'];
 
 // unsupported interfaces
-const filterUnallowedNames = ['Legacy', 'Lyria']; // 'Lyria' also drops lyria-3-{clip,pro}-preview (2026-07: music generation via generateContent, audio output unsupported)
+const filterUnallowedNames = [
+  'Legacy',
+  'Lyria', // also drops lyria-3-{clip,pro}-preview (2026-07: music generation via generateContent, audio output unsupported)
+  'Transcribe', // gemini-3.5-transcribe(-live): STT for ASRx via the Interactions transcription surface (see asrx transcribe-gemini.ts) - its generateContent accepts and bills the audio but returns an EMPTY part (verified 2026-08-28), so it must not surface as a chat model
+];
 // const filterUnallowedInterfaces: GeminiWire_API_Models_List.Model['supportedGenerationMethods'] = [
 //   'generateAnswer',     // e.g. removes "models/aqa"
 //   'embedContent',       // e.g. removes "models/embedding-001"
@@ -42,6 +46,7 @@ const filterNotFoundModelNames: GeminiWire_API_Models_List.Model['name'][] = [
   'models/gemini-2.0-flash',
   'models/gemini-2.0-flash-001', // 404 as of 2026-07-22 (June 1, 2026 shutdown finally enforced)
   'models/gemini-3-pro-preview', // 404 as of 2026-07-22 (was silently routed to gemini-3.1-pro-preview since 2026-03-09)
+  'models/gemini-robotics-er-1.6-preview', // 404 as of 2026-08-31 (shutdown date enforced same-day; stale list replicas still flicker it)
 ];
 
 
@@ -72,7 +77,7 @@ const geminiExpFree: ModelDescriptionSchema['chatPrice'] = {
 };
 
 
-// Pricing based on https://ai.google.dev/gemini-api/docs/pricing (August 13, 2026)
+// Pricing based on https://ai.google.dev/gemini-api/docs/pricing (August 31, 2026)
 
 // NOTE(2027-01-01): 3.7/3.6 Flash introductory pricing expires December 31, 2026 - flip both consts
 // to the list prices in their comments (pricing page + latest-model page state the promo covers both)
@@ -101,12 +106,14 @@ const gemini35FlashLitePricing: ModelDescriptionSchema['chatPrice'] = {
   cache: { cType: 'oai-ac', read: 0.03 },
 };
 
-// Gemini Omni Flash Preview (video generation), paid-tier only. Official (2026-06/07):
+// Gemini Omni Flash (video generation), paid-tier only. Official (2026-06/07):
 //  - input  $1.50/MTok (text / image / video / audio)
 //  - output $9.00/MTok text (incl. thinking) OR $17.50/MTok video (5,792 tok/s of 720p, ~$0.10/s)
 // Our pricing model has a single output rate, not per-modality. A video-gen model's output is ~98%
 // video tokens (verified 2026-07-01: 57,920 of 58,948 output tokens were video), so we price output at
 // the VIDEO rate - the dominant modality. This slightly over-charges the tiny text/thinking slice.
+// Omni 1.1 (2026-08-27) adds resolution tiers (360p $0.03/s draft, 1080p $0.15/s, 4K $0.30/s); 720p
+// stays $0.10/s, so this single-rate approximation is unchanged at the default resolution.
 const geminiOmniPricing: ModelDescriptionSchema['chatPrice'] = {
   input: 1.50,
   output: 17.50,
@@ -191,10 +198,7 @@ const gemini31FlashTTSPricing: ModelDescriptionSchema['chatPrice'] = {
   // output: 20.00, // AUDIO - not ready for audio output yet (as of Apr 22, 2026)
 };
 
-const geminiRoboticsER16Pricing: ModelDescriptionSchema['chatPrice'] = {
-  input: 1.00, // text/image/video; audio is $2.00 but we don't differentiate yet
-  output: 5.00,
-};
+// REMOVED: geminiRoboticsER16Pricing (ER 1.6 shut down August 31, 2026)
 
 const geminiRoboticsER2Pricing: ModelDescriptionSchema['chatPrice'] = {
   input: 2.00, // flat rate for text/image/video/audio (no audio split, unlike ER 1.6); 2x over ER 1.6
@@ -206,7 +210,7 @@ const geminiRoboticsER2Pricing: ModelDescriptionSchema['chatPrice'] = {
 // REMOVED: gemini20FlashPricing, gemini20FlashLitePricing (2.0 Flash family defs expunged 2026-08-13, gone from the list API)
 
 
-const IF_25 = [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_GEM_CodeExecution, LLM_IF_OAI_PromptCaching];
+const IF_25 = [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_GEM_CodeExecution, LLM_IF_OAI_PromptCaching, LLM_IF_Inputs_Video];
 const IF_30 = [...IF_25]; // Note: Gemini 3 Developer Guide recommends temperature=1.0, which is now set as the default via initialTemperature
 
 // Gemini Thinking Control (as of 2026-08-13):
@@ -578,17 +582,35 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
 
   // Managed Agents - require the Interactions API (agent path, not generateContent)
 
-  // Gemini Omni Flash Preview - Released June 30, 2026. EXPERIMENTAL video generation.
+  // Gemini Omni 1.1 Flash - Released August 27, 2026. Video generation, the Omni family upgrade:
+  // scenes extend in 10s increments to a cumulative 40s (was 3-10s), <=3s of style-reference footage
+  // as input, per-resolution rates (360p draft .. 4K). Same Interactions MODEL-path dispatch as the
+  // 1.0 preview below (the adapter's `isModelOmni` gate matches 'omni' in the id).
+  {
+    id: 'models/gemini-omni-1.1-flash',
+    labelOverride: 'Gemini Omni 1.1 Flash (video)',
+    pubDate: '20260827',
+    chatPrice: geminiOmniPricing, // output at the 720p default video rate - see the const note for the 1.1 resolution tiers
+    interfaces: [
+      LLM_IF_HOTFIX_Sys0ToUsr0,
+      LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_GEM_Interactions,
+    ],
+    benchmark: undefined, // video generation, not benchmarkable on standard tests
+  },
+
+  // Gemini Omni Flash Preview - Released June 30, 2026; DEPRECATED: shutdown September 30, 2026 (announced with the Omni 1.1 GA). EXPERIMENTAL video generation.
   // Text/image -> a short 720p video (3-10s, with baked-in audio). Rides the Interactions API but on the
   // MODEL path (not an agent): the adapter's `isOmni` gate sends `model` + omits store/background, and the
   // parser emits the inline mp4 as an EPHEMERAL video (played in-memory, NOT saved). Audio/video INPUT are
   // unsupported (verified 2026-07-01: "Audio input modality is not enabled"). Vision (image) input is used
   // for image-to-video. Output is billed by tokens (~58k for a short clip). See kb/modules/LLM-gemini-interactions.md.
   {
+    hidden: true, // superseded by gemini-omni-1.1-flash (2026-08-27) - kept resolvable for users who already selected it
     id: 'models/gemini-omni-flash-preview',
     labelOverride: 'Gemini Omni Flash Preview (video)',
     pubDate: '20260630',
     isPreview: true,
+    deprecated: '2026-09-30',
     chatPrice: geminiOmniPricing, // paid-tier only: input $1.50, output priced at the video rate $17.50/MTok (~$0.10/s of 720p)
     interfaces: [
       LLM_IF_HOTFIX_Sys0ToUsr0, //
@@ -732,20 +754,7 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     benchmark: undefined, // Robotics model, not benchmarkable on standard tests
   },
 
-  // Gemini Robotics-ER 1.6 Preview - Released April 14, 2026 - DEPRECATED: shutdown August 31, 2026 (still live as of July 31, 2026)
-  // Enhanced embodied reasoning with instrument reading and improved spatial reasoning; superseded by Robotics-ER 2
-  {
-    id: 'models/gemini-robotics-er-1.6-preview',
-    labelOverride: 'Gemini Robotics-ER 1.6 Preview',
-    pubDate: '20260414',
-    isPreview: true,
-    deprecated: '2026-08-31',
-    chatPrice: geminiRoboticsER16Pricing,
-    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
-    parameterSpecs: [{ paramId: 'llmVndGeminiThinkingBudget' }],
-    benchmark: undefined, // Robotics model, not benchmarkable on standard tests
-  },
-
+  // REMOVED: models/gemini-robotics-er-1.6-preview (shutdown August 31, 2026, enforced same-day: unlisted + hard-404 on generateContent; superseded by Robotics-ER 2)
   // REMOVED: models/gemini-robotics-er-1.5-preview (shutdown April 30, 2026; gone from the list API entirely as of 2026-08-13)
 
   // 2.5 Flash Image
@@ -999,7 +1008,8 @@ const _sortOderIdPrefix: string[] = [
   'models/gemini-3.5',
   'models/gemini-3.1-pro-preview',
   'models/gemini-3.1-pro-preview-customtools',
-  'models/gemini-omni-flash-preview', // display: after the 3.1 Pro models, before Nano Banana 2 (this list, not the _knownGeminiModels order, drives display sort - geminiSortModels)
+  'models/gemini-omni-1.1-flash',
+  'models/gemini-omni-flash-preview',
   'models/gemini-3.1-flash-image',
   'models/gemini-3.1-flash-image-preview',
   'models/gemini-3.1-flash-lite-image',

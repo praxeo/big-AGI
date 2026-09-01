@@ -108,6 +108,7 @@ export const LLMS_DEFS_EXTRA_BUCKETS = {
   _openaiCompat: {
     files: [
       'openai/models/arceeai.models.ts',
+      'openai/models/baseten.models.ts',
       'openai/models/chutesai.models.ts',
       'openai/models/fastapi.models.ts',
       'openai/models/fireworksai.models.ts',

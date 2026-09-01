@@ -6,7 +6,7 @@ import { imageTokensForLLM } from '~/common/tokens/tokens.image';
 import { textTokensForLLM } from '~/common/tokens/tokens.text';
 
 import type { DMessageRole } from './chat.message';
-import { DMessageAttachmentFragment, DMessageFragment, isAttachmentFragment, isContentFragment, isContentOrAttachmentFragment, isDocPart, isVoidFragment } from './chat.fragments';
+import { DMessageAttachmentFragment, DMessageFragment, hostedResourceMutedText, isAttachmentFragment, isContentFragment, isContentOrAttachmentFragment, isDocPart, isVoidFragment } from './chat.fragments';
 
 
 export function estimateTokensForFragments(llm: DLLM, role: DMessageRole, fragments: DMessageFragment[], addTopGlue: boolean, debugFrom: string) {
@@ -89,9 +89,14 @@ function _fragmentTokens(llm: DLLM, role: DMessageRole, fragment: DMessageFragme
         return estimateImageTokens(forcedSize || cPart.width, forcedSize || cPart.height, debugFrom, llm);
       case 'text':
         return estimateTextTokens(cPart.text, llm, debugFrom);
+      case 'hosted_resource':
+        if (cPart.resource.via === 'url')
+          return cPart.muted
+            ? estimateTextTokens(hostedResourceMutedText(cPart.resource), llm, debugFrom) // muted: only the text stub goes over the wire
+            : 0; // URL-referenced media: tokenized provider-side (duration unknown here) - not estimable
+        break; // warn
       case 'tool_invocation':
       case 'tool_response':
-      case 'hosted_resource':
         break; // warn
       default:
         const _exhaustiveCheck: never = cPt;
