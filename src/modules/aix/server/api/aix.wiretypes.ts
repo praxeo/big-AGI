@@ -447,9 +447,9 @@ export namespace AixWire_Tooling {
    * - function_call: MUST use a specific Function Tool [DISABLED 2026-07-17 - see below]
    * - none: same as not giving the model any tool [REMOVED - just give no tools]
    *
-   * @deprecated forced tool use is a thing of the past - 2026-06-09: Claude Fable/Mythos 5 reject it
-   * with a 400 ('tool_choice forces tool use is not compatible with this model.'); the Anthropic
-   * adapter coerces to 'auto' + a system steering hint. New code should use 'auto' (or no policy)
+   * @deprecated forced tool use is a thing of the past - 2026-06-09: Claude Fable/Mythos 5 (and 5.1) reject it
+   * with a 400 ('tool_choice ... not supported for this model'); the Anthropic and OpenRouter adapters
+   * coerce to 'auto' + a system steering hint. New code should use 'auto' (or no policy)
    * and instruct the model to call the tool in the prompt instead.
    *
    * 2026-07-17: 'function_call' (forced NAMED tool) commented out AIX-wide: Moonshot also 400s it on
@@ -458,7 +458,8 @@ export namespace AixWire_Tooling {
    */
   export const ToolsPolicy_schema = z.discriminatedUnion('type', [
     z.object({ type: z.literal('auto') }),
-    z.object({ type: z.literal('any') /*, parallel: z.boolean()*/ }), // @deprecated - prefer 'auto' + prompt steering
+    // @deprecated - prefer 'auto' + prompt steering
+    z.object({ type: z.literal('any') /*, parallel: z.boolean()*/ }),
     // z.object({ type: z.literal('function_call'), function_call: z.object({ name: z.string() }) }), // DISABLED 2026-07-17 - forced named tool, see deprecation note above
   ]);
 
@@ -748,6 +749,7 @@ export namespace AixWire_Particles {
     | { cg: 'set-model', name: string }
     | { cg: 'set-provider-infra', label: string }
     | { cg: 'set-upstream-handle', handle: { uht: 'vnd.oai.responses' | 'vnd.gem.interactions', runId: string, createdAt: number | null, expiresAt: number | null } }
+    | { cg: 'input-transform', itt: 'thinking-dropped', cause: 'history-edited' | 'model-switch' | (string & {}), reason: string, paths: string[] } // the server rewrote our request: dropped replayed thinking blocks, one particle per vendor reason; `cause` normalizes `reason` (open set), `paths` are wire locations; client-side log for now
     | { cg: '_debugDispatchRequest', security: 'dev-env', dispatchRequest: { url: string, headers: string, body: string, bodySize: number } } // may generalize this in the future
     | { cg: '_debugProfiler', measurements: Record<string, number | string>[] };
 

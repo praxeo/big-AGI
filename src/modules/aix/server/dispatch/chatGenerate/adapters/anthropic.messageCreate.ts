@@ -37,7 +37,7 @@ export type AixAnthropicTarget = 'anthropic' | 'bedrock';
  * Determines which Anthropic hosted features will be active for a request.
  * Single source of truth for both the request builder (tools, container) and the dispatch (beta headers).
  */
-export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: AixAPIChatGenerate_Request): AnthropicHostedFeatures {
+export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: AixAPIChatGenerate_Request, target: AixAnthropicTarget = 'anthropic'): AnthropicHostedFeatures {
 
   // Allow/deny auto-adding hosted tools when custom tools are present with a restrictive policy
   const _hasAixCustomTools = chatGenerate.tools?.some(t => t.type === 'function_call');
@@ -76,6 +76,7 @@ export function aixAnthropicHostedFeatures(model: AixAPI_Model, chatGenerate: Ai
     enableSkills: !!model.vndAntSkills,
     enableStrictOutputs: !!model.strictJsonOutput || !!model.strictToolInvocations,
     enableToolAdvanced20251120: !!model.vndAntToolSearch || programmaticToolCalling,
+    enableThinkingBindingControls: target === 'anthropic', // every thinking request; Bedrock 400s the body field (probed 2026-09-01)
     modelIdForPerModelFeatures: model.id,
   };
 }
@@ -218,6 +219,7 @@ export function aixToAnthropicMessageCreate(target: AixAnthropicTarget, model: A
   // [Anthropic, 2026-06-09] Fable 5 / Mythos 5: adaptive is the only thinking mode - 'enabled' (budget_tokens) and 'disabled' return 400
   // [2026-07-24] Opus 5 launch-verified: adaptive-only too ('enabled'/budget_tokens return 400), so 'opus' stays in this regex.
   // (Opus 5 nuance: 'disabled' is legal at effort <= high, but we coerce to adaptive anyway - single always-thinking entry.)
+  // [2026-09-01] Fable/Mythos 5.1: unchanged (launch-verified) - the regex covers '-5-1'.
   const hotFixAdaptiveThinkingOnlyModel = /claude-(fable|mythos|opus)-5/.test(model.id);
 
   // HOTFIX: Fable/Mythos 5 ONLY reject forced tool use: 400 'tool_choice forces tool use is not compatible with this model.'
@@ -225,6 +227,7 @@ export function aixToAnthropicMessageCreate(target: AixAnthropicTarget, model: A
   // reliably calls the tool when instructed. Forced tool use is deprecated AIX-wide, see ToolsPolicy_schema.
   // [2026-07-24] Opus 5 EXCLUDED (launch probes): tool_choice 'any'/'tool' return 200 with thinking left to its
   // adaptive-on default, so requests pass through unchanged (thinking is skipped below when tools are forced).
+  // [2026-09-01] Fable/Mythos 5.1: same 400, reworded 'tool_choice: type "tool" and "any" are not supported for this model.'
   const hotFixNoForcedToolUse = /claude-(fable|mythos)-5/.test(model.id);
   if (hotFixNoForcedToolUse && payload.tool_choice && (payload.tool_choice.type === 'any' || payload.tool_choice.type === 'tool')) {
     const mustUseHint = payload.tool_choice.type === 'tool'
@@ -266,6 +269,12 @@ export function aixToAnthropicMessageCreate(target: AixAnthropicTarget, model: A
       //       see the note on llms.parameters.ts: 'llmVndAntThinkingBudget'
     }
   }
+
+  // [Anthropic, 2026-09-01] Preserved thinking: on Fable 5.1+ a replayed thinking block is valid only against the unchanged
+  // system/tools/history prefix, and new accounts 400 after any edit (routine here: edits, deletes, persona/tool changes).
+  // 'drop_block' drops the stale blocks instead (accepted on every model, probed); the parser relays the drops as 'input-transform' particles.
+  if (hostedFeatures.enableThinkingBindingControls && payload.thinking && payload.thinking.type !== 'disabled')
+    payload.thinking.block_binding = { prefix_mismatch_behavior: 'drop_block' };
 
   // [Anthropic] Effort parameter
   const reasoningEffort = model.reasoningEffort; // ?? model.vndAntEffort;
@@ -423,6 +432,10 @@ export function aixToAnthropicMessageCreate(target: AixAnthropicTarget, model: A
 
     // Fast inference mode is not offered on partner clouds: 400 'speed: Extra inputs are not permitted'
     delete payload.speed;
+
+    // Preserved-thinking controls: 400 'thinking.adaptive.block_binding: Extra inputs are not permitted' (never set for this target)
+    if (payload.thinking && payload.thinking.type !== 'disabled')
+      delete payload.thinking.block_binding;
   }
 
   // Preemptive error detection with server-side payload validation before sending it upstream
