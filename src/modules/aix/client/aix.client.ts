@@ -77,7 +77,7 @@ export function aixCreateModelFromLLMOptions(
     llmVndBedrockAPI,
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
-    llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
+    llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiServiceTier, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
     llmVndUnslothThinking, llmVndUnslothWebSearch,
     llmVndOrtWebSearch,
     llmVndPerplexityDateFilter, llmVndPerplexitySearchMode,
@@ -174,6 +174,7 @@ export function aixCreateModelFromLLMOptions(
 
     // OpenAI
     ...(llmVndOaiReasoningMode ? { vndOaiReasoningMode: llmVndOaiReasoningMode } : {}),
+    ...(llmVndOaiServiceTier ? { vndOaiServiceTier: llmVndOaiServiceTier } : {}),
     ...(llmVndOaiResponsesAPI ? { vndOaiResponsesAPI: true } : {}),
     ...(llmVndOaiRestoreMarkdown ? { vndOaiRestoreMarkdown: llmVndOaiRestoreMarkdown } : {}),
     ...(llmVndOaiVerbosity ? { vndOaiVerbosity: llmVndOaiVerbosity } : {}),

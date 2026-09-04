@@ -13,6 +13,7 @@
  */
 
 import type { AixWire_Particles } from '~/modules/aix/server/api/aix.wiretypes';
+import { AixWire_Vendors } from '~/modules/aix/server/api/aix.wiretypes';
 import { AixDemuxers } from '~/modules/aix/server/dispatch/stream.demuxers';
 
 import type { LabEvent, LabRun } from './trace';
@@ -38,6 +39,7 @@ export function checkWireGrammar(run: LabRun): LabFinding[] {
     case 'anthropic-messages':
       return run.segments.flatMap((seg, si) => _grammarAnthropic(seg.events, `seg${si}`));
     case 'openai-responses':
+    case 'metaai-responses':
       return run.segments.flatMap((seg, si) => _grammarOpenAIResponses(seg.events, `seg${si}`));
     case 'openai-chat':
       return run.segments.flatMap((seg, si) => _grammarOpenAIChat(seg.events, `seg${si}`));
@@ -227,7 +229,7 @@ interface _OaiItemAcc {
 }
 
 export function analyzeOaiSequencing(run: LabRun): LabFinding[] {
-  if (run.meta.flavor !== 'openai-responses' || !run.meta.streaming) return [];
+  if ((run.meta.flavor !== 'openai-responses' && run.meta.flavor !== 'metaai-responses') || !run.meta.streaming) return [];
   const findings: LabFinding[] = [];
 
   run.segments.forEach((seg, si) => {
@@ -530,7 +532,8 @@ function _wireAtoms(run: LabRun): _WireAtoms | null {
       return atoms;
     }
 
-    case 'openai-responses': {
+    case 'openai-responses':
+    case 'metaai-responses': {
       const itemsByIndex = new Map<number, { type: string; id?: string }>();
       const addFullItem = (item: any, index: number) => {
         itemsByIndex.set(index, { type: item?.type, id: item?.id });
@@ -698,7 +701,7 @@ function _particleAtoms(particles: AixWire_Particles.ChatGenerateOp[]): _WireAto
         case 'svs':
           // opaque continuity blobs ARE the signature representation for some vendors
           if ((p.vendor === 'gemini' && (p.state as any)?.thoughtSignature)
-            || ((p.vendor === 'openai' || p.vendor === 'xai') && (p.state as any)?.reasoningItem?.encryptedContent))
+            || (AixWire_Vendors.isRspVendor(p.vendor) && (p.state as any)?.reasoningItem?.encryptedContent))
             atoms.reasoningSigs++;
           break;
       }

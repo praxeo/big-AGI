@@ -2,7 +2,7 @@ import { safeErrorString } from '~/server/wire';
 
 import { hasKeys } from '~/common/util/objectUtils';
 
-import type { AixWire_Particles } from '../../../api/aix.wiretypes';
+import type { AixWire_Particles, AixWire_Vendors } from '../../../api/aix.wiretypes';
 import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { AIX_OAI_DEFAULT_IMAGE_GEN_MODEL } from '../adapters/openai.responsesCreate';
@@ -180,6 +180,10 @@ class ResponseParserStateMachine {
     return !!diff;
   }
 
+  get responseModel() {
+    return this.#response?.model;
+  }
+
   get responseId() {
     return this.#response?.id ?? 'new response';
   }
@@ -319,17 +323,17 @@ class ResponseParserStateMachine {
 /**
  * OpenAI Responses API Streaming Parser
  *
- * @param vendor 'openai' (default) or 'xai' - tags the reasoning continuity handle so it round-trips back
- *   to the SAME provider. The OpenAI Responses wire format is shared with xAI, but the encrypted_content blob
+ * @param rspVendor the Responses vendor (AixWire_Vendors.RSP_VENDORS) - tags the reasoning continuity handle so it round-trips back
+ *   to the SAME provider. The OpenAI Responses wire format is shared with xAI and Meta, but the encrypted_content blob
  *   and the rs_... id are vendor-server-private (different keys, different state). Mixing them produces
  *   "Item with id rs_... not found" or worse silent corruption.
  */
-export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): ChatGenerateParseFunction {
+export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspVendor): ChatGenerateParseFunction {
 
   const R = new ResponseParserStateMachine();
 
   // [xAI] grok-4.6 leaks internal citation directives into web_search answer text - strip them (see xai.transform-citationsLeak.ts)
-  const xaiCitationsFilter = vendor === 'xai' ? new XAIDefectiveCitationsFilter() : undefined;
+  const xaiCitationsFilter = rspVendor === 'xai' ? new XAIDefectiveCitationsFilter() : undefined;
 
   return function(pt: IParticleTransmitter, eventData: string) {
 
@@ -476,7 +480,7 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
         if (event.item.type === 'message') {
           const messagePhase = event.item.phase;
           if (messagePhase === 'commentary' || messagePhase === 'final_answer')
-            pt.sendSetVendorState({ p: 'svs', vendor: vendor, state: { messagePhase } });
+            pt.sendSetVendorState({ p: 'svs', vendor: rspVendor, state: { messagePhase } });
         }
         break;
 
@@ -503,18 +507,18 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
             // - neither: nothing to round-trip
             // [DEV] surface divergences from this contract
             if (!reasoningId && !reasoningEC)
-              console.warn(`[DEV] AIX: ${vendor} Responses: reasoning item done with neither id nor encrypted_content - no continuity handle captured for this turn`, { doneItem });
+              console.warn(`[DEV] AIX: ${rspVendor} Responses: reasoning item done with neither id nor encrypted_content - no continuity handle captured for this turn`, { doneItem });
             else if (!reasoningEC)
-              console.log(`[DEV] AIX: ${vendor} Responses: reasoning item done has id but no encrypted_content - dropping handle (stateless round-trip requires include:['reasoning.encrypted_content'] on the request)`);
+              console.log(`[DEV] AIX: ${rspVendor} Responses: reasoning item done has id but no encrypted_content - dropping handle (stateless round-trip requires include:['reasoning.encrypted_content'] on the request)`);
             else if (!reasoningId)
-              console.log(`[DEV] AIX: ${vendor} Responses: reasoning item done has encrypted_content but no id - dropping handle (incomplete reasoning item from upstream)`);
+              console.log(`[DEV] AIX: ${rspVendor} Responses: reasoning item done has encrypted_content but no id - dropping handle (incomplete reasoning item from upstream)`);
 
             if (reasoningEC && reasoningId) {
               // Defensive: ensure an ma fragment exists as the attach target for the svs particle below.
               pt.appendReasoningText('');
               pt.sendSetVendorState({
                 p: 'svs',
-                vendor: vendor,
+                vendor: rspVendor,
                 state: {
                   reasoningItem: {
                     id: reasoningId,
@@ -557,7 +561,7 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
                 _imageGenerationMimeType(doneItem), // infer from output_format echoed in the item
                 igResult,
                 igRevisedPrompt || 'Generated image',
-                R.imageGenToolCfg?.model || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: prefer the cached tool config, fallback to current default
+                R.imageGenToolCfg?.model || R.responseModel || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: the cached tool config, else the responding model ([Meta AI] muse-image-1.0 echoes no tools), else the OpenAI default
                 igRevisedPrompt || '', // prompt used
               );
             else
@@ -875,10 +879,10 @@ export function createOpenAIResponsesEventParser(vendor: 'openai' | 'xai'): Chat
 /**
  * OpenAI Responses API Non-Streaming Parser
  *
- * @param vendor 'openai' (default) or 'xai' - see createOpenAIResponsesEventParser for the rationale on
- *   why xAI gets its own _vnd namespace (different encryption keys + private item ids).
+ * @param rspVendor the Responses vendor (AixWire_Vendors.RSP_VENDORS) - see createOpenAIResponsesEventParser for the rationale on
+ *   why each vendor gets its own _vnd namespace (different encryption keys + private item ids).
  */
-export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGenerateParseFunction {
+export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendor): ChatGenerateParseFunction {
 
   const parserCreationTimestamp = Date.now();
 
@@ -1021,11 +1025,11 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
 
           // [DEV] surface cases that diverge from our continuity round-trip expectations (see streaming path for rationale)
           if (!reasoningId && !reasoningEC)
-            console.warn(`[DEV] AIX: ${vendor}-Response-NS: reasoning item has neither id nor encrypted_content - no continuity handle captured for this turn`, { oItem });
+            console.warn(`[DEV] AIX: ${rspVendor}-Response-NS: reasoning item has neither id nor encrypted_content - no continuity handle captured for this turn`, { oItem });
           else if (!reasoningEC)
-            console.log(`[DEV] AIX: ${vendor}-Response-NS: reasoning item has id but no encrypted_content - dropping handle (stateless round-trip requires include:['reasoning.encrypted_content'] on the request)`);
+            console.log(`[DEV] AIX: ${rspVendor}-Response-NS: reasoning item has id but no encrypted_content - dropping handle (stateless round-trip requires include:['reasoning.encrypted_content'] on the request)`);
           else if (!reasoningId)
-            console.log(`[DEV] AIX: ${vendor}-Response-NS: reasoning item has encrypted_content but no id - dropping handle (incomplete reasoning item from upstream)`);
+            console.log(`[DEV] AIX: ${rspVendor}-Response-NS: reasoning item has encrypted_content but no id - dropping handle (incomplete reasoning item from upstream)`);
 
           // Capture ONLY when both id and encryptedContent are present (canonical, complete handle).
           if (reasoningEC && reasoningId) {
@@ -1033,7 +1037,7 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
             pt.appendReasoningText('');
             pt.sendSetVendorState({
               p: 'svs',
-              vendor: vendor,
+              vendor: rspVendor,
               state: {
                 reasoningItem: {
                   id: reasoningId,
@@ -1061,7 +1065,7 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
 
           // [gpt-5.4+] forward the message phase before the item's text (mirrors the streaming path)
           if (messagePhase === 'commentary' || messagePhase === 'final_answer')
-            pt.sendSetVendorState({ p: 'svs', vendor: vendor, state: { messagePhase } });
+            pt.sendSetVendorState({ p: 'svs', vendor: rspVendor, state: { messagePhase } });
 
           // Message
           for (const content of messageContent) {
@@ -1069,7 +1073,7 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
             switch (contentType) {
               case 'output_text':
                 // [xAI] strip leaked citation directives (see xai.transform-citationsLeak.ts)
-                pt.appendText(vendor === 'xai' ? stripXAIDefectiveCitations(content.text || '') : (content.text || ''));
+                pt.appendText(rspVendor === 'xai' ? stripXAIDefectiveCitations(content.text || '') : (content.text || ''));
 
                 // -> URL Citations: Parse annotations if present
                 if (content.annotations && Array.isArray(content.annotations))
@@ -1120,7 +1124,7 @@ export function createOpenAIResponseParserNS(vendor: 'openai' | 'xai'): ChatGene
               _imageGenerationMimeType(oItem), // infer from output_format echoed in the item
               igResult,
               igRevisedPrompt || 'Generated image',
-              imageGenToolCfg?.model || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: read from echoed tools (API does not echo model per-item), fallback to current default
+              imageGenToolCfg?.model || response.model || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: the echoed tools (the API does not echo the model per item), else the responding model ([Meta AI] muse-image-1.0 echoes no tools), else the OpenAI default
               igRevisedPrompt || '', // prompt used
             );
           else
@@ -1298,17 +1302,21 @@ function _prettyImageGenConfigSuffix(cfg: TImageGenToolCfg | undefined): string 
 /**
  * Infers the mime type from the image_generation_call output item's output_format field.
  * The API echoes the output_format in the done item (e.g. 'png', 'webp', 'jpeg').
+ * [Meta AI] muse-image-1.0 echoes no output_format (and defaults to webp): sniff the base64 magic instead.
  */
-function _imageGenerationMimeType(item: { output_format?: string }): string {
+function _imageGenerationMimeType(item: { output_format?: string, result?: string }): string {
   switch (item?.output_format) {
     case 'webp':
       return 'image/webp';
     case 'jpeg':
       return 'image/jpeg';
     case 'png':
-    default:
       return 'image/png';
   }
+  const b64Head = item?.result?.slice(0, 5) ?? '';
+  if (b64Head.startsWith('UklGR')) return 'image/webp'; // 'RIFF....WEBP'
+  if (b64Head.startsWith('/9j/')) return 'image/jpeg'; // 0xFF 0xD8 0xFF
+  return 'image/png'; // 'iVBOR' (0x89 'PNG'), and the OpenAI default
 }
 
 /**
