@@ -65,6 +65,7 @@ checks report on top). Replays of a capture are deterministic and diffed automat
 |---|---|---|---|
 | anthropic-messages | typed SSE, explicit block lifecycle | claude-sonnet-4-6 | `codeExec` unlocks via a PTC tool (`allowed_callers: ['code_execution']`) - there is no direct switch |
 | openai-responses | typed events, sequence_number + addressed items | gpt-5.2 | `--oracle` supported; no hosted fetch tool |
+| metaai-responses | same grammar on api.meta.ai, `data: [DONE]` terminator, interleaved items | muse-spark-1.3 | reasoning + hosted `web_search`; no code exec / fetch; `--model muse-image-1.0 --no-stream` for image output |
 | openai-chat | chunked deltas, `[DONE]` terminator | gpt-4.1-mini | degenerate grammar, no hosted tools |
 | gemini-generate | chunked full objects, no event types | gemini-3-flash-preview | spans are parser-inferred |
 | gemini-interactions | typed step events | antigravity-preview-05-2026 | agent-implicit tools; resumable |
@@ -121,6 +122,9 @@ output item (fixed in `outputItemEnter`). The wire is, as of today, strictly ord
 - **Known parser asymmetries found so far**: OpenAI code_interpreter emits a `code-exec`
   op-state only in streaming (NS emits cei/cer without it); Anthropic streaming used to crash
   on PTC pre-populated tool_use input where NS handled it (fixed).
+- **Oracle GET drops code_interpreter outputs**: the resume dispatch sends no `include`, so the
+  same-generation oracle projection lacks `cer` (S: cei -> cer -> text; ORACLE: cei -> text) and any
+  encrypted reasoning part. Lab limitation, not a parser asymmetry - identical on 5.6 Luna and 6 Astra.
 - **Whitespace**: streaming injects `\n\n` spacers between tool blocks and text (both modes,
   slightly different placement); text char counts run a few chars above wire on Anthropic.
 - **Vendor-generated ids** (tool call ids, item ids) differ across generations by definition.

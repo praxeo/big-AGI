@@ -1,9 +1,12 @@
-import type { DalleImageSize, DalleModelId, DalleModelSelection, DProfileDalle } from './t2i.types';
+import type { DalleImageQualityGI, DalleModelId, DalleModelSelection, DalleSizeGI, DProfileDalle } from './t2i.types';
+
+
+// configuration
+export const DALLE_DEFAULT_MODEL_ID: DalleModelId = 'gpt-image-2.5-flare'; // 'Auto' selection, and fallback when none is set
+export const DALLE_DEFAULT_IMAGE_SIZE: DalleSizeGI = '1024x1024';
 
 
 // --- OpenAI/DALL·E-protocol model catalog helpers ---
-
-export const DALLE_DEFAULT_IMAGE_SIZE: DalleImageSize = '1024x1024'; // this works in all
 
 /**
  * Resolve the actual DALL-E model to use
@@ -11,31 +14,31 @@ export const DALLE_DEFAULT_IMAGE_SIZE: DalleImageSize = '1024x1024'; // this wor
  * @returns The concrete model ID to use
  */
 export function resolveDalleModelId(selection: DalleModelSelection): DalleModelId {
-  // Auto-select latest model when null
-  if (selection === null) {
-    return 'gpt-image-2'; // Current latest image drawing model
-  }
-  return selection;
+  return selection ?? DALLE_DEFAULT_MODEL_ID;
+}
+
+export const DALLE_MODEL_IDS: readonly DalleModelId[] = ['gpt-image-2.5-flare', 'gpt-image-2.5-sunburst', 'gpt-image-2', 'gpt-image-1.5', 'gpt-image-1', 'gpt-image-1-mini'];
+
+/** Persisted profiles may carry retired ids (e.g. dall-e-3) - the store migration nulls them, this is the runtime guard. */
+export function isDalleModelId(modelId: unknown): modelId is DalleModelId {
+  return (DALLE_MODEL_IDS as readonly unknown[]).includes(modelId);
+}
+
+/** gpt-image-2.5 (flare, sunburst): 'xhigh' and 'max' quality tiers, arbitrary sizes (not exposed yet) */
+export function isGPTImage25ModelId(modelId: DalleModelId): boolean {
+  return modelId === 'gpt-image-2.5-flare' || modelId === 'gpt-image-2.5-sunburst';
 }
 
 /**
- * Get the model family for a given image model.
- * Models in the same family share settings, capabilities, and UI.
- *
- * @param modelId - The specific model ID
- * @returns The model family identifier
- *
- * Future: When adding new model families (e.g. Google Imagen, xAI):
- * - Add new return types: 'google-imagen' | 'xai-grok-image'
- * - Update all family-based checks to handle new families
- * - Each family can have its own settings/pricing structure
+ * Clamp a GPT Image quality to what the model accepts - the API returns 400 otherwise.
+ * Verified 2026-09-09: 'xhigh'/'max' rejected by gpt-image-2 and older; gpt-image-1-mini has no 'high'.
  */
-export function getImageModelFamily(modelId: DalleModelId): 'gpt-image' | 'dall-e-3' | 'dall-e-2' {
-  if (modelId === 'gpt-image-2' || modelId === 'gpt-image-1.5' || modelId === 'gpt-image-1' || modelId === 'gpt-image-1-mini')
-    return 'gpt-image';
-  if (modelId === 'dall-e-3')
-    return 'dall-e-3';
-  return 'dall-e-2';
+export function clampGPTImageQuality(modelId: DalleModelId, quality: DalleImageQualityGI): DalleImageQualityGI {
+  if ((quality === 'xhigh' || quality === 'max') && !isGPTImage25ModelId(modelId))
+    return 'high';
+  if (quality === 'high' && modelId === 'gpt-image-1-mini')
+    return 'medium';
+  return quality;
 }
 
 /** Default profile for the openai/azure/localai (DALL·E-protocol) vendors. */
@@ -43,17 +46,12 @@ export function t2iDefaultDalleProfile(): DProfileDalle {
   return {
     dialect: 'dalle',
     dalleModelId: null, // auto-select latest
-    dalleNoRewrite: false,
     dalleSizeGI: '1024x1024',
     dalleQualityGI: 'high',
     dalleBackgroundGI: 'auto',
     dalleOutputFormatGI: 'webp',
     dalleOutputCompressionGI: 100,
     dalleModerationGI: 'low',
-    dalleSizeD3: '1024x1024',
-    dalleQualityD3: 'hd',
-    dalleStyleD3: 'vivid',
-    dalleSizeD2: '1024x1024',
   };
 }
 
@@ -70,7 +68,7 @@ export const OPENROUTER_IMAGE_MODELS: { value: string, label: string }[] = [
   { value: 'google/gemini-3-pro-image', label: 'Gemini 3 Pro Image (Nano Banana Pro)' },
   { value: 'google/gemini-3.1-flash-image', label: 'Gemini 3.1 Flash Image' },
   { value: 'google/gemini-2.5-flash-image', label: 'Gemini 2.5 Flash Image (Nano Banana)' },
-  { value: 'openai/gpt-image-2', label: 'GPT Image 2' },
+  { value: 'openai/gpt-image-2.5-flare', label: 'GPT Image 2.5 Flare' },
   { value: 'openai/gpt-image-1-mini', label: 'GPT Image 1 Mini' },
   { value: 'black-forest-labs/flux.2-max', label: 'FLUX.2 Max' },
   { value: 'black-forest-labs/flux.2-pro', label: 'FLUX.2 Pro' },
@@ -106,7 +104,7 @@ export function openRouterImageModelLabel(modelId: string | null): string {
 export function t2iIsPainterName(generatorName: string | undefined): boolean {
   if (!generatorName) return false;
   return generatorName.startsWith('GPT Image')
-    || generatorName.startsWith('DALL·E')
+    || generatorName.startsWith('DALL·E') // retired painter, still in message history
     || generatorName === 'LocalAI'
     || generatorName === 'Prodia' // legacy painter
     || OPENROUTER_IMAGE_MODELS.some(m => m.label === generatorName); // OpenRouter painters are the model labels

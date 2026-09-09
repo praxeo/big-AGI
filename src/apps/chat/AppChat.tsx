@@ -49,7 +49,7 @@ import { Composer } from './components/composer/Composer';
 import { LiveSvgAnimator } from './components/live-svg/LiveSvgAnimator';
 import { PaneTitleOverlay } from './components/PaneTitleOverlay';
 import { useComposerAutoHide } from './components/composer/useComposerAutoHide';
-import { usePanesManager } from './components/panes/store-panes-manager';
+import { getOtherPanesConversationIds, usePanesManager } from './components/panes/store-panes-manager';
 
 import type { ChatExecuteMode } from './execute-mode/execute-mode.types';
 
@@ -345,7 +345,9 @@ export function AppChat() {
   const handleConversationNewInFocusedPane = React.useCallback((forceNoRecycle: boolean, isIncognito: boolean) => {
 
     // create conversation (or recycle the existing top-of-stack empty conversation)
-    const conversationId = (recycleNewConversationId && !forceNoRecycle && !isIncognito)
+    // never recycle a chat shown in another pane: both panes would end up on the same chat
+    const recycleShownElsewhere = !!recycleNewConversationId && getOtherPanesConversationIds().includes(recycleNewConversationId);
+    const conversationId = (recycleNewConversationId && !forceNoRecycle && !isIncognito && !recycleShownElsewhere)
       ? recycleNewConversationId
       : prependNewConversation(getConversationSystemPurposeId(focusedPaneConversationId) ?? undefined, isIncognito);
 
@@ -449,7 +451,9 @@ export function AppChat() {
     const nextConversationId = deleteConversations(conversationIds, /*focusedSystemPurposeId ??*/ undefined);
 
     // switch the focused pane to the new conversation - NOTE: this makes the assumption that deletion had impact on the focused pane
-    handleOpenConversationInFocusedPane(nextConversationId);
+    // unless another pane shows it (the panes store then re-targets to a distinct chat, or unsplits) - two panes must not share a chat
+    if (!getOtherPanesConversationIds().includes(nextConversationId))
+      handleOpenConversationInFocusedPane(nextConversationId);
 
     // run GC for dblobs in this conversation
     void gcChatImageAssets(); // fire/forget

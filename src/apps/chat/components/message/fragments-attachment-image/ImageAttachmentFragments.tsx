@@ -65,7 +65,7 @@ export function ImageAttachmentFragments(props: {
   contentScaling: ContentScaling,
   messageRole: DMessageRole,
   renderVariant?: 'chat-message' | 'data-editor',
-  disabled?: boolean,
+  isEditing?: boolean,
   onFragmentDelete?: (fragmentId: DMessageFragmentId) => void,
 }) {
 
@@ -118,11 +118,10 @@ export function ImageAttachmentFragments(props: {
                 imageWidth={legacy.width}
                 imageHeight={legacy.height}
                 imageAltText={part.zRefSummary?.text || legacy.altText || title}
-                disabled={props.disabled}
                 onDeleteFragment={!props.onFragmentDelete ? undefined : () => props.onFragmentDelete?.(fId)}
                 onViewImage={() => setViewingImageRefPart(legacy)}
                 scaledImageSx={cardStyleSxMemo}
-                variant='attachment-card'
+                variant={props.isEditing ? 'attachment-card-edit' : 'attachment-card'}
               />
             );
 
@@ -145,11 +144,10 @@ export function ImageAttachmentFragments(props: {
                 imageAltText={imageRefPart.altText || title}
                 imageWidth={imageRefPart.width}
                 imageHeight={imageRefPart.height}
-                disabled={props.disabled}
                 onDeleteFragment={!props.onFragmentDelete ? undefined : () => props.onFragmentDelete?.(fId)}
                 onViewImage={() => setViewingImageRefPart(imageRefPart)}
                 scaledImageSx={cardStyleSxMemo}
-                variant='attachment-card'
+                variant={props.isEditing ? 'attachment-card-edit' : 'attachment-card'}
               />
             );
 

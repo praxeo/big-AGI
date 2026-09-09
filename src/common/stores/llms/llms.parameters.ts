@@ -407,7 +407,19 @@ export const DModelParameterRegistry = {
     type: 'enum',
     description: 'Pro mode performs additional model work for difficult tasks, billed at standard token rates',
     values: ['standard', 'pro'],
-    // undefined means vendor default ('standard')
+    // undefined means vendor default ('standard'); 'standard' stays a legal stored value but is no longer offered by the pickers
+  }),
+
+  llmVndOaiServiceTier: _enumDef({
+    // [2026-09-03, OpenAI] request `service_tier`: 'flex' = slower, batch rates; 'fast' (formerly 'priority') = up to 2.5x faster, 2x rates.
+    // Multipliers apply to every token class after the cache discount; per-call tool fees are flat. The response echoes the tier
+    // actually served ('default' on a downgrade), which the parser turns into the confirmed multiplier (metrics $xPrice).
+    label: 'Service Tier',
+    type: 'enum',
+    description: 'Flex: slower at half price. Fast: faster at double price. Downgrades bill at standard rates.',
+    values: ['flex', 'fast'],
+    enumPriceMultiplier: { flex: 0.5, fast: 2 },
+    // undefined means standard processing (omitted from the request)
   }),
 
   llmVndOaiVerbosity: _enumDef({
@@ -441,7 +453,12 @@ export const DModelParameterRegistry = {
     label: 'Image Generation',
     type: 'enum',
     description: 'Image generation mode and quality',
-    values: ['mq', 'hq', 'hq_edit' /* precise input editing */, 'hq_png' /* uncompressed */], // our values, not upstream's
+    values: [
+      'mq', // medium
+      'hq', // high
+      'max' // gpt-image-2.5 'max'
+      // former values, now suppressed: 'hq_edit' /* precise input editing */, 'hq_png' /* uncompressed */
+    ], // our values, not upstream's; legacy 'hq_edit'/'hq_png' are mapped to 'hq' at request time
     // undefined means no image generation
   }),
 
@@ -455,14 +472,34 @@ export const DModelParameterRegistry = {
 
 
   // OpenRouter-specific
+  // Web tools run by OpenRouter itself (aix.wiretypes.openrouter.ts); engine values mirror the wire enums, compile-time
+  // checked in openrouter.webtools.ts
 
   llmVndOrtWebSearch: _enumDef({ // implies: LLM_IF_Tools_WebSearch
     label: 'Web Search',
     type: 'enum',
-    description: 'Enable OpenRouter web search (uses native search for OpenAI/Anthropic, Exa for others)',
-    values: ['auto'],
+    description: 'Web search run by OpenRouter; Auto picks native or Exa',
+    values: [
+      'auto', // original type to discriminate on/off
+      'native', 'exa', 'parallel', 'firecrawl', 'perplexity', // [OpenRouter, 2026-09-08] added types for engine specialization
+    ],
+    // undefined means off; 'auto' is also the pre-2026-09-08 plain on-switch
+  }),
+
+  llmVndOrtWebFetch: _enumDef({ // implies: LLM_IF_Tools_WebSearch
+    label: 'Web Fetch',
+    type: 'enum',
+    description: 'Web fetch run by OpenRouter: the model reads pages by URL',
+    values: ['auto', 'native', 'exa', 'openrouter', 'firecrawl', 'parallel'], // [OpenRouter, 2026-09-08] differentiated search vs fetch
     // undefined means off
   }),
+
+  llmVndOrtWebToolsAdvanced: {
+    label: 'Web Tools Options',
+    type: 'string',
+    description: 'Depth and limits for OpenRouter web search and fetch',
+    // undefined means OpenRouter defaults; a JSON string, codec in openrouter.webtools.ts
+  },
 
 
   // Perplexity-specific parameters
@@ -652,11 +689,18 @@ export function applyModelParameterSpecsInitialValues(destValues: DModelParamete
 
 
 export function getAllModelParameterValues(initialParameters: undefined | DModelParameterValues, userParameters?: DModelParameterValues): DModelParameterValues {
-  return {
+  const values: DModelParameterValues = {
     ...LLMImplicitParametersRuntimeFallback,
     ...initialParameters,
     ...userParameters,
   };
+
+  // legacy persisted values - the stores never validate enum values against the registry, so migrate here (feeds both the UI and the AIX request)
+  const imageGeneration: unknown = values.llmVndOaiImageGeneration;
+  if (imageGeneration === true) values.llmVndOaiImageGeneration = 'mq'; // pre-enum boolean
+  else if (imageGeneration === 'hq_edit' || imageGeneration === 'hq_png') values.llmVndOaiImageGeneration = 'hq'; // dropped 2026-09-09: input_fidelity is rejected by gpt-image-2+, uncompressed PNG saving never landed
+
+  return values;
 }
 
 

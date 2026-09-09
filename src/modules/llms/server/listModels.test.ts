@@ -40,6 +40,7 @@
 //                                        BIGAGI_TEST_LMSTUDIO_HOST)
 //   openai-compatible   localai         (opt-in via             localhost:8080
 //                                        BIGAGI_TEST_LOCALAI_HOST)
+//   openai-compatible   metaai          METAAI_API_KEY          api.meta.ai
 //   openai-compatible   mistral         MISTRAL_API_KEY         api.mistral.ai
 //   openai-compatible   moonshot        MOONSHOT_API_KEY        api.moonshot.ai
 //   openai-compatible   nvidianim       NVIDIANIM_API_KEY       integrate.api.nvidia.com (listing is PUBLIC)
@@ -256,6 +257,19 @@ describe('listModels enumeration', () => {
       { dialect: 'localai', ...openAIShape({ oaiHost: E.BIGAGI_TEST_LOCALAI_HOST || '' }) } as AixAPI_Access,
       0, 'localai/live',
     );
+  });
+
+  test('openai-compat/metaai: live listing', { skip: skipIfMissing('METAAI_API_KEY') }, async () => {
+    const models = await expectOk(
+      { dialect: 'metaai', ...openAIShape({ oaiKey: E.METAAI_API_KEY || '' }) } as AixAPI_Access,
+      1, 'metaai/live',
+    );
+    // the catalog mixes families and the list API has no type field: the transcription id must be filtered out, the image model curated
+    ok(!models.some(m => m.id.startsWith('muse-voice-')), 'metaai: transcription model is dropped');
+    ok(models.some(m => m.id.startsWith('muse-spark-')), 'metaai: Muse Spark family present');
+    ok(models.filter(m => m.id.startsWith('muse-image-')).every(m => m.interfaces.includes('outputs-image')), 'metaai: Muse Image is an image-output model');
+    // curated chat entries always carry a measured context; 0-day '[?]' arrivals and the image model (undocumented) legitimately have null
+    ok(models.filter(m => !llmsIsLabelUncurated(m.label) && !m.interfaces.includes('outputs-image')).every(m => m.contextWindow !== null), 'metaai: all curated chat models carry a context window');
   });
 
   test('openai-compat/mistral: live listing', { skip: skipIfMissing('MISTRAL_API_KEY') }, async () => {

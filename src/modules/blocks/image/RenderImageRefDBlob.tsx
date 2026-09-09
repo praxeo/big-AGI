@@ -71,7 +71,7 @@ export function RenderImageRefDBlob(props: {
     }
 
     // [attachment card] only return the data
-    if (props.variant === 'attachment-card' || props.variant === 'attachment-button') {
+    if (props.variant === 'attachment-card' || props.variant === 'attachment-card-edit' || props.variant === 'attachment-button') {
       return {
         dataUrlMemo: `data:${imageItem.data.mimeType};base64,${imageItem.data.base64}`,
       };

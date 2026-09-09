@@ -16,6 +16,7 @@ import { InlineError } from '~/common/components/InlineError';
 import { webGeolocationRequest } from '~/common/util/webGeolocationUtils';
 
 import { AnthropicSkillsConfig } from './AnthropicSkillsConfig';
+import { OpenRouterWebToolsConfig } from './OpenRouterWebToolsConfig';
 
 
 const _UNSPECIFIED = '_UNSPECIFIED' as const;
@@ -88,8 +89,18 @@ export function llmParametersFilterEffortOptions<T extends { value: string, labe
 
 const _oaiReasoningModeOptions = [
   { value: 'pro', label: 'Pro', description: 'Additional model work for the hardest problems' } as const,
+  { value: _UNSPECIFIED, label: 'Default', description: 'Standard reasoning (mode omitted)' } as const,
+] as const;
+// 'standard' equals the omitted default and is no longer pickable; kept only so an already-stored value still renders
+const _oaiReasoningModeLegacyOptions = [
+  ..._oaiReasoningModeOptions,
   { value: 'standard', label: 'Standard', description: 'Regular reasoning' } as const,
-  { value: _UNSPECIFIED, label: 'Default', description: 'Default (Standard)' } as const,
+] as const;
+
+const _oaiServiceTierOptions = [
+  { value: 'fast', label: 'Fast', description: 'Up to 2.5x faster, 2x price' } as const,
+  { value: 'flex', label: 'Flex', description: 'Slower, half price' } as const,
+  { value: _UNSPECIFIED, label: 'Standard', description: 'Standard processing' } as const,
 ] as const;
 
 const _verbosityOptions = [
@@ -177,17 +188,11 @@ const _antWebFetchOptions = [
 //   { value: _UNSPECIFIED, label: 'Off', description: 'Disabled (default)' },
 // ] as const;
 
-const _ortWebSearchOptions = [
-  { value: 'auto', label: 'On', description: 'Enable web search (native for OpenAI/Anthropic, Exa for others)' },
-  { value: _UNSPECIFIED, label: 'Off', description: 'Disabled (default)' },
-] as const;
-
 const _imageGenerationOptions = [
   { value: _UNSPECIFIED, label: 'Off', description: 'Default (disabled)' },
   { value: 'mq', label: 'Standard', description: 'Quick gen' },
   { value: 'hq', label: 'High Quality', description: 'Best looks' },
-  { value: 'hq_edit', label: 'Precise Edits', description: 'Controlled' },
-  // { value: 'hq_png', label: 'HD PNG', description: 'Uncompressed' }, // TODO: re-enable when uncompressed PNG saving is implemented
+  { value: 'max', label: 'Max', description: 'Slowest, priciest' },
 ] as const;
 
 const _oaiCodeInterpreterOptions = [
@@ -298,6 +303,7 @@ export function LLMParametersEditor(props: {
     llmVndOaiEffort,
     llmVndOaiReasoningMode,
     llmVndOaiRestoreMarkdown,
+    llmVndOaiServiceTier,
     llmVndOaiWebSearchContext,
     llmVndOaiWebSearchGeolocation,
     llmVndOaiImageGeneration,
@@ -305,7 +311,9 @@ export function LLMParametersEditor(props: {
     llmVndOaiVerbosity,
     llmVndUnslothThinking,
     llmVndUnslothWebSearch,
+    llmVndOrtWebFetch,
     llmVndOrtWebSearch,
+    llmVndOrtWebToolsAdvanced,
     llmVndPerplexityDateFilter,
     llmVndPerplexitySearchMode,
     llmVndXaiCodeExecution,
@@ -497,7 +505,20 @@ export function LLMParametersEditor(props: {
           if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndOaiReasoningMode');
           else onChangeParameter({ llmVndOaiReasoningMode: value });
         }}
-        options={_oaiReasoningModeOptions}
+        options={llmVndOaiReasoningMode === 'standard' ? _oaiReasoningModeLegacyOptions : _oaiReasoningModeOptions}
+      />
+    )}
+    {/* OpenAI Service Tier */}
+    {showParam('llmVndOaiServiceTier') && (
+      <FormSelectControl
+        title='Service Tier'
+        tooltip='Fast: faster at 2x price. Flex: slower at half price. A downgraded request bills at standard rates.'
+        value={llmVndOaiServiceTier ?? _UNSPECIFIED}
+        onChange={(value) => {
+          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndOaiServiceTier');
+          else onChangeParameter({ llmVndOaiServiceTier: value });
+        }}
+        options={_oaiServiceTierOptions}
       />
     )}
     {/* Moonshot/Z.ai Thinking */}
@@ -968,16 +989,16 @@ export function LLMParametersEditor(props: {
     )}
 
 
-    {showParam('llmVndOrtWebSearch') && (
-      <FormSelectControl
-        title='Web Search'
-        tooltip='Enable OpenRouter web search plugin. Uses native search for OpenAI/Anthropic models, Exa for others. Adds web citations to responses.'
-        value={llmVndOrtWebSearch ?? _UNSPECIFIED}
-        onChange={(value) => {
-          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndOrtWebSearch');
-          else onChangeParameter({ llmVndOrtWebSearch: value });
-        }}
-        options={_ortWebSearchOptions}
+    {(showParam('llmVndOrtWebSearch') || showParam('llmVndOrtWebFetch')) && (
+      <OpenRouterWebToolsConfig
+        showAdvanced={showParam('llmVndOrtWebToolsAdvanced')}
+        searchSpec={showParam('llmVndOrtWebSearch') ? modelParamSpec['llmVndOrtWebSearch'] : undefined}
+        hasFetch={showParam('llmVndOrtWebFetch')}
+        llmVndOrtWebSearch={llmVndOrtWebSearch}
+        llmVndOrtWebFetch={llmVndOrtWebFetch}
+        llmVndOrtWebToolsAdvanced={llmVndOrtWebToolsAdvanced}
+        onChangeParameter={onChangeParameter}
+        onRemoveParameter={onRemoveParameter}
       />
     )}
 

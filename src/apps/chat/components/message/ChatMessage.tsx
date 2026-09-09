@@ -807,7 +807,7 @@ export function ChatMessage(props: {
               imageAttachments={imageAttachments}
               contentScaling={adjContentScaling}
               messageRole={messageRole}
-              disabled={isEditingText}
+              isEditing={isEditingText}
               onFragmentDelete={!onMessageFragmentDelete ? undefined : handleFragmentDelete}
             />
           )}
@@ -895,7 +895,7 @@ export function ChatMessage(props: {
               imageAttachments={imageAttachments}
               contentScaling={adjContentScaling}
               messageRole={messageRole}
-              disabled={isEditingText}
+              isEditing={isEditingText}
               onFragmentDelete={!onMessageFragmentDelete ? undefined : handleFragmentDelete}
             />
           )}

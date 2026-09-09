@@ -13,7 +13,7 @@ import type { ModelDescriptionSchema } from './llm.server.types';
  * Not an "uncatalogued" badge: API-characterized 0-day arrivals stay unmarked.
  *
  * Mark:    type-blind catalogs (ids only), where a video/TTS/embedding id could masquerade as
- *          chat - nvidianim, modular, sakanaai, moonshot, groq, deepseek, alibaba - plus the
+ *          chat - nvidianim, modular, sakanaai, metaai, moonshot, groq, deepseek, alibaba - plus the
  *          'super' resolution below (unknown variant of a known family).
  * Don't:   a type/modality filter proves chat - gemini, xai, together, novita, chutesai, cerebras.
  *
@@ -46,6 +46,7 @@ const _paramIdToInterface: { paramIds: DModelParameterId[], iface: DModelInterfa
       'llmVndGeminiGoogleSearch',
       'llmVndMoonshotWebSearch',
       'llmVndOaiWebSearchContext',
+      'llmVndOrtWebFetch',
       'llmVndOrtWebSearch',
       'llmVndPerplexitySearchMode',
       'llmVndUnslothWebSearch',
@@ -77,6 +78,18 @@ export function llmsAutoImplyInterfaces(model: ModelDescriptionSchema): ModelDes
       interfaces = [...interfaces, iface];
 
   return interfaces !== model.interfaces ? { ...model, interfaces } : model;
+}
+
+
+/**
+ * Wire compatibility for clients built before the one-shape cache pricing (2026-09): they switch on `cache.cType`
+ * and throw on an unknown tag. 'ant-bp' when writes are priced, else 'oai-ac'; current clients drop the tag on ingest.
+ * TODO: delete after 2026-12-03, with the schema field and the client strip.
+ */
+export function llmsWireCompatCacheTag(model: ModelDescriptionSchema): ModelDescriptionSchema {
+  const cache = model.chatPrice?.cache;
+  if (!cache || cache.cType) return model;
+  return { ...model, chatPrice: { ...model.chatPrice, cache: { ...cache, cType: cache.write !== undefined ? 'ant-bp' : 'oai-ac' } } };
 }
 
 

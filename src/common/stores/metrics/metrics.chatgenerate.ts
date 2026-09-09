@@ -1,4 +1,5 @@
 import { DPricingChatGenerate, getLlmCostForTokens, isLLMChatPricingFree } from '~/common/stores/llms/llms.pricing';
+import { usdToCents } from '~/common/util/costUtils';
 
 
 // configuration
@@ -34,6 +35,9 @@ type MetricsChatGenerateTokens = {
   TOutR?: number,       // Portion of TOut that was used for reasoning (e.g. not for output)
   // TOutA?: number,    // Portion of TOut that was used for Audio
 
+  // n = Counts (per-call billed server tools)
+  nWebSearch?: number,  // web searches executed - OpenAI tool_usage, Anthropic server_tool_use, xAI server-side tools, Gemini grounding queries
+
   // If set, indicates unreliability or Stop Reason (sR)
   TsR?:
     | 'pending'         // still being generated (could be stuck in this state if data got corrupted)
@@ -57,7 +61,14 @@ export type MetricsChatGenerateCost_Md = {
   // $c = Cents of USD - NOTE: we chose to use cents to reduce floating point errors
   $c?: number,
   $cReported?: number,  // Total cost in cents as reported by provider (e.g. Perplexity usage.cost.total_cost)
-  $cdCache?: number,
+  $cdCache?: number,    // Cache advantage: input side as if uncached, minus actual (negative = the write surcharge outweighed the reads this turn)
+  // $c by class (absent on older messages and on '$code' outcomes)
+  $cIn?: number,        // uncached input
+  $cCacheR?: number,    // cache reads (only when read tokens > 0)
+  $cCacheW?: number,    // cache writes (only when write tokens > 0)
+  $cOut?: number,       // output, reasoning included
+  $cTools?: number,     // per-call tool fees (only when calls > 0)
+  $xPrice?: number,     // provider-confirmed price multiplier vs listed rates (echoed service tier: flex 0.5, fast 2, ...); parsed, and used over the parameter-side multiplier
   $code?:
     | 'free'            // generated for free
     | 'partial-msg'     // partial message generated
@@ -120,16 +131,17 @@ export function metricsFinishChatGenerateLg(metrics: DMetricsChatGenerate_Lg | u
 
 // ChatGenerate extraction for DMessage's smaller metrics
 
+const _MD_OPTIONAL_KEYS: readonly (keyof DMetricsChatGenerate_Md)[] = [
+  '$c', '$cReported', '$cdCache', '$cIn', '$cCacheR', '$cCacheW', '$cOut', '$cTools', '$xPrice', '$code', // select costs
+  'TIn', 'TCacheRead', 'TCacheWrite', 'TOut', 'TOutR', 'nWebSearch', // select token and call counts
+  'dtAll', 'dtStart', 'vTOutInner', // select token timings/velocities
+  'TsR', // stop reason
+];
+
 export function metricsChatGenerateLgToMd(metrics: DMetricsChatGenerate_Lg): DMetricsChatGenerate_Md {
-  const allOptionalKeys: (keyof DMetricsChatGenerate_Md)[] = [
-    '$c', '$cReported', '$cdCache', '$code', // select costs
-    'TIn', 'TCacheRead', 'TCacheWrite', 'TOut', 'TOutR', // select token counts
-    'dtAll', 'dtStart', 'vTOutInner', // select token timings/velocities
-    'TsR', // stop reason
-  ] as const;
   const extracted: DMetricsChatGenerate_Md = {};
 
-  for (const key of allOptionalKeys) {
+  for (const key of _MD_OPTIONAL_KEYS) {
 
     // [OpenAI] we also ignore a TOutR of 0, as networks without reasoning return it. keeping it would be misleading as 'didn't reason but I could have', while it's 'can't reason'
     if (key === 'TOutR' && metrics.TOutR === 0)
@@ -138,6 +150,10 @@ export function metricsChatGenerateLgToMd(metrics: DMetricsChatGenerate_Lg): DMe
     // [OpenAI] we also ignore a TOutA of 0 (no audio in this output)
     // if (key === 'TOutA' && metrics.TOutA === 0)
     //   continue;
+
+    // 1x is the norm: not stored (the finalizer reads the Lg value)
+    if (key === '$xPrice' && metrics.$xPrice === 1)
+      continue;
 
     if (metrics[key] !== undefined) {
       extracted[key] = metrics[key] as any;
@@ -149,8 +165,6 @@ export function metricsChatGenerateLgToMd(metrics: DMetricsChatGenerate_Lg): DMe
 
 
 // ChatGenerate cost metrics
-
-const USD_TO_CENTS = 100;
 
 export function metricsComputeChatGenerateCostsMd(metrics?: Readonly<DMetricsChatGenerate_Md>, pricing?: DPricingChatGenerate | undefined, logLlmRefId?: string): MetricsChatGenerateCost_Md | undefined {
   if (!metrics)
@@ -172,9 +186,10 @@ function _computeCostsFromPricing(metrics: Readonly<DMetricsChatGenerate_Md>, pr
   const inCacheWriteTokens = metrics.TCacheWrite || 0;
   const sumInputTokens = inNewTokens + inCacheReadTokens + inCacheWriteTokens;
   const outTokens = metrics.TOut || 0;
+  const webSearchCalls = metrics.nWebSearch || 0;
 
   // usage: presence
-  if (!sumInputTokens && !outTokens)
+  if (!sumInputTokens && !outTokens && !webSearchCalls)
     return { $code: 'no-tokens' };
 
   // pricing: presence
@@ -186,72 +201,50 @@ function _computeCostsFromPricing(metrics: Readonly<DMetricsChatGenerate_Md>, pr
     return { $code: 'free' };
 
 
-  // partial pricing
+  // mark the costs as partial if the message was not completely received - i.e. the server did not tell us the final tokens count
   const isPartialMessage = metrics.TsR === 'pending' || metrics.TsR === 'aborted';
 
-  // Calculate costs
+  // the tier is chosen on total input and applies to every class, output included (OpenAI >272K, Anthropic and Gemini >200K)
   const tierTokens = sumInputTokens;
-  const $inNew = getLlmCostForTokens(tierTokens, inNewTokens, pricing.input);
+  const $in = getLlmCostForTokens(tierTokens, inNewTokens, pricing.input);
   const $out = getLlmCostForTokens(tierTokens, outTokens, pricing.output);
-  if ($inNew === undefined || $out === undefined) {
+  if ($in === undefined || $out === undefined) {
     // many llms don't have pricing information, so the cost computation ends here
     return { $code: 'partial-price' };
   }
 
+  // Unknown prices are the norm, not the edge: a class with no price contributes nothing to $c and emits no breakdown key,
+  // and the estimate is flagged partial. Never an invented rate.
 
-  // Standard price
-  const $noCacheRounded = Math.round(($inNew + $out) * USD_TO_CENTS * 10000) / 10000;
-  if (!inCacheReadTokens && !inCacheWriteTokens)
-    return { $c: $noCacheRounded, ...(isPartialMessage && { $code: 'partial-msg' }) };
+  // per-call tool fees
+  const webSearchFee = pricing.tools?.webSearch;
+  const $tools = (webSearchCalls > 0 && webSearchFee !== undefined) ? webSearchCalls * webSearchFee / 1000 : undefined;
+  const toolsUnpriced = webSearchCalls > 0 && $tools === undefined;
 
-
-  // Price with Caching
+  // cache classes: inside a priced cache block an absent write price means writes bill as input (a vendor fact, never 0);
+  // with no cache block, or a tier gap, the class is unknown
   const cachePricing = pricing.cache;
-  if (!cachePricing) {
-    console.log(`No cache pricing for ${logLlmRefId}`);
-    return { $c: $noCacheRounded, $code: 'partial-price' };
-  }
+  const $cacheRead = !inCacheReadTokens ? undefined : getLlmCostForTokens(tierTokens, inCacheReadTokens, cachePricing?.read);
+  const $cacheWrite = !inCacheWriteTokens ? undefined : getLlmCostForTokens(tierTokens, inCacheWriteTokens, cachePricing ? (cachePricing.write ?? pricing.input) : undefined);
+  const cacheUnpriced = (inCacheReadTokens > 0 && $cacheRead === undefined) || (inCacheWriteTokens > 0 && $cacheWrite === undefined);
+  const cachePriced = (inCacheReadTokens > 0 || inCacheWriteTokens > 0) && !cacheUnpriced;
+  if (cacheUnpriced || toolsUnpriced)
+    console.log(`Unpriced usage for ${logLlmRefId}: cache=${cacheUnpriced}, tools=${toolsUnpriced}`);
 
-  // 2025-01-10: Now supporting tiered cache pricing
-  // Note: We use the total input tokens (new + cache) as the tier discriminator for ALL pricing tiers.
-  // This matches how providers like Google structure their pricing - the tier is based on the request size
-  // (input context), and that tier's rates apply to all token types in that request.
+  const $cache = ($cacheRead ?? 0) + ($cacheWrite ?? 0);
 
-  // compute the input cache read costs
-  const $cacheRead = getLlmCostForTokens(tierTokens, inCacheReadTokens, cachePricing.read);
-  if ($cacheRead === undefined) {
-    console.log(`Missing cache read pricing for ${logLlmRefId}`);
-    return { $c: $noCacheRounded, $code: 'partial-price' };
-  }
+  // an unpriced class wins over a truncated message
+  const $code = (toolsUnpriced || cacheUnpriced) ? 'partial-price' : isPartialMessage ? 'partial-msg' : undefined;
 
-  // compute the input cache write costs
-  let $cacheWrite;
-  switch (cachePricing.cType) {
-    case 'ant-bp':
-      $cacheWrite = getLlmCostForTokens(tierTokens, inCacheWriteTokens, cachePricing.write);
-      break;
-    case 'oai-ac':
-      $cacheWrite = 0;
-      break;
-    default:
-      throw new Error('computeChatGenerationCosts: Unknown cache type');
-  }
-  if ($cacheWrite === undefined) {
-    console.log(`Missing cache write pricing for ${logLlmRefId}`);
-    return { $c: $noCacheRounded, $code: 'partial-price' };
-  }
-
-  // compute the cost for this call
-  const $c = Math.round(($inNew + $cacheRead + $cacheWrite + $out) * USD_TO_CENTS * 10000) / 10000;
-
-  // compute the advantage from caching
-  const $inAsIfNoCache = getLlmCostForTokens(tierTokens, sumInputTokens, pricing.input)!;
-  const $cdCache = Math.round(($inAsIfNoCache - $inNew - $cacheRead - $cacheWrite) * USD_TO_CENTS * 10000) / 10000;
-
-  // mark the costs as partial if the message was not completely received - i.e. the server did not tell us the final tokens count
   return {
-    $c,
-    $cdCache,
-    ...(isPartialMessage && { $code: 'partial-msg' }),
+    $c: usdToCents($in + $cache + $out + ($tools ?? 0)),
+    // cache advantage: the input side as if uncached, minus actual - only when every cache class is priced
+    ...(cachePriced && { $cdCache: usdToCents(getLlmCostForTokens(tierTokens, sumInputTokens, pricing.input)! - $in - $cache) }),
+    $cIn: usdToCents($in),
+    ...($cacheRead !== undefined && { $cCacheR: usdToCents($cacheRead) }),
+    ...($cacheWrite !== undefined && { $cCacheW: usdToCents($cacheWrite) }),
+    $cOut: usdToCents($out),
+    ...($tools !== undefined && { $cTools: usdToCents($tools) }),
+    ...($code && { $code }),
   };
 }
