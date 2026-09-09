@@ -8,7 +8,7 @@ import { createDebugWireLogger } from '~/server/wire';
 import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 
 import type { ModelDescriptionSchema } from './llm.server.types';
-import { llmDevValidateParameterSpecs_DEV, llmsAutoImplyInterfaces } from './models.mappings';
+import { llmDevValidateParameterSpecs_DEV, llmsAutoImplyInterfaces, llmsWireCompatCacheTag } from './models.mappings';
 
 
 // protocol: Anthropic
@@ -39,7 +39,7 @@ import { basetenHeuristic, basetenModelsToModelDescriptions } from './openai/mod
 import { cerebrasFetchModelDescriptions } from './openai/models/cerebras.models';
 import { chutesAIHeuristic, chutesAIModelsToModelDescriptions } from './openai/models/chutesai.models';
 import { cohereModelFilter, cohereModelSort, cohereModelToModelDescription } from './openai/models/cohere.models';
-import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
+import { deepseekInjectVariants, deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
 import { fastAPIHeuristic, fastAPIModels } from './openai/models/fastapi.models';
 import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
 import { groqModelFilter, groqModelSortFn, groqModelToModelDescription, groqValidateModelDefs_DEV } from './openai/models/groq.models';
@@ -51,6 +51,7 @@ import { novitaHeuristic, novitaModelsToModelDescriptions } from './openai/model
 import { nvidiaNIMHeuristic, nvidiaNIMModelsToModelDescriptions } from './openai/models/nvidianim.models';
 import { lmStudioFetchModels, lmStudioModelsToModelDescriptions } from './openai/models/lmstudio.models';
 import { localAIModelSortFn, localAIModelToModelDescription } from './openai/models/localai.models';
+import { metaAIModelsToModelDescriptions } from './openai/models/metaai.models';
 import { mistralModels } from './openai/models/mistral.models';
 import { modularModelsToModelDescriptions } from './openai/models/modular.models';
 import { moonshotModelFilter, moonshotModelSortFn, moonshotModelToModelDescription } from './openai/models/moonshot.models';
@@ -87,7 +88,8 @@ export async function listModelsRunDispatch(access: AixAPI_Access, signal?: Abor
   const dispatch = _listModelsCreateDispatch(access, signal);
   const wireModels = await dispatch.fetchModels();
   const models = dispatch.convertToDescriptions(wireModels)
-    .map(llmsAutoImplyInterfaces); // auto-inject implied IFs from parameterSpecs
+    .map(llmsAutoImplyInterfaces) // auto-inject implied IFs from parameterSpecs
+    .map(llmsWireCompatCacheTag); // legacy cache tag for older clients - TODO: delete after 2026-12-03
 
   // DEV: validate parameterSpecs (enumValues ⊆ registry values, paramId existence)
   if (process.env.NODE_ENV === 'development')
@@ -389,6 +391,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
     case 'deepseek':
     case 'groq':
     case 'localai':
+    case 'metaai':
     case 'mistral':
     case 'modular':
     case 'moonshot':
@@ -488,11 +491,11 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
                 .sort(cohereModelSort);
 
             case 'deepseek':
-              return maybeModels
+              return deepseekInjectVariants(maybeModels // appends the unlisted V4.1-Flash beta while live
                 .filter(({ id }) => deepseekModelFilter(id))
                 .map(({ id }) => deepseekModelToModelDescription(id))
                 // .reduce(deepseekInjectVariants, [] as ModelDescriptionSchema[]) // was used to inject V3.2-Speciale
-                .sort(deepseekModelSort);
+              ).sort(deepseekModelSort);
 
             case 'groq':
               // [DEV] check for stale/unknown model definitions
@@ -506,6 +509,11 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               return maybeModels
                 .map(({ id }) => localAIModelToModelDescription(id))
                 .sort(localAIModelSortFn);
+
+            case 'metaai':
+              // [Meta AI] ids-only list (created is a constant 0, no type field): caps/pricing/params from the curated
+              // table; the transcription id is filtered out by name, the image model is curated and kept
+              return metaAIModelsToModelDescriptions(maybeModels);
 
             case 'mistral':
               return mistralModels(maybeModels);

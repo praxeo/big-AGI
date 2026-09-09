@@ -35,6 +35,7 @@ export const DocumentAttachmentFragments = React.memo(function DocumentAttachmen
 
   // derived state
   const isSelectable = props.allowSelection;
+  const onInlineDelete = !isSelectable ? props.onFragmentDelete : undefined;
   const activeFragmentId = !isSelectable ? null : _activeFragmentId;
 
 
@@ -135,6 +136,7 @@ export const DocumentAttachmentFragments = React.memo(function DocumentAttachmen
             isSelected={activeFragmentId === attachmentFragment.fId}
             isSelectable={props.allowSelection}
             toggleSelected={handleToggleSelectedId}
+            onFragmentDelete={onInlineDelete}
           />,
         )}
 

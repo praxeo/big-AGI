@@ -173,6 +173,10 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (model.vndOaiReasoningMode && openAIDialect !== 'openrouter')
     throw new Error('OpenAI Chat Completions API does not support the Reasoning Mode parameter (Responses API only)');
 
+  // [2026-09-03, OpenAI] processing tier (native only - compatible hosts do not know it)
+  if (model.vndOaiServiceTier && openAIDialect === 'openai')
+    payload.service_tier = model.vndOaiServiceTier;
+
   // [OpenAI] Vendor-specific reasoning effort
   const reasoningEffort = model.reasoningEffort; // ?? model.vndOaiReasoningEffort;
   if (reasoningEffort
@@ -182,7 +186,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     && openAIDialect !== 'nvidianim' // NVIDIA rejects unknown params and gpt-oss strictly validates reasoning_effort - dedicated block below
     && openAIDialect !== 'perplexity' // Perplexity has its own block below with stricter validation
   ) {
-    // for: 'azure' | 'cerebras' | 'cohere' | 'groq' | 'lmstudio' | 'localai' | 'mistral' | 'modular' | 'openai' | 'sakanaai' | 'togetherai' | 'xai'
+    // for: 'azure' | 'cerebras' | 'cohere' | 'groq' | 'lmstudio' | 'localai' | 'metaai' | 'mistral' | 'modular' | 'openai' | 'sakanaai' | 'togetherai' | 'xai'
     payload.reasoning_effort = reasoningEffort;
   }
 
@@ -292,14 +296,46 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     _fixVndOaiRestoreMarkdown_Inline(payload);
 
 
-  // [OpenRouter] Vendor-specific web search (native or Exa)
-  if (openAIDialect === 'openrouter' && model.vndOrtWebSearch === 'auto')
-    payload.plugins = [...(payload.plugins || []), {
-      id: 'web',
-      // engine is optional - when undefined, OpenRouter uses native for supported models, falls back to Exa
-      // max_results: 5, // could be configurable in the future
-      // search_prompt: undefined, // could be configurable in the future
-    }];
+  // [OpenRouter, 2026-09-08] Web search and fetch as OpenRouter server tools, or the legacy 'web' plugin where the
+  // client asked for it (endpoints without tool support). Wire facts: aix.wiretypes.openrouter.ts
+  if (openAIDialect === 'openrouter') {
+    const ortSearch = model.vndOrtWebSearch;
+    if (ortSearch?.via === 'plugin')
+      payload.plugins = [...(payload.plugins || []), { id: 'web' }];
+    else if (!skipWebSearchDueToCustomTools) {
+      const ortTools: NonNullable<TRequest['tools']> = [];
+
+      if (ortSearch)
+        ortTools.push({
+          type: 'openrouter:web_search',
+          parameters: {
+            engine: ortSearch.engine,
+            mode: ortSearch.mode,
+            max_results: ortSearch.maxResults,
+            max_uses: ortSearch.maxUses,
+            max_total_results: ortSearch.maxTotalResults,
+            search_context_size: ortSearch.contextSize,
+            max_characters: ortSearch.maxCharacters,
+          },
+        });
+
+      if (model.vndOrtWebFetch)
+        ortTools.push({
+          type: 'openrouter:web_fetch',
+          parameters: {
+            engine: model.vndOrtWebFetch.engine,
+            max_uses: model.vndOrtWebFetch.maxUses,
+            max_content_tokens: model.vndOrtWebFetch.maxContentTokens,
+          },
+        });
+
+      if (ortTools.length) {
+        payload.tools = [...(payload.tools || []), ...ortTools];
+        if (model.vndOrtMaxToolCalls !== undefined)
+          payload.max_tool_calls = model.vndOrtMaxToolCalls;
+      }
+    }
+  }
 
 
   // [OpenRouter, 2026-07-11] Sticky client session id: WE mint this (OpenRouter does not issue session ids) and send it
