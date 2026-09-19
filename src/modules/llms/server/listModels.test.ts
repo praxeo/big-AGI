@@ -21,7 +21,7 @@
 // In particular, OPENAI_API_KEY is consumed ONLY when dialect='openai' AND the
 // request is targeting the default api.openai.com host (no access.oaiHost). It
 // is NEVER forwarded to third-party OpenAI-compatible hosts (Chutes, Fireworks,
-// MiniMax, Novita, Arcee, LLM API, FastChat, TLUS, etc.): those require their
+// MiniMax, Novita, Arcee, LLM API, FastChat, etc.): those require their
 // own upstream key passed via access.oaiKey from the UI/Models Setup.
 //
 //   Protocol            Dialect         Env var                 Endpoint
@@ -34,6 +34,7 @@
 //   ollama              ollama          (opt-in via             localhost:11434
 //                                        BIGAGI_TEST_OLLAMA_HOST)
 //   openai-compatible   alibaba         ALIBABA_API_KEY         dashscope-intl.aliyuncs.com
+//   openai-compatible   cohere          COHERE_API_KEY          api.cohere.ai/compatibility
 //   openai-compatible   deepseek        DEEPSEEK_API_KEY        api.deepseek.com
 //   openai-compatible   groq            GROQ_API_KEY            api.groq.com
 //   openai-compatible   lmstudio        (opt-in via             localhost:1234
@@ -49,6 +50,7 @@
 //   openai-compatible   openai (host)   (no env fallback)       custom host (Chutes, Fireworks, MiniMax, ...)
 //   openai-compatible   openrouter      OPENROUTER_API_KEY      openrouter.ai  (listing is PUBLIC)
 //   openai-compatible   perplexity      PERPLEXITY_API_KEY      api.perplexity.ai (no listing API; hardcoded)
+//   openai-compatible   sakanaai        SAKANAAI_API_KEY        api.sakana.ai (ids only; caps/pricing curated)
 //   openai-compatible   togetherai      TOGETHERAI_API_KEY      api.together.xyz
 //   openai-compatible   xai             XAI_API_KEY             api.x.ai
 //   openai-compatible   zai             ZAI_API_KEY (test-only; api.z.ai (curated list; API optional)
@@ -231,6 +233,18 @@ describe('listModels enumeration', () => {
     );
   });
 
+  test('openai-compat/cohere: live listing', { skip: skipIfMissing('COHERE_API_KEY') }, async () => {
+    // the compat /v1/models list mixes chat with embed/rerank/transcribe/parse endpoints: those must be filtered out
+    const models = await expectOk(
+      { dialect: 'cohere', ...openAIShape({ oaiKey: E.COHERE_API_KEY || '' }) } as AixAPI_Access,
+      1, 'cohere/live',
+    );
+    ok(!models.some(m => /^(embed-|rerank-|cohere-transcribe|parse-)/.test(m.id)), 'cohere: non-chat endpoints are dropped');
+    ok(models.some(m => m.id.startsWith('command-a-')), 'cohere: Command A family present');
+    // curated entries always carry a measured context; 0-day '[?]' arrivals legitimately have null
+    ok(models.filter(m => !llmsIsLabelUncurated(m.label)).every(m => m.contextWindow !== null), 'cohere: all curated models carry a context window');
+  });
+
   test('openai-compat/deepseek: live listing', { skip: skipIfMissing('DEEPSEEK_API_KEY') }, async () => {
     await expectOk(
       { dialect: 'deepseek', ...openAIShape({ oaiKey: E.DEEPSEEK_API_KEY || '' }) } as AixAPI_Access,
@@ -353,6 +367,13 @@ describe('listModels enumeration', () => {
       1, 'perplexity',
     );
     ok(models.some(m => /sonar/i.test(m.id)), 'perplexity: sonar family present');
+  });
+
+  test('openai-compat/sakanaai: live listing', { skip: skipIfMissing('SAKANAAI_API_KEY') }, async () => {
+    await expectOk(
+      { dialect: 'sakanaai', ...openAIShape({ oaiKey: E.SAKANAAI_API_KEY || '' }) } as AixAPI_Access,
+      1, 'sakanaai/live',
+    );
   });
 
   test('openai-compat/togetherai: live listing', { skip: skipIfMissing('TOGETHERAI_API_KEY') }, async () => {

@@ -1,9 +1,10 @@
 import * as React from 'react';
 
 import type { SxProps } from '@mui/joy/styles/types';
-import { Badge, Box, IconButton, MenuItem, Option, Select, Typography } from '@mui/joy';
+import { Badge, Box, IconButton, ListDivider, MenuItem, Option, Select, Typography } from '@mui/joy';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import RefreshIcon from '@mui/icons-material/Refresh';
 
 import type { DModelsService, DModelsServiceId } from '~/common/stores/llms/llms.service.types';
 import { ButtonServiceAdd } from '~/common/components/ButtonServiceAdd';
@@ -19,12 +20,14 @@ import { useIsMobile } from '~/common/components/useMatchMedia';
 import type { IModelVendor } from '../vendors/IModelVendor';
 import { LLMVendorIconSprite } from '../components/LLMVendorIconSprite';
 import { findAllModelVendors, findModelVendor } from '../vendors/vendors.registry';
-import { vendorHasBackendCap } from '../vendors/vendor.helpers';
+import { vendorHasServerConf } from '../vendors/vendor.helpers';
 // import { MODELS_WIZARD_OPTION_ID } from '~/modules/llms/models-modal/ModelsModal';
 
 
 // configuration
 const ENABLE_DELETE_LAST = true; // This will fall the menu back to the 'Quick Setup' mode. was: Release.IsNodeDevBuild;
+
+export const ALL_SERVICES_OPTION_ID = '*'; // pseudo-service in the selector: the Updates screen (never a real service id)
 
 
 const _styles = {
@@ -94,7 +97,7 @@ const _styles = {
 
 
 /*function locationIcon(vendor?: IModelVendor | null) {
-  if (vendor && vendor.id === 'openai' && vendorHasBackendCap(...))
+  if (vendor && vendor.id === 'openai' && vendorHasServerConf(...))
     return <CloudDoneOutlinedIcon />;
   return !vendor ? null : vendor.location === 'local' ? <ComputerIcon /> : <CloudOutlinedIcon />;
 }*/
@@ -140,19 +143,19 @@ function _renderVendorItem({ vendor, canAdd, vendorInstancesCount }: VendorItemD
     >
       {/*<ListItemDecorator>*/}
       {/*  /!*<Box sx={{ display: 'flex', aspectRatio: 1, borderRadius: 'xl', backgroundColor: 'background.popup', boxShadow: 'none', width: '32px', m: -1, p: 0.75 }}>*!/*/}
-      {/*  {vendorIconWithMark(vendor, !vendorInstancesCount && vendorHasBackendCap(vendor))}*/}
+      {/*  {vendorIconWithMark(vendor, !vendorInstancesCount && vendorHasServerConf(vendor))}*/}
       {/*  /!*</Box>*!/*/}
       {/*</ListItemDecorator>*/}
 
       <Box sx={_styles.vendorItemIcon}>
         {/*<Box >*/}
-        {vendorInstancesCount ? <CheckRoundedIcon /> : vendorIconWithMark(vendor, !Release.IsNodeDevBuild && !vendorInstancesCount && vendorHasBackendCap(vendor))}
+        {vendorInstancesCount ? <CheckRoundedIcon /> : vendorIconWithMark(vendor, !Release.IsNodeDevBuild && !vendorInstancesCount && vendorHasServerConf(vendor))}
         {/*</Box>*/}
       </Box>
 
       {/*<Box sx={{ borderRadius: '1rem', backgroundColor: 'background.popup', boxShadow: 'none', height: '2rem', width: '2rem', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>*/}
       {/*<Box >*/}
-      {/*{vendorIconWithMark(vendor, !vendorInstancesCount && vendorHasBackendCap(vendor))}*/}
+      {/*{vendorIconWithMark(vendor, !vendorInstancesCount && vendorHasServerConf(vendor))}*/}
       {/*</Box>*/}
       {/*</Box>*/}
 
@@ -230,6 +233,7 @@ export function ModelsServiceSelector(props: {
   setSelectedServiceId: (serviceId: DModelsServiceId | null) => void,
   onDeleteService: (serviceId: DModelsServiceId, skipConfirmation: boolean) => void,
   onSwitchToWizard: () => void,
+  allServicesControl?: React.ReactNode, // shown in place of the delete button while 'All services' is selected
 }) {
 
   // state
@@ -273,7 +277,8 @@ export function ModelsServiceSelector(props: {
     setSelectedServiceId(modelsService.id);
   }, [setSelectedServiceId, modelsServices]);
 
-  const enableDeleteButton = !!props.selectedServiceId && (ENABLE_DELETE_LAST || modelsServices.length > 1);
+  const isAllServices = props.selectedServiceId === ALL_SERVICES_OPTION_ID;
+  const enableDeleteButton = !!props.selectedServiceId && !isAllServices && (ENABLE_DELETE_LAST || modelsServices.length > 1);
 
 
   // memo popup 'vendor' items
@@ -358,12 +363,16 @@ export function ModelsServiceSelector(props: {
         value={props.selectedServiceId}
         disabled={noServices}
         onChange={(_event, value) => value && props.setSelectedServiceId(value)}
-        startDecorator={selectedServiceItem?.icon}
+        startDecorator={isAllServices ? <RefreshIcon /> : selectedServiceItem?.icon}
         slotProps={{
           root: { sx: { minWidth: 180 } },
           indicator: { sx: { opacity: 0.5 } },
         }}
       >
+        {/* the Updates screen, as a pseudo-service */}
+        {!noServices && <Option value={ALL_SERVICES_OPTION_ID}>All services</Option>}
+        {!noServices && <ListDivider role='none' />}
+
         {serviceItems.map(item => item.component)}
 
         {/* Add Service button */}
@@ -385,6 +394,8 @@ export function ModelsServiceSelector(props: {
         menuOpen={!!vendorsMenuAnchor}
         onClick={handleShowVendors}
       />
+
+      {isAllServices && props.allServicesControl}
 
       {enableDeleteButton && (
         <TooltipOutlined title={`Remove ${selectedServiceItem?.service.label || 'Service'}`}>

@@ -39,7 +39,7 @@ import { basetenHeuristic, basetenModelsToModelDescriptions } from './openai/mod
 import { cerebrasFetchModelDescriptions } from './openai/models/cerebras.models';
 import { chutesAIHeuristic, chutesAIModelsToModelDescriptions } from './openai/models/chutesai.models';
 import { cohereModelFilter, cohereModelSort, cohereModelToModelDescription } from './openai/models/cohere.models';
-import { deepseekInjectVariants, deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
+import { deepseekModelFilter, deepseekModelSort, deepseekModelToModelDescription } from './openai/models/deepseek.models';
 import { fastAPIHeuristic, fastAPIModels } from './openai/models/fastapi.models';
 import { fireworksAIHeuristic, fireworksAIModelsToModelDescriptions } from './openai/models/fireworksai.models';
 import { groqModelFilter, groqModelSortFn, groqModelToModelDescription, groqValidateModelDefs_DEV } from './openai/models/groq.models';
@@ -59,7 +59,6 @@ import { openRouterInjectVariants, openRouterModelFamilySortFn, openRouterModelT
 import { openAIInjectVariants, openAIModelFilter, openAIModelToModelDescription, openAISortModels, openaiValidateModelDefs_DEV } from './openai/models/openai.models';
 import { sakanaAIModelsToModelDescriptions } from './openai/models/sakanaai.models';
 import { perplexityHardcodedModelDescriptions, perplexityInjectVariants } from './openai/models/perplexity.models';
-import { tlusApiHeuristic, tlusApiTryParse } from './openai/models/tlusapi.models';
 import { togetherAIModelsToModelDescriptions } from './openai/models/together.models';
 import { UNSLOTH_API_PATHS, UNSLOTH_STATUS_KEY, unslothHeuristic, unslothModelsToModelDescriptions, unslothParseStatus, unslothStatusFrom } from './openai/models/unsloth.models';
 import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.models';
@@ -448,13 +447,6 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
           if (dialect === 'togetherai')
             return togetherAIModelsToModelDescriptions(openAIWireModelsResponse);
 
-          // [TLUS-style API] detect by structure: { data: [{ id, tier, capabilities, ... }] }
-          if (tlusApiHeuristic(openAIWireModelsResponse)) {
-            const tlusModels = tlusApiTryParse(openAIWireModelsResponse);
-            if (tlusModels) return tlusModels;
-            // fall through if failed
-          }
-
           // NOTE: we don't zod here as it would strip unknown properties needed for some dialects - so we proceed optimistically
           // let maybeModels = OpenAIWire_API_Models_List.Response_schema.parse(openAIWireModelsResponse).data || [];
           let maybeModels = openAIWireModelsResponse?.data || [];
@@ -491,11 +483,11 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
                 .sort(cohereModelSort);
 
             case 'deepseek':
-              return deepseekInjectVariants(maybeModels // appends the unlisted V4.1-Flash beta while live
+              return maybeModels
                 .filter(({ id }) => deepseekModelFilter(id))
                 .map(({ id }) => deepseekModelToModelDescription(id))
-                // .reduce(deepseekInjectVariants, [] as ModelDescriptionSchema[]) // was used to inject V3.2-Speciale
-              ).sort(deepseekModelSort);
+                // an inject step lived here twice (V3.2-Speciale, the V4.1-Flash beta) for ids /models never listed
+                .sort(deepseekModelSort);
 
             case 'groq':
               // [DEV] check for stale/unknown model definitions
