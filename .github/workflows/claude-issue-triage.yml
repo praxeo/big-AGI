@@ -34,6 +34,8 @@ jobs:
 
       - name: Analyze issue and provide help
         uses: anthropics/claude-code-action@v1
+        env:
+          CLAUDE_CODE_SUBAGENT_MODEL: claude-opus-5 # brains on Fable (--model below), delegated subagents on the latest Opus
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Security: Allow any user to trigger triage (automated issue help is safe)
@@ -65,13 +67,24 @@ jobs:
                - Suggest workarounds for immediate relief if applicable
                - Use web search to find similar issues and solutions
                - Test selectively and even npm install and run build if needed to verify the solution
-            2. Always add the 'claude-triage' issue label to indicate this issue was triaged by Claude
+            2. Label the issue with 'target_MAIN' and/or 'target_DEV' (`gh issue edit <number> --add-label`), no other label; unsure -> none
             3. Comment with:
                - Very brief thank you note, if applicable
                - Initial assessment
                - Next steps or clarification needed
                - Link duplicates if found
-            
+
+            TARGET LABEL: `main` (public) is the open-source app people self-host; `dev` (private) runs big-agi.com Free/Pro.
+            `main` flows into `dev`, but `dev` has also rewritten Beam, composer, chat list, personas, export/import and storage,
+            so a surface existing in your checkout does not mean the fix lands here. The default is no label.
+            target_MAIN: the reporter is self-deployed, Docker, local or Vercel; or the issue is vendor/model/AIX protocol level
+            (model lists, vendor params, streaming, wire tool calls, retries, env config), which is shared by construction.
+            target_DEV: hosted-only (accounts, /me, /dashboard, Pro, billing, credits, sync, spaces, devices, tenants, admin,
+            published links, notifications, spotlight, PWA; code names zync, xe, northbridge, ramble, variform, sigil, ukv,
+            supabase, stripe, nextauth, cloud fabric); or a big-agi.com reporter on a Beam, persona, composer or export surface.
+            Both: a shared data change that needs separate UI work on each branch.
+            None: already implemented; large features touching data models across components; anything else unclear.
+
             Remember: design values for this codebase: orthogonal features, features that generalize well, modularized and reusable code,
             type-discriminated data, optimized code, zero maintenance burden. Minimize future pain, etc.
 
@@ -82,6 +95,6 @@ jobs:
           # See https://github.com/anthropics/claude-code-action/blob/main/docs/usage.md
           # or https://docs.claude.com/en/docs/claude-code/cli-reference for available options
           claude_args: |
-            --model claude-opus-4-8[1m]
+            --model claude-fable-5-1
             --max-turns 200
             --allowedTools "Edit,Read,Grep,Glob,Write,WebFetch,WebSearch,Skill,Agent,LSP,Bash(cat:*),Bash(cp:*),Bash(find:*),Bash(git branch:*),Bash(grep:*),Bash(ls:*),Bash(mkdir:*),Bash(npm run:*),Bash(gh issue:*),Bash(gh search:*),Bash(gh label:*),Bash(gh pr:*)"
