@@ -10,6 +10,7 @@ import SpeedIcon from '@mui/icons-material/Speed';
 import WidthWideIcon from '@mui/icons-material/WidthWide';
 
 import { FormLabelStart } from '~/common/components/forms/FormLabelStart';
+import { FormSelectControl, FormSelectOption } from '~/common/components/forms/FormSelectControl';
 import { FormSwitchControl } from '~/common/components/forms/FormSwitchControl';
 import { Link } from '~/common/components/Link';
 import { PhImageSquare } from '~/common/components/icons/phosphor/PhImageSquare';
@@ -18,21 +19,37 @@ import { useUIPreferencesStore } from '~/common/stores/store-ui';
 import { useUXLabsStore } from '~/common/stores/store-ux-labs';
 
 
+const _adaptiveRenderingOptions: FormSelectOption<'auto' | 'on' | 'off' | 'debug'>[] = [
+  { value: 'auto', label: 'Auto', description: 'When heavy' },
+  { value: 'on', label: 'On', description: 'Always' },
+  { value: 'off', label: 'Off', description: 'Never' },
+  { value: 'debug', label: 'Auto (Debug)', description: 'Highlight' },
+];
+
+
 export function UxLabsSettings() {
 
   // external state
   const isMobile = useIsMobile();
   const {
-    labsHighPerformance, setLabsHighPerformance,
     labsLosslessImages, setLabsPreserveLosslessImages,
     labsAutoHideComposer, setLabsAutoHideComposer,
     labsShowShortcutBar, setLabsShowShortcutBar,
     labsComposerAttachmentsInline, setLabsComposerAttachmentsInline,
     labsSingleDollarLatex, setLabsSingleDollarLatex,
+    labsAdaptiveRendering, setLabsAdaptiveRendering,
   } = useUXLabsStore();
   const [messageFullWidth, setMessageFullWidth] = useUIPreferencesStore(useShallow(state => [state.messageFullWidth, state.setMessageFullWidth]));
 
   return <>
+
+    <FormSelectControl
+      title={<><SpeedIcon sx={{ fontSize: 'lg', mr: 0.5, mb: 0.25 }} />Adaptive Rendering</>}
+      tooltip='Keeps long replies smooth: the part still being written may show simpler formatting until the reply finishes.'
+      options={_adaptiveRenderingOptions}
+      value={labsAdaptiveRendering}
+      onChange={setLabsAdaptiveRendering}
+    />
 
     <FormSwitchControl
       title={<><PhImageSquare sx={{ fontSize: 'lg', mr: 0.5, mb: 0.25 }} />Lossless Images</>} description={labsLosslessImages ? 'Large storage use' : 'Compress'}
@@ -43,17 +60,6 @@ export function UxLabsSettings() {
         WARNING: PNG images can be very large (e.g. 10-20MB each in high quality modes in Gemini Nano Banana models). This will use significantly more storage.
       </>}
       checked={labsLosslessImages} onChange={setLabsPreserveLosslessImages}
-    />
-
-    <FormSwitchControl
-      title={<><SpeedIcon sx={{ fontSize: 'lg', mr: 0.5, mb: 0.25 }} />Unlock Refresh</>} description={labsHighPerformance ? 'Unlocked' : 'Default'}
-      tooltipWarning={labsHighPerformance}
-      tooltip={<>
-        Unlocks the maximum UI refresh rate for Chats and Beams, and will draw every single token as they come in.
-        <hr />
-        THIS MAY CAUSE HIGH CPU USAGE, BATTERY DRAIN, AND STUTTERING WITH FAST MODELS.
-      </>}
-      checked={labsHighPerformance} onChange={setLabsHighPerformance}
     />
 
     {!isMobile && <FormSwitchControl

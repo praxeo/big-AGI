@@ -34,6 +34,9 @@ import './RenderCode.css';
 
 // configuration
 const ALWAYS_SHOW_OVERLAY = true;
+export const BLOCK_CODE_MERMAID_TITLE = 'mermaid';
+export const BLOCK_CODE_PLANTUML_TITLE = 'plantuml';
+export const BLOCK_CODE_SVG_TITLE = 'svg';
 
 // Perf: while streaming a large code block, throttle Prism re-highlighting (decimator ~15Hz -> capped here to ~7Hz).
 // Set BYTES to 0 to disable the optimization entirely (zero runtime cost when disabled).
@@ -53,7 +56,7 @@ interface RenderCodeBaseProps {
   code: string,
   isPartial: boolean,
   fitScreen?: boolean,
-  initialShowHTML?: boolean,
+  initialRenderHTML?: boolean,
   noCopyButton?: boolean,
   optimizeLightweight?: boolean, // set when non-memoed and partial
   onReplaceInCode?: (search: string, replace: string) => boolean;
@@ -160,7 +163,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   // const [isHovering, setIsHovering] = React.useState(false);
   const [fitScreen, setFitScreen] = React.useState(!!props.fitScreen);
   const [htmlReloadKey, setHtmlReloadKey] = React.useState(0);
-  const [showHTML, setShowHTML] = React.useState(props.initialShowHTML === true);
+  const [showHTML, setShowHTML] = React.useState(props.initialRenderHTML === true);
   const [showMarkdown, setShowMarkdown] = React.useState(true);
   const [showMermaid, setShowMermaid] = React.useState(true);
   const [showPlantUML, setShowPlantUML] = React.useState(true);
@@ -172,10 +175,11 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const { overlayRef, overlayBoundaryRef } = useStickyCodeOverlay({ disabled: props.optimizeLightweight || isFullscreen });
 
   // sticky overlay positioning
-  const { uiComplexityMode, showLineNumbers, showSoftWrap, setShowLineNumbers, setShowSoftWrap } = useUIPreferencesStore(useShallow(state => ({
+  const { uiComplexityMode, showLineNumbers, showSoftWrap, setRenderHTMLInitial, setShowLineNumbers, setShowSoftWrap } = useUIPreferencesStore(useShallow(state => ({
     uiComplexityMode: state.complexityMode,
     showLineNumbers: state.renderCodeLineNumbers,
     showSoftWrap: state.renderCodeSoftWrap,
+    setRenderHTMLInitial: state.setRenderHTMLInitial,
     setShowLineNumbers: state.setRenderCodeLineNumbers,
     setShowSoftWrap: state.setRenderCodeSoftWrap,
   })));
@@ -206,6 +210,13 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     copyToClipboard(codeRef.current, 'Code');
   }, []);
 
+  const handleHtmlRenderToggle = React.useCallback(() => {
+    // persistently save this change, to be used as next initial values
+    const nextState = !showHTML;
+    setRenderHTMLInitial(nextState);
+    setShowHTML(nextState);
+  }, [setRenderHTMLInitial, showHTML]);
+
 
   // heuristics for specialized rendering
 
@@ -218,7 +229,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const isMdCode = !blockIsPartial && (lcBlockTitle === 'md' || lcBlockTitle === 'markdown' || lcBlockTitle.endsWith('.md'));
   const renderMarkdown = isMdCode && showMarkdown;
 
-  const isMermaidCode = lcBlockTitle === 'mermaid' && !blockIsPartial;
+  const isMermaidCode = lcBlockTitle === BLOCK_CODE_MERMAID_TITLE && !blockIsPartial;
   const renderMermaid = isMermaidCode && showMermaid;
 
   const isPlantUMLCode = heuristicIsCodePlantUML(_tCode);
@@ -376,7 +387,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
             {/* Show HTML + Reload */}
             {isHTMLCode && (
               <ButtonGroup aria-label='HTML options' sx={overlayGroupWithShadowSx}>
-                <OverlayButton tooltip={noTooltips ? null : renderHTML ? 'Show Code' : 'Show Web Page'} variant={renderHTML ? 'solid' : 'outlined'} color='danger' onClick={() => setShowHTML(!showHTML)}>
+                <OverlayButton tooltip={noTooltips ? null : renderHTML ? 'Show Code' : 'Show Web Page'} variant={renderHTML ? 'solid' : 'outlined'} color='danger' onClick={handleHtmlRenderToggle}>
                   <HtmlIcon sx={{ fontSize: 'xl2' }} />
                 </OverlayButton>
                 {renderHTML && (

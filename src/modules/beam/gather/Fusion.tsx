@@ -11,7 +11,7 @@ import { ChatMessageMemo } from '../../../apps/chat/components/message/ChatMessa
 import { DLLMId, getLLMLabel } from '~/common/stores/llms/llms.types';
 import type { DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import type { DMessageId } from '~/common/stores/chat/chat.message';
-import { messageFragmentsReduceText } from '~/common/stores/chat/chat.message';
+import { messageFragmentsReduceText, messageWasOutOfTokens } from '~/common/stores/chat/chat.message';
 
 import { GoodTooltip } from '~/common/components/GoodTooltip';
 import { InlineError } from '~/common/components/InlineError';
@@ -21,7 +21,7 @@ import { useLLMSelect } from '~/common/components/forms/useLLMSelect';
 
 import { BeamCard, beamCardClasses, beamCardMessageScrollingSx, beamCardMessageSx, beamCardMessageWrapperSx } from '../BeamCard';
 import { BeamUpstreamResume } from '../BeamUpstreamResume';
-import { BeamModelUnavailable } from '../components/BeamModelUnavailable';
+import { BeamCardNotice, BeamModelUnavailable } from '../components/BeamCardNotice';
 import { BeamStoreApi, useBeamStore } from '../store-beam.hooks';
 import { FusionControlsMemo } from './FusionControls';
 import { FusionInstructionsEditor } from './FusionInstructionsEditor';
@@ -29,7 +29,7 @@ import { GATHER_COLOR } from '../beam.config';
 import { findFusionFactory } from './instructions/beam.gather.factories';
 import { fusionIsEditable, fusionIsError, fusionIsFusing, fusionIsIdle, fusionIsStopped, fusionIsUsableOutput } from './beam.gather';
 import { useBeamCardScrolling } from '../store-module-beam';
-import { useMessageAvatarLabel } from '~/common/util/dMessageUtils';
+import { messageIssueColor, useMessageAvatarLabel } from '~/common/util/dMessageUtils';
 
 
 export function Fusion(props: {
@@ -54,6 +54,8 @@ export function Fusion(props: {
   const isUsable = fusionIsUsableOutput(fusion);
   const showUseButtons = isUsable && !isFusing;
   const { tooltip: fusionAvatarTooltip } = useMessageAvatarLabel(fusion?.outputDMessage, 'pro');
+  const isOutOfTokens = !isFusing && messageWasOutOfTokens(fusion?.outputDMessage?.generator);
+  const issueColor = messageIssueColor(isError, isOutOfTokens);
 
   const factory = findFusionFactory(fusion?.factoryId);
 
@@ -142,7 +144,7 @@ export function Fusion(props: {
       tabIndex={-1}
       className={
         // (isIdle ? beamCardClasses.fusionIdle : '')
-        (isError ? beamCardClasses.errored + ' ' : '')
+        (issueColor ? beamCardClasses.issue[issueColor] + ' ' : '')
         + ((isUsable || isFusing || isIdle) ? beamCardClasses.selectable + ' ' : '')
         + (isFusing ? beamCardClasses.attractive + ' ' : '')
         // + (beamCardClasses.smashTop + ' ')
@@ -183,6 +185,7 @@ export function Fusion(props: {
 
       {/* Show issue, if any */}
       {isError && <InlineError error={fusion?.errorText || 'Merge Issue'} />}
+      {issueColor === 'warning' && <BeamCardNotice color='warning' variant='solid' fullWidth>Out of tokens - response cut short.</BeamCardNotice>}
 
 
       {/* Dynamic: instruction-specific components */}
@@ -191,14 +194,14 @@ export function Fusion(props: {
       {/* Output Message */}
       {(!!fusion?.outputDMessage?.fragments.length || fusion?.stage === 'fusing') && (
         <Box onCopy={clipboardInterceptCtrlCForCleanup} sx={beamCardMessageWrapperSx}>
-          {!!fusion.outputDMessage && (
+          {!!fusion.outputDMessage?.fragments.length && (
             <ChatMessageMemo
               message={fusion.outputDMessage}
               fitScreen={true}
               isMobile={props.isMobile}
               hideAvatar
               blocksStretch
-              showUnsafeHtmlCode={true}
+              htmlRenderVariant='render'
               adjustContentScaling={-1}
               onMessageFragmentDelete={handleFragmentDelete}
               onMessageFragmentReplace={handleFragmentReplace}

@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import type { WordsDiff } from '~/modules/blocks/wordsdiff/RenderWordsDiff';
-import { AutoBlocksRenderer } from '~/modules/blocks/AutoBlocksRenderer';
+import { AutoBlocksHtmlRenderVariant, AutoBlocksRenderer } from '~/modules/blocks/AutoBlocksRenderer';
 
 import type { ContentScaling } from '~/common/app.theme';
 import type { DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
@@ -18,22 +18,23 @@ import { explainServiceErrors } from '../explainServiceErrors';
 export function BlockPartText_AutoBlocks(props: {
   // current value
   textPartText: string,
-  setEditedText?: (fragmentId: DMessageFragmentId, value: string, applyNow: boolean) => void,
-
-  fragmentId: DMessageFragmentId,
   messageRole: DMessageRole,
 
-  contentScaling: ContentScaling,
-  isMobile: boolean,
-  fitScreen: boolean,
-  disableMarkdownText: boolean,
-  renderAsWordsDiff?: WordsDiff,
+  fragmentId: DMessageFragmentId,
+  setEditedText?: (fragmentId: DMessageFragmentId, value: string, applyNow: boolean) => void,
 
-  showUnsafeHtmlCode?: boolean,
+  contentScaling: ContentScaling,
+  fitScreen: boolean,
+  isMobile: boolean,
+
+  inputAsWordsDiff?: WordsDiff,
+
+  disableMarkdownText: boolean,
+  htmlRenderVariant?: AutoBlocksHtmlRenderVariant,
+
   optiAllowSubBlocksMemo: boolean,
   optiStreamingLastFragment?: boolean,
 
-  onContextMenu?: (event: React.MouseEvent) => void;
   onDoubleClick?: (event: React.MouseEvent) => void;
 
 }) {
@@ -73,13 +74,14 @@ export function BlockPartText_AutoBlocks(props: {
       contentScaling={props.contentScaling}
       fitScreen={props.fitScreen}
       isMobile={props.isMobile}
-      showUnsafeHtmlCode={props.showUnsafeHtmlCode}
-      renderAsWordsDiff={props.renderAsWordsDiff}
-      codeRenderVariant='enhanced' // was: { props.enhanceCodeBlocks ? 'enhanced' : 'outlined' }
+      blocksProcessor={undefined}
+      inputAsCodeWithTitle={undefined}
+      inputAsWordsDiff={props.inputAsWordsDiff}
+      codeRenderVariant='enhanced' // can still be downgraded to 'outlined', e.g. for small snippets or given vnd types
+      htmlRenderVariant={props.htmlRenderVariant}
       textRenderVariant={props.disableMarkdownText ? 'text' : 'markdown'}
       optiAllowSubBlocksMemo={props.optiAllowSubBlocksMemo}
       optiStreamingLastFragment={props.optiStreamingLastFragment}
-      onContextMenu={props.onContextMenu}
       onDoubleClick={props.onDoubleClick}
       setText={!props.setEditedText ? undefined : handleSetText}
     />
