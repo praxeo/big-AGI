@@ -88,19 +88,25 @@ export const tooltipMetricsGridSx: SxProps = {
 
 
 /** Whole message background color, based on the message role and state */
-export function messageBackground(messageRole: DMessageRole | string, userCommand: 'draw' | 'react' | false, wasEdited: boolean, isAssistantIssue: boolean): string {
+export function messageBackground(messageRole: DMessageRole | string, userCommand: 'draw' | 'react' | false, wasEdited: boolean, isAssistantIssue: boolean, isAssistantOutOfTokens: boolean): string {
   switch (messageRole) {
     case 'user':
       return userCommand === 'draw' ? 'warning.softActiveBg'
         : userCommand === 'react' ? 'success.softHoverBg'
           : 'primary.plainHoverBg'; // was .background.level1
     case 'assistant':
-      return isAssistantIssue ? 'danger.softBg' : 'background.surface';
+      const issueColor = messageIssueColor(isAssistantIssue, isAssistantOutOfTokens);
+      return issueColor ? `${issueColor}.softBg` : 'background.surface';
     case 'system':
       return wasEdited ? 'warning.softHoverBg' : 'neutral.softBg';
     default:
       return '#ff0000';
   }
+}
+
+/** Issue state -> Joy palette key: errors are danger, out-of-tokens is warning. Chat backgrounds, Beam cards and notices all color from this. */
+export function messageIssueColor(hasError: boolean, isOutOfTokens: boolean): 'danger' | 'warning' | undefined {
+  return hasError ? 'danger' : isOutOfTokens ? 'warning' : undefined;
 }
 
 
@@ -242,7 +248,7 @@ export function useMessageAvatarLabel(
         label: prettyName,
         tooltip: (!created || complexity === 'minimal') ? null : (
           <Box sx={tooltipSx}>
-            <TimeAgo date={created} formatter={(value: number, unit: string, _suffix: string) => `Thinking for ${value} ${unit}${value > 1 ? 's' : ''}...`} />
+            <TimeAgo date={created} formatter={(value: number, unit: string, _suffix: string) => !value ? 'Thinking...' : `Thinking for ${value} ${unit}${value > 1 ? 's' : ''}...`} />
             {liveMetrics}
           </Box>
         ),
@@ -297,8 +303,13 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
   if (!metrics) return null;
 
   const showWaitingTime = metrics?.dtStart !== undefined && (uiComplexityMode === 'extra' || metrics.dtStart >= 10000);
-  const showSpeedSection = uiComplexityMode !== 'minimal' && (showWaitingTime || metrics?.vTOutInner !== undefined);
-  const showTimeSection = uiComplexityMode !== 'minimal' && !!metrics?.dtAll;
+  // no first-token mark (non-streaming): the end-to-end rate stands in, labeled
+  const vTOutOverall = (metrics.vTOutInner === undefined && metrics.dtStart === undefined && metrics.TOut && metrics.dtAll)
+    ? metrics.TOut / (metrics.dtAll / 1000) : undefined;
+  const showSpeedSection = showWaitingTime || metrics?.vTOutInner !== undefined || vTOutOverall !== undefined;
+  const showTimeSection = !!metrics?.dtAll;
+  // stopped or failed: no vendor-terminated stream, so no dtAll; the client wall clock stands in, labeled
+  const showWallTime = !showTimeSection && metrics?.TsR === 'aborted' && !!metrics?.dtWall;
 
   const costCode = metrics.$code ? _prettyCostCode(metrics.$code) : null;
 
@@ -326,6 +337,8 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
     {showSpeedSection && <div>Speed:</div>}
     {showSpeedSection && <div>
       {!!metrics.vTOutInner && <>~<b>{(Math.round(metrics.vTOutInner * 10) / 10).toLocaleString() || ''}</b> tok/s</>}
+      {/* non-streaming: TOut / dtAll, mutually exclusive with vTOutInner and the wait */}
+      {vTOutOverall !== undefined && <>~<b>{(Math.round(vTOutOverall * 10) / 10).toLocaleString()}</b> tok/s <span style={{ opacity: 0.5 }}>overall</span></>}
       {showWaitingTime && (<span style={{ opacity: 0.5 }}>
         {metrics.vTOutInner !== undefined && ' · '}
         <span>{prettyDuration(metrics.dtStart!, true)}</span> wait
@@ -366,7 +379,9 @@ export function prettyMessageMetrics(metrics: DMessageGenerator['metrics'], uiCo
 
     {/* Time */}
     {showTimeSection && <div>Time:</div>}
+    {showWallTime && <div>Wall time:</div>}
     {showTimeSection && <div><b>{prettyDuration(metrics.dtAll!, true)}</b></div>}
+    {showWallTime && <div><b>{prettyDuration(metrics.dtWall!, true)}</b> <span style={{ opacity: 0.5 }}>until stop</span></div>}
   </Box>;
 }
 
@@ -396,7 +411,7 @@ export function prettyTokenStopReason(reason: DMessageGenerator['tokenStopReason
     case 'issue':
       return complexity === 'extra' ? 'Error' : '';
     case 'out-of-tokens':
-      return 'Out of Tokens';
+      return 'Out of tokens';
     default:
       const _exhaustiveCheck: never = reason;
       return null;
@@ -404,7 +419,7 @@ export function prettyTokenStopReason(reason: DMessageGenerator['tokenStopReason
 }
 
 
-const oaiORegex = /gpt-[345](?:o|\.\d+)?-|o[1345]-|osb-|chatgpt-[45]o?|gpt-5-chat|computer-use-/;
+const oaiORegex = /gpt-[3-6](?:o|\.\d+)?-|o[1345]-|osb-|chatgpt-[45]o?|gpt-5-chat|computer-use-/;
 const geminiRegex = /gemini-|gemma-|learnlm-|deep-research-|antigravity-|nano-banana-/;
 
 
@@ -452,6 +467,7 @@ export function prettyShortChatModelName(model: string | undefined): string {
       .replace('-pro', ' Pro')
       .replace('-preview', ' (preview)')
       // GPT-5.6+ capability tiers
+      .replace('-astra', ' Astra')
       .replace('-sol', ' Sol')
       .replace('-terra', ' Terra')
       .replace('-luna', ' Luna')
@@ -524,7 +540,7 @@ export function prettyShortChatModelName(model: string | undefined): string {
     if (model.includes('grok-beta')) return 'Grok Beta';
     if (model.includes('grok-vision-beta')) return 'Grok Vision Beta';
   }
-  // [OpenAI OSS] gpt-oss family (shared across Cerebras/Groq/etc.) - the OpenAI regex above only matches gpt-[345]
+  // [OpenAI OSS] gpt-oss family (shared across Cerebras/Groq/etc.) - the OpenAI regex above only matches gpt-[3-6]
   if (model.includes('gpt-oss')) {
     return model.slice(model.indexOf('gpt-oss'))
       .replace('gpt-oss', 'GPT OSS')

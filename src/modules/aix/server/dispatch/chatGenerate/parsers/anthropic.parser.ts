@@ -1,7 +1,7 @@
 import { safeErrorString } from '~/server/wire';
 
 import type { AixWire_Particles } from '../../../api/aix.wiretypes';
-import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
+import type { ChatGenerateParseContext, ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
 import { aixResilientUnknownValue } from '../../../api/aix.resilience';
@@ -101,7 +101,7 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
     return true;
   };
 
-  return function(pt: IParticleTransmitter, eventData: string, eventName?: string, context?: { retriesAvailable: boolean }): void {
+  return function(pt: IParticleTransmitter, eventData: string, eventName?: string, context?: ChatGenerateParseContext): void {
 
     // Time to first event
     if (timeToFirstEvent === undefined)
@@ -492,18 +492,18 @@ export function createAnthropicMessageParser(): ChatGenerateParseFunction {
         // 500* - api_error (anthropic systems internal unexpected error)
         // 529* - overloaded_error: The API is temporarily overloaded.
         // *: retryable errors
-        const isRetryableError = ['overloaded_error', 'rate_limit_error', 'api_error'].includes(error.type);
+        // map error types to HTTP status codes: selects the retry class (429/529 capacity, 500 transient) and shows in diagnostics
+        const errorTypeToHttpStatus: Record<string, number> = {
+          'rate_limit_error': 429,
+          'api_error': 500,
+          'overloaded_error': 529,
+        };
+        const isRetryableError = error.type in errorTypeToHttpStatus;
 
-        // Throw retryable error to instruct the correct ancestor to restart (only if retries available
+        // Throw retryable error to instruct the correct ancestor to restart (only if retries available for this class)
         if (isRetryableError) {
-          if (context?.retriesAvailable) {
+          if (context?.hasRetriesForHttpStatus(errorTypeToHttpStatus[error.type])) {
             console.log(`[Aix.Anthropic] Can retry error '${errorText}'`);
-            // map error types to HTTP status codes for diagnostics
-            const errorTypeToHttpStatus: Record<string, number> = {
-              'rate_limit_error': 429,
-              'api_error': 500,
-              'overloaded_error': 529,
-            };
             // request a retry by unwinding to the retrier
             throw new OperationRetrySignal(`Anthropic: ${errorText}`, {
               causeHttp: errorTypeToHttpStatus[error.type],
@@ -538,7 +538,7 @@ export function createAnthropicMessageParserNS(): ChatGenerateParseFunction {
     return true;
   };
 
-  return function(pt: IParticleTransmitter, fullData: string /*, eventName?: string, context?: { retriesAvailable: boolean } */): void {
+  return function(pt: IParticleTransmitter, fullData: string /*, eventName?: string, context?: ChatGenerateParseContext */): void {
 
     // parse with validation (e.g. type: 'message' && role: 'assistant')
     const {
@@ -736,14 +736,22 @@ function _sendInputTransforms(pt: IParticleTransmitter, transforms: NonNullable<
     pathsByReason.set(reason, [...(pathsByReason.get(reason) ?? []), path]);
   }
   for (const [reason, paths] of pathsByReason) {
-    const cause = reason === 'prefix_binding_mismatch' ? 'history-edited' : reason === 'model_binding_mismatch' ? 'model-switch' : reason;
-    const why = cause === 'history-edited' ? 'History edited' : cause === 'model-switch' ? 'Model changed' : cause;
+    // NOTE: Anthropic's 'prefix_binding_mismatch' fires identically for an edited/deleted message, a changed
+    // tool selection, or a changed system prompt (e.g. our own {{LocaleNow}} ticking to a new hour) - it does
+    // NOT tell us which. Empirically verified live (2026-09-21): a pure tool toggle and a pure system-prompt
+    // change both return this exact reason with zero message edits. Don't claim "History edited" here, it's
+    // provably wrong in those cases - stay cause-neutral instead.
+    const cause = reason === 'prefix_binding_mismatch' ? 'prefix-changed' : reason === 'model_binding_mismatch' ? 'model-switch' : reason;
+    const why = cause === 'prefix-changed' ? 'Reasoning reset' : cause === 'model-switch' ? 'Model changed' : cause;
     const what = paths.length > 1 ? `ignored ${paths.length} reasoning blocks` : 'ignored 1 reasoning block';
     const where = paths.map(p => p.replace(/^messages\.(\d+)\.content\.(\d+).*$/, '$1.$2')).join(', '); // wire positions: message.block
+    const detail = cause === 'prefix-changed'
+      ? `Harmless: the model reasoned again instead of reusing earlier reasoning. This happens when a message, the tool selection, or the instructions changed since that reasoning was generated.\nIgnored indices: ${where} (zero-based)`
+      : `Harmless: the model rethinks from the messages as they are now.\nIgnored indices: ${where} (zero-based)`;
     pt.appendVoidNotice({
       p: 'vnt', nt: 'input-transform', itt: 'thinking-dropped', cause, reason, paths,
       text: `${why}: ${what}`,
-      detail: `Harmless: the model rethinks from the messages as they are now.\nIgnored indices: ${where} (zero-based)`,
+      detail,
     });
   }
 }

@@ -36,6 +36,7 @@ const filterLyingModelNames: GeminiWire_API_Models_List.Model['name'][] = [
   'models/gemini-flash-latest',
   'models/gemini-flash-latest-high-res-exp', // same displayName as the plain alias, routes to gemini-3.8-flash (verified 2026-09-02); would surface as an uncurated duplicate
   'models/gemini-flash-lite-latest',
+  'models/antigravity-preview-latest', // Interactions-only (generateContent 400s); the dated agents are curated, uncurated this would surface as a broken chat model
 ];
 
 // Not-found guards: ids the list API no longer returns and that hard-404 on generateContent (verified
@@ -664,38 +665,34 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     benchmark: undefined, // video generation, not benchmarkable on standard tests
   },
 
-  // Antigravity Agent Preview (09-2026) - UNDOCUMENTED by Google (no changelog entry, no pricing line; the Antigravity docs
-  // still describe only the 05-2026 agent). 1M in / 64K out; generateContent 400s ("This model only supports Interactions
-  // API."), same as its 05-2026 sibling, so it rides LLM_IF_GEM_Interactions with no code changes: the adapter/parser
-  // `isAntigravity` gates match on 'antigravity-' and the run is contract-identical to 05-2026. No supersession announced,
-  // so 05-2026 stays visible.
+  // Antigravity Agent Preview (09-2026) - Released Sep 17, 2026; replaces 05-2026
+  // General-purpose managed agent: powered by Gemini 3.8 Flash by default (selectable via agent_config.model, which we don't send),
+  // runs inside a Google-hosted Linux sandbox with default tools (code_execution, google_search, url_context) plus file tools with
+  // PascalCase params (write_to_file, replace_file_content, view_file, list_dir, find_by_name, grep_search). Interactions-only
+  // (generateContent 400s). 1M context (compacted at ~135k), 64K output. Sandbox compute is not billed during the preview.
+  // We send `environment: "remote"` (fresh sandbox per run) and `background: false`. See gemini.interactionsCreate.ts for the request shape.
+  // Docs: https://ai.google.dev/gemini-api/docs/antigravity-agent
   {
     id: 'models/antigravity-preview-09-2026',
     labelOverride: 'Antigravity Agent Preview (2026-09)',
-    pubDate: '20260914', // first seen on the list API; no announced release date
+    pubDate: '20260914', // first seen on the list API; announced 2026-09-17
     isPreview: true,
-    chatPrice: gemini38FlashPricing, // unpublished - same PAYG-on-underlying-tokens baseline as the 05-2026 agent
+    chatPrice: gemini38FlashPricing, // PAYG on underlying tokens - default model is gemini-3.8-flash; tool/compute not billed during preview
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Reasoning, LLM_IF_GEM_Interactions],
+    // No per-model parameters yet - default tool set is enabled implicitly. Future: a tools-allowlist parameter to restrict the default set.
     benchmark: undefined, // Agent harness, not benchmarkable on standard tests
   },
 
-  // Antigravity Agent Preview - Released May 19, 2026
-  // General-purpose managed agent: powered by Gemini 3.8 Flash by default (docs 2026-09-02; default moved
-  // 3.5 -> 3.6 on 2026-07-28, -> 3.7 on 2026-08-13, -> 3.8 on 2026-09-02; selectable via agent_config.model, which we don't send),
-  // runs inside a Google-hosted Linux sandbox with default tools (code_execution, google_search, url_context).
-  // 1M context (compacted at ~135k), 64K output. Sandbox compute is not billed during the preview. We send
-  // `environment: "remote"` (fresh sandbox per run) and intentionally omit `background` (upstream
-  // rejects background=true on this agent). See gemini.interactionsCreate.ts for the request shape.
-  // Docs: https://ai.google.dev/gemini-api/docs/antigravity-agent
+  // Antigravity Agent Preview (05-2026) - Released May 19, 2026; DEPRECATED: shutdown October 5, 2026 (replaced by 09-2026)
   {
+    hidden: true, // superseded by antigravity-preview-09-2026 - kept resolvable for users who already selected it until shutdown
     id: 'models/antigravity-preview-05-2026',
     labelOverride: 'Antigravity Agent Preview (2026-05)',
     pubDate: '20260519',
     isPreview: true,
-    chatPrice: gemini38FlashPricing, // PAYG on underlying tokens - default model is gemini-3.8-flash as of 2026-09-02; tool/compute not billed during preview
+    deprecated: '2026-10-05',
+    chatPrice: gemini38FlashPricing, // PAYG on underlying tokens - default model is gemini-3.8-flash; tool/compute not billed during preview
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Reasoning, LLM_IF_GEM_Interactions],
-    // No per-model parameters yet - default tool set is enabled implicitly. Future: expose env handle
-    // reuse for stateful sessions, or a tools-allowlist parameter to restrict the default set.
     benchmark: undefined, // Agent harness, not benchmarkable on standard tests
   },
 
@@ -830,6 +827,35 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
   // - models/gemini-2.5-flash-preview-04-17 (superseded by 05-20 version)
   // - models/gemini-2.5-flash-preview-04-17-thinking (Cursor variant, superseded)
 
+
+  // 3.8 Flash TTS / 3.8 Flash Lite TTS - SPECULATIVE: listed by the API for ~2h on 2026-09-22, then pulled (404 by id); no
+  // announcement or pricing. Defined ahead so a re-listing is usable at once instead of surfacing with the default chat
+  // interfaces (streaming + system prompt, which TTS rejects). Interfaces mirror 3.1 Flash TTS, verified end-to-end on
+  // 3.1 only (2026-09-22: audio-only request, no system instruction, PCM -> WAV). TODO(2026-11): drop if still unreleased.
+  {
+    id: 'models/gemini-3.8-flash-tts',
+    labelOverride: 'Gemini 3.8 Flash TTS',
+    pubDate: '20260922', // first seen on the list API
+    interfaces: [
+      LLM_IF_OAI_Chat, LLM_IF_OAI_Vision,
+      LLM_IF_Outputs_Audio, LLM_IF_Outputs_NoText,
+      LLM_IF_HOTFIX_StripSys0, // TTS: no system instruction
+      LLM_IF_HOTFIX_NoStream, // TTS: no streaming - use generateContent instead
+    ],
+    benchmark: undefined, // TTS models are not benchmarkable
+  },
+  {
+    id: 'models/gemini-3.8-flash-lite-tts',
+    labelOverride: 'Gemini 3.8 Flash Lite TTS',
+    pubDate: '20260922', // first seen on the list API
+    interfaces: [
+      LLM_IF_OAI_Chat, LLM_IF_OAI_Vision,
+      LLM_IF_Outputs_Audio, LLM_IF_Outputs_NoText,
+      LLM_IF_HOTFIX_StripSys0, // TTS: no system instruction
+      LLM_IF_HOTFIX_NoStream, // TTS: no streaming - use generateContent instead
+    ],
+    benchmark: undefined, // TTS models are not benchmarkable
+  },
 
   // 3.1 Flash TTS Preview - Released April 15, 2026
   // Cost-efficient, expressive, and steerable text-to-speech model

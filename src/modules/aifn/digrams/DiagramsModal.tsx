@@ -256,8 +256,9 @@ export function DiagramsModal(props: { config: DiagramConfig, onClose: () => voi
             fitScreen={isMobile}
             isMobile={isMobile}
             blocksProcessor='diagram'
-            codeRenderVariant='plain'
-            textRenderVariant='text'
+            codeRenderVariant='embedded-plain'
+            htmlRenderVariant='show-code'
+            textRenderVariant='markdown'
             // Edit is moved from the BlocksRenderer to the ContentPartText
             // onMessageEdit={(text) => setMessage({ ...message, text })}
           />

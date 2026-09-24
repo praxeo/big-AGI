@@ -53,9 +53,11 @@ const IF_47_R = [...IF_4_R, LLM_IF_HOTFIX_NoTemperature];
 //                              Sonnet 5 (2026-06-29): adaptive-only too, BUT `thinking: {type: 'disabled'}` is allowed (200),
 //                              so it keeps the base + thinking-variant split (like Opus 4.7/4.8); only budget_tokens returns 400.
 //                              Opus 5 (2026-07-24): adaptive-only, thinking ON by default; 'disabled' allowed ONLY at
-//                              effort 'high' or below (xhigh/max + disabled -> 400); budget_tokens -> 400. Shipped as a
-//                              SINGLE always-thinking entry (like Fable 5) - see the model entry for the probe rationale.
+//                              effort 'high' or below (xhigh/max + disabled -> 400); budget_tokens -> 400. Single entry
+//                              with the param VISIBLE as a Thinking switch (-1 adaptive / null off); the adapter clamps
+//                              effort to 'high' when off.
 //                              Fable/Mythos 5.1 (2026-09-01): as Fable 5; preserved thinking is handled in the AIX adapter.
+//                              Opus 5.5 (2026-09-22): as Fable 5.1 ('disabled' and budget_tokens 400 at every effort); default effort 'medium'.
 // - llmVndAntWebFetch/Search   seem an API feature available on all models
 
 const ANT_TOOLS: Exclude<ModelDescriptionSchema['parameterSpecs'], undefined> = [
@@ -83,7 +85,7 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
 
   // NOTE: what's not redefined below is inherited from the underlying model definition
 
-  // NOTE: no 'claude-opus-5' variant here - Opus 5 ships as a SINGLE always-thinking entry (like Fable 5), see below
+  // NOTE: no 'claude-opus-5' variant here - Opus 5 is a single entry whose Thinking switch is user-facing (see the entry)
 
   // Claude Sonnet 5 thinking variant (Claude 5 gen, adaptive-only; base allows disabling thinking)
   'claude-sonnet-5': {
@@ -279,6 +281,29 @@ type _AnthropicModelDef = ModelDescriptionSchema & {
 
 export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
 
+  // Claude Opus 5.5 - SINGLE always-thinking entry: unlike Opus 5, thinking cannot be disabled at all
+  {
+    id: 'claude-opus-5-5', // Active - 2026-09-22
+    label: 'Claude Opus 5.5',
+    pubDate: '20260922',
+    description: 'For long-running agentic coding and knowledge work',
+    contextWindow: 1_000_000, // 1M default and max, flat pricing
+    maxCompletionTokens: 128000,
+    interfaces: [...IF_47_R, LLM_IF_ANT_ToolsSearch], // reasoning on the base model: thinking is always on
+    parameterSpecs: [
+      { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 /* FORCE adaptive - the only mode; 'disabled' and budget_tokens return 400 */ },
+      { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] }, // default 'medium' (Opus 5: 'high'), probe-verified
+      { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_2x'] }, // fast mode: research preview, API only, waitlist-gated; $8/$40 2x tier
+      ...ANT_TOOLS_DYNAMIC,
+    ],
+    // Opus 5.5 (launch-verified 2026-09-22, probed live): Fable 5.1's API surface at Opus pricing - adaptive-only, forced
+    // tool_choice 'any'/'tool' 400 (AIX downgrades to 'auto' + system hint), temperature only at 1 / top_p / top_k / prefill 400,
+    // computer_20251124 400 (toolset only). Preserved thinking: blocks replay onto Opus 5.5 and Fable/Mythos 5.1 only.
+    // Same tokenizer as Opus 4.8/5, 512-token min cacheable prompt, cache reads 0.05x, knowledge cutoff Jun 2026.
+    chatPrice: { input: 4, output: 20, cache: { read: 0.20, write: 5, duration: 300 }, tools: ANT_PRICE_TOOLS },
+    benchmark: { cbaElo: 1493 + 4 }, // (no arena data yet - launched 2026-09-22) assuming: claude-opus-5-high + 4
+  },
+
   // Claude 5.1 models (Fable/Mythos) - NOTE: no thinking variants, adaptive thinking is always on (as Fable 5)
   {
     id: 'claude-fable-5-1', // Active - 2026-09-01
@@ -358,23 +383,23 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     benchmark: { cbaElo: 1506 + 1 }, // (no arena data yet) assuming: claude-fable-5 + 1
   },
 
-  // Claude Opus 5 - SINGLE always-thinking entry (like Fable 5), NOT a base + '(Adaptive)' split.
-  // Rationale (2026-07-24 live param-space probe): thinking is ON by default and adaptive spends 0 thinking
-  // tokens on trivial turns (probed: effort max on a trivial prompt -> thinking_toks=0), so a non-thinking
-  // entry buys nothing; `thinking:{type:'disabled'}` does exist BUT is capped at effort 'high' or below
-  // (xhigh/max + disabled -> 400) and docs warn it can emit tool calls as plain text - a degraded niche we
-  // deliberately don't surface. Effort is the one control Anthropic intends; revisit if users ask for disabled.
+  // Claude Opus 5 - single entry with a user-facing Thinking switch (no base + '(Adaptive)' split): thinking is ON by
+  // default, and Opus 5 is the only Claude 5 Opus that accepts `thinking:{type:'disabled'}` (5.5 rejects it at every
+  // effort). Off is legal at effort 'high' or below only (xhigh/max -> 400; the AIX adapter clamps), sampling params stay
+  // rejected, and docs warn of tool calls leaking as text on tool-heavy loads. Probed 2026-09-23: adaptive at low..high
+  // thinks on most non-trivial short prompts but only ~10-35 tokens; off buys ~1.3s of time-to-first-token, not cost.
+  // Users wanting an always-instant model duplicate the model and flip the switch (asked in PR #1223).
   {
     id: 'claude-opus-5', // Active - 2026-07-24
     label: 'Claude Opus 5',
     pubDate: '20260724',
-    description: 'Step-change improvement over Opus 4.8 for complex agentic coding and enterprise work',
+    description: 'Previous Opus model, a step-change improvement over Opus 4.8 for complex agentic coding and enterprise work',
     contextWindow: 1_000_000, // 1M is both default and max, no smaller variant (API-confirmed max_input_tokens)
     maxCompletionTokens: 128000,
     interfaces: [...IF_47_R, LLM_IF_ANT_ToolsSearch], // reasoning on the base model: thinking on by default
     parameterSpecs: [
-      { paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 /* FORCE adaptive - explicit `adaptive` equals the default; budget_tokens returns 400 */ },
-      { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] }, // full ladder (API-confirmed); default 'high'; docs: set large max_tokens at xhigh/max
+      { paramId: 'llmVndAntThinkingBudget', initialValue: -1 /* VISIBLE Thinking switch: -1 adaptive (the API default), null off; budget_tokens returns 400 */ },
+      { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] }, // full ladder (API-confirmed); default 'high'; docs: set large max_tokens at xhigh/max; xhigh/max need thinking on (editor hides them, adapter clamps)
       { paramId: 'llmVndAntInfSpeed', enumValues: ['fast_2x'] }, // fast mode: research preview, API only, waitlist-gated; $10/$50 2x tier (same as 4.8)
       ...ANT_TOOLS_DYNAMIC,
     ],
@@ -997,14 +1022,15 @@ const _ORT_ANT_PARAM_ALLOWLIST: ReadonlySet<string> = new Set([
  */
 export function llmOrtAntLookup_ThinkingVariants(orModelName: string): OrtVendorLookupResult | undefined {
 
-  // tokenize the OR name into a set of tokens ['claude', '3', '7', 'sonnet'], ignoring order, dots vs dashes, date suffixes, and OR-specific tags (e.g. ':beta')
-  const orTokens = new Set(orModelName.replace(/:.*$/, '').replace(/\./g, '-').replace(/-\d{8}$/, '').split('-'));
+  // tokenize the OR name into sorted tokens ['3', '7', 'claude', 'sonnet'], ignoring order, dots vs dashes, date suffixes, and OR-specific tags (e.g. ':beta')
+  // sorted lists, not sets: repeated tokens must count, or 'claude-opus-5.5' would collapse onto 'claude-opus-5'
+  const orTokens = orModelName.replace(/:.*$/, '').replace(/\./g, '-').replace(/-\d{8}$/, '').split('-').sort().join(' ');
 
   // find a known model by matching all tokens
   const _knownModel = hardcodedAnthropicModels.find((m) => {
     // tokenize known model name, removing the '...-date' suffix
-    const antTokens = new Set(m.id.replace(/-\d{8}$/, '').split('-'));
-    return antTokens.size === orTokens.size && [...antTokens].every((t) => orTokens.has(t));
+    const antTokens = m.id.replace(/-\d{8}$/, '').split('-').sort().join(' ');
+    return antTokens === orTokens;
   });
   if (!_knownModel) return undefined;
 

@@ -66,7 +66,7 @@ type _RequestConfig<TBody extends object | undefined | FormData> = {
  *    - httpStatus: HTTP status code (503, 429, 502, etc.) for upstream HTTP errors
  *
  * RETRY PATTERN MATCHING:
- * - HTTP 503/429/502 (category='http', httpStatus present) → Retry with server profile (1-30s)
+ * - HTTP 429 → rate-limited profile (~50s); 529 → overloaded (~30s); 503/502 → transient (~7s); see RETRY_PROFILES in trpc.fetchers.retrier.ts
  * - Connection errors (category='connection', connErrorName present) → Retry with network profile (0.5-8s)
  * - Abort/Parse (category='abort'/'parse') → Don't retry
  *
@@ -80,11 +80,15 @@ export class TRPCFetcherError extends TRPCError {
   readonly category: TRPCFetcherErrorCategory;
   readonly connErrorName?: string; // [category='connection'] System error code (ECONNREFUSED, ETIMEDOUT, ENOTFOUND, etc.)
   readonly httpStatus?: number;    // [category='http'] HTTP status code (503, 429, 502, etc.)
+  readonly httpErrorCode?: string; // [category='http'] machine-readable code from the upstream error body, when present (e.g. 'credit_balance_exhausted')
+  readonly httpRetryAfterMs?: number; // [category='http'] the wait the upstream asked for, from the Retry-After headers, when present
 
   constructor(opts: {
     category: TRPCFetcherErrorCategory,
     connErrorName?: string,
     httpStatus?: number,
+    httpErrorCode?: string,
+    httpRetryAfterMs?: number,
     // -> TRPCError fields (code, cause)
     // code?: TRPCError['code'], // removed because we decide it based on category
     // cause?: unknown, // removed for security / anti-leakage reasons
@@ -100,10 +104,29 @@ export class TRPCFetcherError extends TRPCError {
     this.category = opts.category;
     this.connErrorName = opts.connErrorName;
     this.httpStatus = opts.httpStatus;
+    this.httpErrorCode = opts.httpErrorCode;
+    this.httpRetryAfterMs = opts.httpRetryAfterMs;
 
     // Maintains proper prototype chain for instanceof checks
     Object.setPrototypeOf(this, TRPCFetcherError.prototype);
   }
+}
+
+/**
+ * The wait the upstream asks for before a retry: `retry-after-ms` (Azure OpenAI, milliseconds), else `retry-after`
+ * (OpenAI, Anthropic, Groq, Perplexity, OpenRouter: seconds; an HTTP date per RFC 9110 is accepted too).
+ * Undefined when absent or invalid. On CSF the browser only shows headers the vendor lists in
+ * Access-Control-Expose-Headers, so there this is often undefined and the retrier falls back to its own backoff.
+ */
+function _retryAfterMsFromHeaders(headers: Headers): number | undefined {
+  const ms = Number(headers.get('retry-after-ms') ?? NaN);
+  if (Number.isFinite(ms) && ms >= 0) return ms;
+  const retryAfter = headers.get('retry-after')?.trim();
+  if (!retryAfter) return undefined;
+  const seconds = Number(retryAfter);
+  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined;
+  const dateMs = Date.parse(retryAfter);
+  return Number.isFinite(dateMs) ? Math.max(0, dateMs - Date.now()) : undefined;
 }
 
 /**
@@ -285,9 +308,15 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
       console.log(`[${method}->${parserName}] [${moduleName} issue] (http ${s}, ${response.statusText}):`, { url, responseOk: response.ok, notOkayPayload: payloadString || notOkayPayload });
 
     // -> throw HTTP error: will be a 400 (BAD_REQUEST), with preserved status
+    // machine-readable upstream code: the message alone cannot tell a temporary 429 from a permanent one
+    // [Anthropic] error.details.error_code, [OpenAI and compatibles] error.code
+    const upstreamCode = notOkayPayload?.error?.details?.error_code ?? notOkayPayload?.error?.code;
+
     throw new TRPCFetcherError({
       category: 'http',
       httpStatus: s,
+      httpErrorCode: typeof upstreamCode === 'string' ? upstreamCode : undefined,
+      httpRetryAfterMs: _retryAfterMsFromHeaders(response.headers),
       message: (throwWithoutName ? '' : `[${moduleName} issue]: `)
         + `Upstream responded with HTTP ${s} ${response.statusText}`
         + (payloadString ? `: \n${payloadString}` : '')

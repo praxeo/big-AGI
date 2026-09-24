@@ -22,8 +22,8 @@
 //   zai.glm-4.7, openai.gpt-oss-120b, qwen.qwen3-coder-next and mistral.mistral-large-3-675b-instruct all
 //   returned finish_reason 'tool_calls'.
 // - Listed but not callable: google.gemma-4-{31b,26b-a4b,e2b} and xai.grok-4.3 400 on both Mantle routes
-//   ("isn't supported on this route"). openai.gpt-5.4/5.5 (+ dated ids) and the gpt-5.6-{sol,terra,luna}
-//   profiles are account-gated (401 access_denied, "contact AWS Sales"; re-checked 2026-08-25) - curated
+//   ("isn't supported on this route"). openai.gpt-5.4/5.5 (+ dated ids), gpt-5.6-{sol,terra,luna} and gpt-6-{astra,sol,luna}
+//   are account-gated (401 access_denied, "contact AWS Sales"; re-checked 2026-09-22) - curated
 //   anyway via #1167 (author live-verified on an access-enabled account): the 401 is self-explanatory for
 //   accounts without the enablement.
 // - Docs-only findings awaiting a live re-check (no AWS creds here): AWS documents an Anthropic-native 'Messages' API on
@@ -55,7 +55,10 @@ const SKIP_MANTLE_TOOLS_IDS = ['writer.palmyra-vision-7b']; // 400s: '"auto" too
 // `api: 'responses'`: model only implements the OpenAI Responses API (on the '/openai/v1/responses' path) and rejects
 // Chat Completions with a 400 - see https://docs.aws.amazon.com/bedrock/latest/userguide/models-api-compatibility.html
 // GPT-5.x ctx is 1M per the AWS model cards (272K is only the short/long pricing-tier boundary); out stays 128000 (cards say
-// "N/A"). deepseek.v3.1 out 8192 and kimi-k2-thinking out 16384 per their cards' "Max output tokens".
+// "N/A"); GPT-6 1,050,000 / 128,000 per the Astra card. deepseek.v3.1 out 8192 and kimi-k2-thinking out 16384 per their cards' "Max output tokens".
+// Entries with `api: 'responses'` win over the foundation-model listing: AWS also lists GPT-5.6 and GPT-6 as foundation models
+// (2026-09), which described them as 131K Chat Completions models without reasoning. Their us./global. profiles keep the fused
+// path: per the AWS card Mantle serves no geo/global ids, so those likely need bedrock-runtime (not wired, unverified here).
 const KNOWN_MANTLE_ONLY: Record<string, { label: string; ctx: number; out: number; vision?: true; reasoning?: true; api?: 'responses' }> = {
   'deepseek.v3.1': { label: 'DeepSeek V3.1', ctx: 131072, out: 8192 },
   'moonshotai.kimi-k2-thinking': { label: 'Kimi K2 Thinking', ctx: 262144, out: 16384, reasoning: true },
@@ -64,6 +67,9 @@ const KNOWN_MANTLE_ONLY: Record<string, { label: string; ctx: number; out: numbe
   'openai.gpt-5.6-luna': { label: 'GPT-5.6 Luna', ctx: 1000000, out: 128000, vision: true, reasoning: true, api: 'responses' },
   'openai.gpt-5.6-sol': { label: 'GPT-5.6 Sol', ctx: 1000000, out: 128000, vision: true, reasoning: true, api: 'responses' },
   'openai.gpt-5.6-terra': { label: 'GPT-5.6 Terra', ctx: 1000000, out: 128000, vision: true, reasoning: true, api: 'responses' },
+  'openai.gpt-6-astra': { label: 'GPT-6 Astra', ctx: 1050000, out: 128000, vision: true, reasoning: true, api: 'responses' },
+  'openai.gpt-6-luna': { label: 'GPT-6 Luna', ctx: 1050000, out: 128000, vision: true, reasoning: true, api: 'responses' },
+  'openai.gpt-6-sol': { label: 'GPT-6 Sol', ctx: 1050000, out: 128000, vision: true, reasoning: true, api: 'responses' },
   'openai.gpt-oss-20b': { label: 'GPT-OSS 20B', ctx: 131072, out: 128000 },
   'openai.gpt-oss-120b': { label: 'GPT-OSS 120B', ctx: 131072, out: 128000 },
   'qwen.qwen3-32b': { label: 'Qwen3 32B', ctx: 131072, out: 16384 },
@@ -267,8 +273,8 @@ export function bedrockModelsToDescriptions(
       outputImage: fm.outputModalities?.includes('IMAGE') ?? false,
     });
 
-    // mark as used in mantle
-    if (hasMantle)
+    // mark as used in mantle - except curated Responses models, described by the Mantle-only pass below
+    if (hasMantle && !_isKnownMantleResponses(baseId))
       remainingMantleModelIds.delete(baseId);
   }
 
@@ -304,8 +310,8 @@ export function bedrockModelsToDescriptions(
       outputImage: foundationMeta?.outputImage ?? false,
     });
 
-    // mark as used in mantle
-    if (hasMantle)
+    // mark as used in mantle (same curated exception as above)
+    if (hasMantle && !_isKnownMantleResponses(baseId))
       remainingMantleModelIds.delete(baseId);
   }
 
@@ -354,6 +360,9 @@ export function bedrockModelsToDescriptions(
       }
 
     } else {
+
+      // curated Responses models served by Mantle: described by the Mantle-only pass below (profiles stay here)
+      if (!modelMeta.isProfile && modelMeta.hasMantle && _isKnownMantleResponses(modelId)) continue;
 
       // Non-Anthropic models - may call them via mantle (if hasMantle) or converse (if not legacy)
       const isMantle = modelMeta.hasMantle;
@@ -423,6 +432,10 @@ function _findKnownMantleModel(mantleId: string): typeof KNOWN_MANTLE_ONLY[strin
   return KNOWN_MANTLE_ONLY[mantleId] ?? KNOWN_MANTLE_ONLY[mantleId.replace(/-\d{4}-\d{2}-\d{2}$/, '')];
 }
 
+function _isKnownMantleResponses(modelId: string): boolean {
+  return _findKnownMantleModel(modelId)?.api === 'responses';
+}
+
 // Extract provider name from Mantle model ID (e.g., 'mistral.model-name' -> 'Mistral')
 function _extractMantleProvider(modelId: string): string {
   const parts = modelId.split('.');
@@ -475,6 +488,7 @@ function _bedrockModelSort(a: ModelDescriptionSchema, b: ModelDescriptionSchema)
 
   // --- Anthropic: family > class > variant > region ---
   const familyPrecedence: string[][] = [
+    ['-fable-5-5', '-mythos-5-5', '-opus-5-5', '-sonnet-5-5', '-haiku-5-5'], // Claude 5.5 gen
     ['-fable-5-1', '-mythos-5-1', '-opus-5-1', '-sonnet-5-1', '-haiku-5-1'], // Claude 5.1 gen
     ['-fable-5', '-mythos-5', '-opus-5', '-sonnet-5', '-haiku-5'], // Claude 5 gen
     ['-4-8'], ['-4-7'], ['-4-6'], ['-4-5-'], ['-4-1-'], ['-4-'], ['-3-7-'], ['-3-5-'], ['-3-'],

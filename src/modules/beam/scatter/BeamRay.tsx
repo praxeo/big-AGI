@@ -19,23 +19,23 @@ import { ChatMessageMemo } from '../../../apps/chat/components/message/ChatMessa
 
 import type { DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import type { DMessageId } from '~/common/stores/chat/chat.message';
-import { DLLMId, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
+import { DLLMId, getLLMLabel, LLM_IF_OAI_Reasoning } from '~/common/stores/llms/llms.types';
 import { GoodTooltip } from '~/common/components/GoodTooltip';
 import { InlineError } from '~/common/components/InlineError';
 import { animationEnterBelow } from '~/common/util/animUtils';
 import { clipboardInterceptCtrlCForCleanup, copyToClipboard } from '~/common/util/clipboardUtils';
-import { messageFragmentsReduceText } from '~/common/stores/chat/chat.message';
+import { messageFragmentsReduceText, messageWasOutOfTokens } from '~/common/stores/chat/chat.message';
 import { useLLMSelect } from '~/common/components/forms/useLLMSelect';
 
 import { BeamCard, beamCardClasses, beamCardMessageScrollingSx, beamCardMessageSx, beamCardMessageWrapperSx } from '../BeamCard';
 import { BeamUpstreamResume } from '../BeamUpstreamResume';
-import { BeamModelUnavailable } from '../components/BeamModelUnavailable';
+import { BeamCardNotice, BeamModelUnavailable } from '../components/BeamCardNotice';
 import { BeamStoreApi, useBeamStore } from '../store-beam.hooks';
 import { BEAM_SHOW_REASONING_ICON, GATHER_COLOR, SCATTER_COLOR, SCATTER_RAY_SHOW_DRAG_HANDLE } from '../beam.config';
 import { TooltipOutlined } from '~/common/components/TooltipOutlined';
 import { rayIsError, rayIsImported, rayIsScattering, rayIsSelectable, rayIsUserSelected } from './beam.scatter';
 import { useBeamCardScrolling, useBeamScatterShowLettering } from '../store-module-beam';
-import { useMessageAvatarLabel } from '~/common/util/dMessageUtils';
+import { messageIssueColor, useMessageAvatarLabel } from '~/common/util/dMessageUtils';
 
 
 /*const letterSx: SxProps = {
@@ -77,6 +77,7 @@ function RayControls(props: {
   isRemovable: boolean,
   isScattering: boolean,
   llmComponent: React.ReactNode,
+  llmLabel: string,
   llmShowReasoning?: boolean,
   llmVendorId: undefined | ModelVendorId,
   onIconClick: (event: React.MouseEvent) => void,
@@ -97,7 +98,7 @@ function RayControls(props: {
     )}
 
     {/* Letter / LLM Icon (default) */}
-    <TooltipOutlined asLargePane enableInteractive title={props.rayAvatarTooltip} placement='top-start'>
+    <TooltipOutlined asLargePane enableInteractive title={props.rayAvatarTooltip || props.llmLabel} placement='top-start'>
       <Box sx={{ display: 'flex', '--Icon-fontSize': 'var(--joy-fontSize-lg)' }} onClick={props.onIconClick}>
         {props.rayLetter ? (
           <Typography level='title-sm' color={SCATTER_COLOR !== 'neutral' ? SCATTER_COLOR : undefined}>
@@ -175,6 +176,8 @@ export function BeamRay(props: {
   const showUseButtons = isSelectable && !isScattering;
   const { removeRay, rayToggleScattering, raySetLlmId } = props.beamStore.getState();
   const { tooltip: rayAvatarTooltip } = useMessageAvatarLabel(ray?.message, 'pro');
+  const isOutOfTokens = !isScattering && messageWasOutOfTokens(ray?.message.generator);
+  const issueColor = messageIssueColor(isError, isOutOfTokens);
 
   // This old code used the Gather LLM as Ray fallback - but now we use the last Scatter LLM as fallback
   // const isLlmLinked = !!props.linkedLlmId && !ray?.rayLlmId;
@@ -190,6 +193,7 @@ export function BeamRay(props: {
   });
 
   // more derived
+  const llmLabel = llmOrNull ? getLLMLabel(llmOrNull) : 'Model unknown';
   const llmShowReasoning = !BEAM_SHOW_REASONING_ICON ? false : llmOrNull?.interfaces?.includes(LLM_IF_OAI_Reasoning) ?? false;
 
 
@@ -257,7 +261,7 @@ export function BeamRay(props: {
       tabIndex={-1}
       // onClick={isSelectable ? handleRayToggleSelect : undefined}
       className={
-        (isError ? beamCardClasses.errored : '')
+        (issueColor ? beamCardClasses.issue[issueColor] + ' ' : '')
         + (isSelectable ? beamCardClasses.selectable + ' ' : '')
       }
     >
@@ -269,6 +273,7 @@ export function BeamRay(props: {
         isRemovable={props.isRemovable}
         isScattering={isScattering}
         llmComponent={llmComponent}
+        llmLabel={llmLabel}
         llmShowReasoning={llmShowReasoning}
         llmVendorId={llmOrNull?.vId}
         onIconClick={handleDebugPrint}
@@ -285,6 +290,7 @@ export function BeamRay(props: {
 
       {/* Show issue, if any */}
       {!!ray?.scatterIssue && <InlineError error={ray.scatterIssue} />}
+      {issueColor === 'warning' && <BeamCardNotice color='warning' variant='solid' fullWidth>Out of tokens - response cut short.</BeamCardNotice>}
 
       {/* Ray Message */}
       {(!!ray?.message?.fragments.length || ray?.status === 'scattering') && (
@@ -296,7 +302,7 @@ export function BeamRay(props: {
               isMobile={props.isMobile}
               hideAvatar
               blocksStretch
-              showUnsafeHtmlCode={true}
+              htmlRenderVariant='render'
               adjustContentScaling={-1}
               onMessageFragmentDelete={handleFragmentDelete}
               onMessageFragmentReplace={handleFragmentReplace}

@@ -2,16 +2,17 @@ import * as React from 'react';
 
 import type { ContentScaling } from '~/common/app.theme';
 import type { DMessageRole } from '~/common/stores/chat/chat.message';
+import { useRenderDecay } from '~/common/render-decay/RenderDecayZone';
 
+import { BLOCK_CODE_MERMAID_TITLE, BLOCK_CODE_PLANTUML_TITLE, BLOCK_CODE_SVG_TITLE, renderCodeMemoOrNot } from './code/RenderCode';
 import { BlocksContainer } from './BlocksContainers';
 import { EnhancedRenderCode } from './enhanced-code/EnhancedRenderCode';
-import { RenderDangerousHtml } from './danger-html/RenderDangerousHtml';
 import { RenderImageURL } from './image/RenderImageURL';
 import { RenderMarkdown, RenderMarkdownMemo } from './markdown/RenderMarkdown';
 import { RenderPlainText } from './plaintext/RenderPlainText';
 import { RenderWordsDiff, WordsDiff } from './wordsdiff/RenderWordsDiff';
 import { ToggleExpansionButton } from './ToggleExpansionButton';
-import { renderCodeMemoOrNot } from './code/RenderCode';
+import { heuristicIsBlockPureHTML, RenderDangerousHtml } from './danger-html/RenderDangerousHtml';
 import { useAutoBlocksMemoSemiStable, useTextCollapser } from './blocks.hooks';
 import { useScaledCodeSx, useScaledImageSx, useScaledTypographySx, useToggleExpansionButtonSx } from './blocks.styles';
 
@@ -26,13 +27,16 @@ const STREAMING_TAIL_MAX_HIDDEN_CHARS = 280; // safety: stop hiding the post-new
 // export const AutoBlocksRenderer = React.forwardRef<HTMLDivElement, BlocksRendererProps>((props, ref) => {
 // AutoBlocksRenderer.displayName = 'AutoBlocksRenderer';
 
-export type AutoBlocksCodeRenderVariant = 'outlined' | 'plain' | 'enhanced';
+export type AutoBlocksCodeRenderVariant = 'outlined' | 'embedded-plain' | 'enhanced';
+
+export type AutoBlocksHtmlRenderVariant = 'show-code' | 'render-at-end' | 'render';
 
 /**
- * Features: collpase/expand, auto-detects HTML, SVG, Code, etc..
+ * Features: collapse/expand, auto-detects HTML, SVG, Code, etc..
  * Used by (and more):
- * - DocAttachmentFragmentEditor
- * - ContentPartPlaceholder
+ * - BlockPartText_AutoBlocks - the main text blocks in ChatMessage > ContentFragments > *
+ * - DocAttachmentFragmentPane - when not editing and with a switch to show text/fenced (which could be rendered)
+ * - DiagramsModal - for the diagram blocks
  */
 export function AutoBlocksRenderer(props: {
   // required
@@ -45,14 +49,17 @@ export function AutoBlocksRenderer(props: {
 
   showAsDanger?: boolean;
   showAsItalic?: boolean;
-  showUnsafeHtmlCode?: boolean;
-
-  renderAsCodeWithTitle?: string;
-  renderAsWordsDiff?: WordsDiff;
 
   blocksProcessor?: 'diagram',
+  inputAsCodeWithTitle?: string;
+  inputAsWordsDiff?: WordsDiff;
+
   codeRenderVariant?: AutoBlocksCodeRenderVariant /* default: outlined */,
+  htmlRenderVariant?: AutoBlocksHtmlRenderVariant /* default: show-code */,
   textRenderVariant: 'markdown' | 'text',
+
+  /** disables the >8 lines user-text collapser - e.g. print/export trees must render in full */
+  disableTextCollapser?: boolean;
 
   /**
    * optimization: allow memo to all individual blocks except the last one
@@ -66,12 +73,10 @@ export function AutoBlocksRenderer(props: {
    */
   optiStreamingLastFragment?: boolean;
 
-  onContextMenu?: (event: React.MouseEvent) => void;
   onDoubleClick?: (event: React.MouseEvent) => void;
 
   /**
-   * If defined, this is a function that will replace the first occurrence of
-   * the search string with the replace string.
+   * If defined, this will replace the Fragment text with the new one.
    */
   setText?: (newText: string) => void;
 
@@ -81,18 +86,24 @@ export function AutoBlocksRenderer(props: {
   const fromAssistant = props.fromRole === 'assistant';
   const fromSystem = props.fromRole === 'system';
   const fromUser = props.fromRole === 'user';
-  const isUserCommand = fromUser && props.text.startsWith('/');
+  // const isUserCommand = fromUser && props.text.startsWith('/'); // disabled, the heuristic is so poor
 
   // state
-  const { text, isTextCollapsed, forceTextExpanded, handleToggleExpansion } =
-    useTextCollapser(props.text, fromUser);
+  const isPureHTML = heuristicIsBlockPureHTML(props.text);
+  const fixUserHtmlPaste = fromUser && isPureHTML;
+  const collapseUserText = fromUser && !fixUserHtmlPaste && !props.disableTextCollapser; // probably less important now that we have ERCs with collapse, may even get in the way
+  const { text, isTextCollapsed, forceTextExpanded, handleToggleExpansion } = useTextCollapser(props.text, collapseUserText);
   const autoBlocksStable = useAutoBlocksMemoSemiStable(
     text,
-    props.renderAsCodeWithTitle,
+    props.inputAsCodeWithTitle || (fixUserHtmlPaste ? 'HTML' : undefined),
     fromSystem,
-    props.renderAsWordsDiff,
+    props.inputAsWordsDiff,
     props.blocksProcessor === 'diagram',
   );
+
+  // render decay: while in flux this is a live stream of the enclosing zone; the in-flux block reports its parse cost,
+  // and renders lighter once the zone is over budget
+  const { active: decayActive, onParseCost: decayOnParseCost } = useRenderDecay(props.optiAllowSubBlocksMemo === true);
 
   // handlers
   const { setText } = props;
@@ -126,7 +137,6 @@ export function AutoBlocksRenderer(props: {
     <BlocksContainer
       // ref={ref /* this will assign the ref, now not needed anymore */}
       // data-edit-intent={props.onDoubleClick ? true : undefined /* Future: Mac Force Touch */}
-      onContextMenu={props.onContextMenu}
       onDoubleClick={props.onDoubleClick}
     >
 
@@ -151,11 +161,12 @@ export function AutoBlocksRenderer(props: {
               if (lastNewline >= 0 && bkInput.content.length - lastNewline - 1 < STREAMING_TAIL_MAX_HIDDEN_CHARS)
                 mdContent = bkInput.content.slice(0, lastNewline + 1);
             }
-            return (props.textRenderVariant === 'text' || fromSystem || isUserCommand) ? (
+            return (props.textRenderVariant === 'text' || fromSystem /*|| isUserCommand*/) ? (
               // Keep in sync with ScaledPlainTextRenderer
               <RenderPlainText
                 key={'txt-bk-' + index}
                 content={bkInput.content}
+                renderHighlightCommands={index === 0}
                 sx={scaledTypographySx}
               />
             ) : (
@@ -164,6 +175,9 @@ export function AutoBlocksRenderer(props: {
                 key={'md-bk-' + index}
                 content={mdContent}
                 disablePreprocessor={optimizeDisableProcessorsOnLast}
+                lite={optimizeLightweightLastBlock && decayActive}
+                onParseCost={optimizeLightweightLastBlock ? decayOnParseCost : undefined}
+                replaceContent={(!setText || isTextCollapsed /* IMPORTANT: do not allow replacing text if collapsed - will chop! */) ? undefined : handleReplaceCode}
                 sx={scaledTypographySx}
               />
             );
@@ -180,16 +194,43 @@ export function AutoBlocksRenderer(props: {
             let disableEnhancedRender = disableBecauseInProgress || disableBecauseTooShort;
             let enhancedStartCollapsed = false;
 
+            // Pre-collapsing of special blocks
+            let lowerCaseTitle = bkInput.title.toLowerCase();
+            switch (lowerCaseTitle) {
+
+              // start as a collapsed ERC, then remove the border and go normal
+              case BLOCK_CODE_MERMAID_TITLE:
+              case BLOCK_CODE_PLANTUML_TITLE:
+                disableEnhancedRender = !bkInput.isPartial;
+                // NOTE: at the moment, we use the 'unwanted' refresh at the end of the message to start (that block) without collapse
+                enhancedStartCollapsed = bkInput.isPartial;
+                break;
+
+              // do never ERC
+              case BLOCK_CODE_SVG_TITLE:
+                disableEnhancedRender = true;
+                break;
+            }
+
+            // Pre-collapsing of user pasted HTML
+            if (fixUserHtmlPaste) {
+              // disableEnhancedRender = false;
+              enhancedStartCollapsed = true;
+            }
+
             return (props.codeRenderVariant === 'enhanced' && !disableEnhancedRender) ? (
               <EnhancedRenderCode
+                // EnhancedRenderCode props
+                contentScaling={props.contentScaling}
+                initialIsCollapsed={enhancedStartCollapsed}
+                isMobile={props.isMobile}
+                noApplyButton={props.blocksProcessor === 'diagram' || fromUser}
+                // RenderCode pass through
                 key={'code-bk-' + index}
                 semiStableId={bkInput.bkId}
                 code={bkInput.code} title={bkInput.title} isPartial={bkInput.isPartial || isTextCollapsed}
-                contentScaling={props.contentScaling}
                 fitScreen={props.fitScreen}
-                isMobile={props.isMobile}
-                initialShowHTML={props.showUnsafeHtmlCode}
-                initialIsCollapsed={enhancedStartCollapsed}
+                initialRenderHTML={props.htmlRenderVariant === 'render' || (props.htmlRenderVariant === 'render-at-end' && !bkInput.isPartial)}
                 noCopyButton={props.blocksProcessor === 'diagram' || isTextCollapsed}
                 optimizeLightweight={optimizeLightweightLastBlock}
                 onReplaceInCode={(!setText || isTextCollapsed) ? undefined : handleReplaceCode}
@@ -201,7 +242,7 @@ export function AutoBlocksRenderer(props: {
                 semiStableId={bkInput.bkId}
                 code={bkInput.code} title={bkInput.title} isPartial={bkInput.isPartial || isTextCollapsed}
                 fitScreen={props.fitScreen}
-                initialShowHTML={props.showUnsafeHtmlCode /* && !bkInput.isPartial NOTE: with this, it would be only auto-rendered at the end, preventing broken renders */}
+                initialRenderHTML={props.htmlRenderVariant === 'render' || (props.htmlRenderVariant === 'render-at-end' && !bkInput.isPartial)}
                 noCopyButton={props.blocksProcessor === 'diagram' || isTextCollapsed}
                 optimizeLightweight={optimizeLightweightLastBlock}
                 onReplaceInCode={(!setText || isTextCollapsed) ? undefined : handleReplaceCode}
@@ -243,7 +284,7 @@ export function AutoBlocksRenderer(props: {
 
       {(isTextCollapsed || forceTextExpanded) && (
         <ToggleExpansionButton
-          color={props.codeRenderVariant === 'plain' ? 'neutral' : undefined}
+          color={props.codeRenderVariant === 'embedded-plain' ? 'neutral' : undefined}
           isCollapsed={isTextCollapsed}
           onToggle={handleToggleExpansion}
           sx={toggleExpansionButtonSx}

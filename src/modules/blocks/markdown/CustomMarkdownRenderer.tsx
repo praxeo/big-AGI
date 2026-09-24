@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { stringify as csvStringify } from 'csv-stringify/browser/esm/sync';
 
 import type { Pluggable as UnifiedPluggable } from 'unified';
 import { Components as ReactMarkdownComponents, default as ReactMarkdown, defaultUrlTransform, type UrlTransform } from 'react-markdown';
@@ -8,13 +7,12 @@ import { default as remarkGfm } from 'remark-gfm';
 import { default as remarkMath } from 'remark-math';
 import { remarkMark } from 'remark-mark-highlight';
 
-import { Box, Chip } from '@mui/joy';
-
-import { copyToClipboard } from '~/common/util/clipboardUtils';
-import { downloadBlob } from '~/common/util/downloadUtils';
 import { useUXLabsStore } from '~/common/stores/store-ux-labs';
 
+import type { RenderMarkdownRendererProps } from './RenderMarkdown';
 import { CustomARenderer } from './CustomARenderer';
+import { CustomInputRenderer, rehypeTaskListRenumber, useMarkdownTaskListToggler } from './CustomTaskListRenderer';
+import { CustomTableRenderer } from './CustomTableRenderer';
 import { remarkTableCellBreaks } from './tableBreaks.remark';
 import { wrapWithMarkdownSyntax } from './markdown.wrapper';
 
@@ -35,177 +33,14 @@ function MarkRenderer({ children }: { children: React.ReactNode }) {
 const MAX_PREPROCESSOR_LENGTH = 50_000; // 50kB, this is the max length of the text we want to preprocess for annotations/formulas
 
 
-// TableRenderer adds a CSV Download Link and a Copy Markdown Button
-
-const _styles = {
-
-  tableStyle: {
-    borderCollapse: 'collapse',
-    width: '100%',
-    marginBottom: '0.5rem',
-  } as const,
-
-  buttons: {
-    mb: 2,
-    display: 'flex',
-    alignItems: 'center',
-    gap: 1,
-  } as const,
-
-  button: {
-    // backgroundColor: 'background.popup',
-    borderRadius: 0,
-    px: 1.5,
-    py: 0.375,
-    outline: '1px solid',
-    outlineColor: 'neutral.outlinedBorder', // .outlinedBorder
-    // boxShadow: `1px 2px 4px -3px var(--joy-palette-neutral-solidBg)`,
-  } as const,
-
-};
-
-interface TableRendererProps {
-  node?: any; // an optional field we want to not pass to element
-  children: React.JSX.Element;
-}
-
-function TableRenderer({ children, node, ...props }: TableRendererProps) {
-
-  // extracts the table data by parsing the DOM
-  const tableData = _extractTableData(children);
-
-  // handlers
-
-  const handleDownloadCsv = React.useCallback(() => {
-    if (!tableData?.length) return;
-
-    // take all rows except the first one
-    const dataRows = tableData.slice(1);
-
-    // convert to CSV
-    const csvString = csvStringify(dataRows, {
-      bom: true,                 // add BOM marker for UTF-8 detection in Excel
-      quoted: true,              // quote all fields
-      quote: '"',                // use double quotes
-      escape: '"',               // escape quotes with double quotes
-      header: true,
-      columns: tableData[0],
-    });
-
-    // create blob and trigger download
-    const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
-    downloadBlob(blob, 'table.csv');
-  }, [tableData]);
-
-  const handleCopyMarkdown = React.useCallback(() => {
-    if (!tableData?.length) return;
-    const markdownString = generateMarkdownTableFromData(tableData);
-    copyToClipboard(markdownString, 'Markdown Table');
-  }, [tableData]);
-
-
-  return (
-    <>
-      <table style={_styles.tableStyle} {...props}>
-        {children}
-      </table>
-
-      {/* Download CSV link and Copy Markdown Button */}
-      {tableData?.length >= 1 && (
-        <Box data-agi-no-copy /* do not copy these buttons */ sx={_styles.buttons}>
-          {/* Download button*/}
-          <Chip
-            variant='soft'
-            color='neutral'
-            size='sm'
-            onClick={handleDownloadCsv}
-            // endDecorator={<DownloadIcon />}
-            sx={_styles.button}
-          >
-            Download CSV
-          </Chip>
-
-          {/* Button to copy markdown */}
-          <Chip
-            variant='soft'
-            color='neutral'
-            size='sm'
-            onClick={handleCopyMarkdown}
-            // endDecorator={<ContentCopyIcon />}
-            sx={_styles.button}
-          >
-            Copy Markdown
-          </Chip>
-        </Box>
-      )}
-    </>
-  );
-}
-
-// Function to extract text from a React element or component
-function extractText(element: any): string {
-  if (element === null)
-    return '';
-  // Base case: if the element is a string, return it
-  if (typeof element === 'string') {
-    return element;
-  }
-  // If the element has children, recursively extract text from them
-  if (element.props?.children) {
-    if (Array.isArray(element.props.children)) {
-      return element.props.children.map(extractText).join('');
-    }
-    return extractText(element.props.children);
-  }
-  return '';
-}
-
-// Function to traverse and extract data from table rows and cells
-function traverseAndExtract(elements: React.JSX.Element, tableData: any[] = []): any[] {
-  React.Children.forEach(elements, (element) => {
-    if (element.type === 'tr') {
-      const rowData = React.Children.map(element.props?.children, (cell) => {
-        // Extract and return the text content of each cell
-        return extractText(cell);
-      });
-      tableData.push(rowData);
-    } else if (element.props?.children) {
-      traverseAndExtract(element.props.children, tableData);
-    }
-  });
-  return tableData;
-}
-
-function _extractTableData(children: React.JSX.Element) {
-  return traverseAndExtract(children);
-}
-
-function generateMarkdownTableFromData(tableData: any[]): string {
-  if (tableData.length === 0)
-    return '';
-
-  // Extract header and rows
-  const [header, ...rows] = tableData;
-
-  // Create markdown header
-  const headerMarkdown = `| ${header.join(' | ')} |`;
-  // Create separator
-  const separator = `| ${header.map(() => '---').join(' | ')} |`;
-  // Create markdown rows
-  const rowsMarkdown = rows.map(row => `| ${row.join(' | ')} |`).join('\n');
-
-  // Combine all parts
-  return [headerMarkdown, separator, rowsMarkdown].join('\n');
-}
-
-
 // shared components for the markdown renderer
 
 const reactMarkdownComponents = {
   a: CustomARenderer, // override the link renderer to add target="_blank"
+  input: CustomInputRenderer, // renders <input type="checkbox"> in a custom manner
   del: DelRenderer, // renders the <del> tag (~~strikethrough~~)
   mark: MarkRenderer, // renders the <mark> tag (==highlight==)
-  table: TableRenderer, // override the table renderer to show the download CSV links and Copy Markdown button
+  table: CustomTableRenderer, // override the table renderer to show the download CSV links and Copy Markdown button
   // math/inlineMath components are not needed, rehype-katex handles this automatically
 } as ReactMarkdownComponents;
 
@@ -215,7 +50,7 @@ const reactMarkdownComponents = {
 const urlTransformKeepSandbox: UrlTransform = (url, key) =>
   (key === 'href' && /^sandbox:/i.test(url)) ? url : defaultUrlTransform(url);
 
-const remarkPluginsStable: UnifiedPluggable[] = [
+const remarkPlugins: UnifiedPluggable[] = [
   remarkGfm, // GitHub Flavored Markdown
   remarkMark, // Mark-Highlight, for ==yellow==
   remarkTableCellBreaks, // Convert <br> HTML tags inside tables to break nodes (for line breaks in table cells)
@@ -224,9 +59,7 @@ const remarkPluginsStable: UnifiedPluggable[] = [
   // it (https://docs.mathjax.org/en/latest/input/tex/delimiters.html), as it clashes with currency ($10) and tickers.
 ];
 
-const rehypePluginsStable: UnifiedPluggable[] = [
-  rehypeKatex, // KaTeX
-];
+// NOTE: rehypePluginsStable: UnifiedPluggable[] is generated dynamically
 
 
 let warnedAboutLength = false;
@@ -277,26 +110,59 @@ function preprocessMarkdown(markdownText: string) {
   }
 }
 
-export default function CustomMarkdownRenderer(props: { content: string, disablePreprocessor?: boolean }) {
+
+export default function CustomMarkdownRenderer({ content, disablePreprocessor, onParseCost, replaceContent }: RenderMarkdownRendererProps) {
+
+  const enableCustomTaskList = replaceContent !== undefined;
 
   // external state
   const singleDollarLatex = useUXLabsStore((s) => s.labsSingleDollarLatex);
+  const taskListContainerRef = useMarkdownTaskListToggler(content, replaceContent);
+
 
   // memo plugins
-  const remarkPlugins = React.useMemo<UnifiedPluggable[]>(() => [
-    ...remarkPluginsStable,
+
+  const remarkPluginsStable = React.useMemo<UnifiedPluggable[]>(() => [
+    ...remarkPlugins,
     [remarkMath, { singleDollarTextMath: singleDollarLatex }],
   ], [singleDollarLatex]);
+  const rehypePluginsStable: UnifiedPluggable[] = React.useMemo(() => [
+    rehypeKatex, // KaTeX
+    ...(enableCustomTaskList ? [rehypeTaskListRenumber] : []), // supports numbering of checkboxes
+  ], [enableCustomTaskList]);
+
+
+  // -- Measure Parse Time --
+
+  // parse here, called directly - `Markdown` is a plain function (the hooks live in `MarkdownHooks`) - so an in-flux block
+  // measured by a render decay zone can time it; reported after the commit, as the zone's update re-renders other components
+  const parseMsRef = React.useRef(0);
+  const tStart = onParseCost ? performance.now() : 0;
+  const markdown = ReactMarkdown({
+    components: reactMarkdownComponents,
+    remarkPlugins: remarkPluginsStable,
+    rehypePlugins: rehypePluginsStable,
+    urlTransform: urlTransformKeepSandbox,
+    children: disablePreprocessor ? content : preprocessMarkdown(content),
+  });
+  if (onParseCost) parseMsRef.current = performance.now() - tStart;
+
+  // -- Report Parse Time (outside the Render function) --
+
+  // report after commit, once per committed parse: streaming renders are SyncLane, so this runs in the same task
+  React.useEffect(() => {
+    if (!onParseCost || !parseMsRef.current) return;
+    onParseCost(parseMsRef.current);
+    parseMsRef.current = 0;
+  });
 
 
   return (
-    <ReactMarkdown
-      components={reactMarkdownComponents}
-      remarkPlugins={remarkPlugins}
-      rehypePlugins={rehypePluginsStable}
-      urlTransform={urlTransformKeepSandbox}
+    <div
+      ref={taskListContainerRef}
+      className='markdown-body' // moved this here (formerly in RenderMarkdown.tsx) to avoid changing CSS rules for depth of matching
     >
-      {props.disablePreprocessor ? props.content : preprocessMarkdown(props.content)}
-    </ReactMarkdown>
+      {markdown}
+    </div>
   );
 }

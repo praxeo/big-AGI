@@ -4,7 +4,7 @@ import { hasKeys } from '~/common/util/objectUtils';
 import { usdToCents } from '~/common/util/costUtils';
 
 import type { AixWire_Particles, AixWire_Vendors } from '../../../api/aix.wiretypes';
-import type { ChatGenerateParseFunction } from '../chatGenerate.dispatch';
+import type { ChatGenerateParseContext, ChatGenerateParseFunction } from '../chatGenerate.dispatch';
 import type { IParticleTransmitter } from './IParticleTransmitter';
 import { AIX_OAI_DEFAULT_IMAGE_GEN_MODEL } from '../adapters/openai.responsesCreate';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
@@ -99,10 +99,16 @@ function _isSalvageableFailedOutput(output: TResponse['output']): boolean {
  * HTTP-equivalent status of a transient in-band error worth an operation retry (like Anthropic's overloaded_error), or undefined.
  * #1210 shape: { type: 'invalid_request_error', code: 'rate_limit_exceeded', message: "We're currently processing too many requests - please try again later." }
  * No denylist: in-band errors on a 200 stream are past admission (auth, quota, size); HTTP-level ones are retried before the parser runs.
+ *
+ * The name of the failure sits in `code` or in `type` depending on the carrier: the 'response.failed' error object
+ * is { code, message } (code: 'server_error'), the 'error' event and the HTTP bodies also have a `type`.
  */
-function _transientErrorToHttpStatus(error: null | undefined | { type?: string | null, code?: string | number | null, message?: string | null }): 429 | 500 | undefined {
-  if (error?.code === 'rate_limit_exceeded' || /processing too many requests/i.test(error?.message || '')) return 429;
-  if (error?.type === 'server_error') return 500;
+function _transientErrorToHttpStatus(error: null | undefined | { type?: string | null, code?: string | number | null, message?: string | null }): 429 | 500 | 529 | undefined {
+  const names = [error?.code, error?.type];
+  if (names.includes('rate_limit_exceeded') || /processing too many requests/i.test(error?.message || '')) return 429;
+  // OpenAI's overload pair, documented as an HTTP 503: reported as 529, our status for the 'overloaded' retry class (a bare 503 reads as transient)
+  if (names.includes('server_is_overloaded') || names.includes('service_unavailable_error')) return 529;
+  if (names.includes('server_error')) return 500;
   return undefined;
 }
 
@@ -354,7 +360,7 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
   // [xAI] grok-4.6 leaks internal citation directives into web_search answer text - strip them (see xai.transform-citationsLeak.ts)
   const xaiCitationsFilter = rspVendor === 'xai' ? new XAIDefectiveCitationsFilter() : undefined;
 
-  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: { retriesAvailable: boolean }) {
+  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: ChatGenerateParseContext) {
 
     // throws on malformed event data
     const chunkData = JSON.parse(eventData);
@@ -463,7 +469,7 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
 
         // Genuine failure: retry if transient (the deferred mid-stream 'error' lands here when the message didn't complete), else surface the error
         const failedRetryHttpStatus = _transientErrorToHttpStatus(failedError);
-        if (failedRetryHttpStatus && context?.retriesAvailable)
+        if (failedRetryHttpStatus && context?.hasRetriesForHttpStatus(failedRetryHttpStatus))
           throw new OperationRetrySignal(failedText, { causeHttp: failedRetryHttpStatus, causeConn: failedError?.code });
 
         pt.setTokenStopReason('cg-issue');
@@ -472,7 +478,6 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
       }
 
       case 'response.incomplete':
-        // TODO: We haven't seen one of those events yet; we need to see what happens and parse it!
         R.setResponse(eventType, event.response);
         R.markResponseSealed();
 
@@ -858,7 +863,7 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
 
         // Transient and retries left: unwind to the operation retrier (#1210)
         const retryHttpStatus = _transientErrorToHttpStatus(event.error ?? event);
-        if (retryHttpStatus && context?.retriesAvailable)
+        if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus))
           throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: errorCode });
 
         // Nothing to salvage - fail now (and seal, so the trailing 'response.failed' echo doesn't re-report)
@@ -914,7 +919,7 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
 
   const parserCreationTimestamp = Date.now();
 
-  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: { retriesAvailable: boolean }) {
+  return function(pt: IParticleTransmitter, eventData: string, _eventName?: string, context?: ChatGenerateParseContext) {
 
     // Throws on malformed event data
     const responseData = JSON.parse(eventData);
@@ -1193,7 +1198,7 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
 }
 
 
-function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 'usage' | 'service_tier' | 'tool_usage'> | undefined, parserCreationTimestamp: number, timeToFirstEvent: number | undefined): AixWire_Particles.CGSelectMetrics {
+function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 'model' | 'usage' | 'service_tier' | 'tool_usage'> | undefined, parserCreationTimestamp: number, timeToFirstEvent: number | undefined): AixWire_Particles.CGSelectMetrics {
   const usage = response?.usage;
 
   // Time Metrics - measured locally (parser-creation -> now), independent of the upstream `usage` block.
@@ -1262,14 +1267,14 @@ function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 
     metricsUpdate.$cReported = usdToCents(usage.cost_in_usd_ticks / 1e10);
 
   // served tier -> confirmed multiplier; unknown tiers stay on the parameter side
-  const $xPrice = _priceMultiplierFromServiceTier(response?.service_tier);
+  const $xPrice = _priceMultiplierFromServiceTier(response?.service_tier, response?.model);
   if ($xPrice !== undefined)
     metricsUpdate.$xPrice = $xPrice;
 
   return metricsUpdate;
 }
 
-function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined): number | undefined {
+function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined, modelId: string | undefined): number | undefined {
   switch (serviceTier) {
     case 'default':
       return 1;
@@ -1277,7 +1282,8 @@ function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined)
       return 0.5;
     case 'priority':
     case 'fast':
-      return 2;
+      // 2x on every model exposing llmVndOaiServiceTier, except GPT-5.5 at 2.5x (Fast $12.50/$75 vs Standard $5/$30)
+      return modelId?.startsWith('gpt-5.5') ? 2.5 : 2;
     default: // 'auto', 'ultrafast' (gated, unpublished price), absent
       return undefined;
   }
@@ -1286,7 +1292,7 @@ function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined)
 /**
  * If there's an error in the pre-decoded message, push it down to the particle transmitter.
  */
-function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, context?: { retriesAvailable: boolean }) {
+function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, context?: ChatGenerateParseContext) {
 
   // operate on .error
   if (!parsedData || !parsedData.error) return false;
@@ -1308,7 +1314,7 @@ function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, cont
 
   // Transient and retries left: unwind to the operation retrier (#1210)
   const retryHttpStatus = _transientErrorToHttpStatus(error);
-  if (retryHttpStatus && context?.retriesAvailable)
+  if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus))
     throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: typeof error.code === 'string' ? error.code : undefined });
 
   // Transmit the error as text - note: throw if you want to transmit as 'error'
