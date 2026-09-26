@@ -60,7 +60,7 @@ export function gatherStartFusion(
   if (chatMessages.length < 1)
     return onError('No conversation history available');
   if (rayMessages.length <= 1)
-    return onError('Needs two Beams at least');
+    return onError('Needs two responses at least');
   if (!initialFusion.llmId)
     return onError('No Merge model selected');
 
@@ -92,6 +92,7 @@ export function gatherStartFusion(
   onUpdateBFusion({
     // status
     stage: 'fusing',
+    fusedInputsCount: rayMessages.length,
     errorText: undefined,
     outputDMessage: undefined,
 
@@ -173,10 +174,12 @@ export function gatherStartFusion(
 
 
 export function gatherStopFusion(fusion: BFusion): BFusion {
+  fusion.inputsWait?.cancel(); // not started yet: the stage is untouched
   abortWithReason(fusion.fusingAbortController, 'Merge Stopped');
   return {
     ...fusion,
     ...(fusion.stage === 'fusing' ? { stage: 'stopped' /* optimistic as the abort shall do the same */ } : {}),
+    inputsWait: undefined,
     fusingAbortController: undefined,
   };
 }

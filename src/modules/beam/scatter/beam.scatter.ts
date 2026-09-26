@@ -6,11 +6,12 @@ import type { DLLMId } from '~/common/stores/llms/llms.types';
 import { abortWithReason } from '~/common/util/errorUtils';
 import { agiUuid } from '~/common/util/idUtils';
 import { createDMessageEmpty, DMessage, duplicateDMessage, messageSetGeneratorNamed, messageWasInterruptedAtStart } from '~/common/stores/chat/chat.message';
-import { createPlaceholderVoidFragment, DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
+import { createPlaceholderVoidFragment, DMessageFragment, DMessageFragmentId, isContentFragment, isErrorPart } from '~/common/stores/chat/chat.fragments';
 import { findLLMOrThrow } from '~/common/stores/llms/store-llms';
 import { getLabsHighPerformance } from '~/common/stores/store-ux-labs';
 import { splitSystemMessageFromHistory } from '~/common/stores/chat/chat.conversation';
 
+import type { GatherStoreSlice } from '../gather/beam.gather';
 import type { RootStoreSlice } from '../store-beam_vanilla';
 import { SCATTER_DEBUG_STATE, SCATTER_PLACEHOLDER } from '../beam.config';
 import { beamMergeStreamedGuts, beamReattachStream } from '../beam.reattach';
@@ -149,6 +150,20 @@ export function rayIsSelectable(ray: BRay | null): boolean {
   return !!ray?.message.fragments.length;
 }
 
+export function rayHasMergeableContent(ray: BRay | null): boolean {
+  // a reply with something to merge: a content fragment that is not an error and not blank text; a void placeholder is not content
+  return !!ray?.message.fragments.some(f => isContentFragment(f) && !isErrorPart(f.part) && !(f.part.pt === 'text' && !f.part.text.trim()));
+}
+
+export function rayIsMessageErrorOnly(ray: BRay | null): boolean {
+  if (ray?.message.fragments.length === 1) {
+    const onlyFragment = ray.message.fragments[0];
+    if (isContentFragment(onlyFragment) && isErrorPart(onlyFragment.part))
+      return true;
+  }
+  return false;
+}
+
 export function rayIsUserSelected(ray: BRay | null): boolean {
   return !!ray?.userSelected;
 }
@@ -208,7 +223,7 @@ export interface ScatterStoreSlice extends ScatterStateSlice {
 }
 
 
-export const createScatterSlice: StateCreator<RootStoreSlice & ScatterStoreSlice, [], [], ScatterStoreSlice> = (_set, _get) => ({
+export const createScatterSlice: StateCreator<RootStoreSlice & ScatterStoreSlice & Pick<GatherStoreSlice, 'stopGatheringAllWaiting'>, [], [], ScatterStoreSlice> = (_set, _get) => ({
 
   // init state
   ...reInitScatterStateSlice([]),
@@ -330,12 +345,15 @@ export const createScatterSlice: StateCreator<RootStoreSlice & ScatterStoreSlice
     _get()._syncRaysStateToScatter();
   },
 
-  stopScatteringAll: () =>
+  stopScatteringAll: () => {
+    // release the merges waiting on these rays first, or this stop would start them, on truncated replies
+    _get().stopGatheringAllWaiting();
     _set(state => ({
       isScattering: false,
       // Terminate all rays
       rays: state.rays.map(rayScatterStop),
-    })),
+    }));
+  },
 
   rayToggleScattering: (rayId: BRayId) => {
     const { inputHistory, _rayUpdate, _syncRaysStateToScatter } = _get();
@@ -458,7 +476,7 @@ export const createScatterSlice: StateCreator<RootStoreSlice & ScatterStoreSlice
     // Check if all rays have finished generating
     const hasRays = rays.length > 0;
     const allDone = !rays.some(rayIsScattering);
-    const raysReady = rays.filter(rayIsSelectable).length;
+    const raysReady = rays.filter(ray => rayIsScattering(ray) || rayHasMergeableContent(ray)).length; // what the next merge would have: settled replies with content, plus the ones still generating
 
     // [debug]
     if (SCATTER_DEBUG_STATE)

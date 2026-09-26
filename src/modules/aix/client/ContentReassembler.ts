@@ -30,6 +30,16 @@ const VP_PERSISTENCE_DELAY = 500; // persistence of vision for voidPlaceholders
 
 /** Placeholders the reassembler manages (progress, follow-ups, controls) - 'notice' placeholders are user-dismissed: never auto-removed or recycled */
 const _isTransientPlaceholder = (f: Parameters<typeof isVoidPlaceholderFragment>[0]) => isVoidPlaceholderFragment(f) && f.part.pType !== 'notice';
+const _isPauseDivider = (f: Parameters<typeof isVoidPlaceholderFragment>[0]) => isVoidPlaceholderFragment(f) && f.part.pNoticeKind === 'flow-cont';
+
+/**
+ * A reasoning fragment that already carries a signature, redacted data or a vendor handle is closed: the next reasoning
+ * text opens a new fragment. A signature signs exactly its block's text, and a vendor item (OpenAI reasoning id and
+ * encrypted content) must not be overwritten - two thinking blocks separated only by hosted tool calls used to merge
+ * into one fragment that kept the last signature only, and lost every earlier item on replay.
+ */
+const _isClosedReasoningFragment = (f: Parameters<typeof isVoidFragment>[0]): boolean =>
+  isVoidFragment(f) && isModelAuxPart(f.part) && (!!f.part.textSignature || !!f.part.redactedData?.length || !!f.vendorState);
 
 /** The status chip of a server retry, see onAixRetryReset */
 const _isRetryStatus = (f: Parameters<typeof isVoidPlaceholderFragment>[0]) => isVoidPlaceholderFragment(f) && f.part.aixControl?.ctl === 'ec-retry';
@@ -442,6 +452,10 @@ export class ContentReassembler {
               // Continuation checkpoint: create a snapshot now
               this.checkpointState = structuredClone(this.S);
               if (DEBUG_FLOW) console.log(`[DEV] [flow] checkpoint created: ${this.S.fragments.length} fragments snapshotted`);
+              // the pause divider (a 'flow-cont' notice, yielded just before) already marks this point - no transient chip then
+              const lastFragment = this.S.fragments[this.S.fragments.length - 1];
+              if (lastFragment && isVoidPlaceholderFragment(lastFragment) && lastFragment.part.pNoticeKind === 'flow-cont')
+                break;
             } else
               await this._removeLastVoidPlaceholderDelayed();
             this.onAixInfo(op); // creates a voidPlaceholder
@@ -514,9 +528,9 @@ export class ContentReassembler {
     // Break text accumulation
     this.S._textFragmentIndex = null;
 
-    // append to existing ModelAuxVoidFragment if possible
+    // append to existing ModelAuxVoidFragment if possible - unless it is closed (signed, redacted, or vendor-handled)
     const currentFragment = this.S.fragments[this.S.fragments.length - 1];
-    if (!restart && currentFragment && isVoidFragment(currentFragment) && isModelAuxPart(currentFragment.part)) {
+    if (!restart && currentFragment && isVoidFragment(currentFragment) && isModelAuxPart(currentFragment.part) && !_isClosedReasoningFragment(currentFragment)) {
       const appendedPart = { ...currentFragment.part, aText: (currentFragment.part.aText || '') + _t } satisfies DVoidModelAuxPart;
       this._replaceFragmentAt(this.S.fragments.length - 1, { ...currentFragment, part: appendedPart });
       return;
@@ -812,10 +826,10 @@ export class ContentReassembler {
     }
   }
 
-  private onAddVoidNotice({ nt, text, detail }: Extract<AixWire_Particles.PartParticleOp, { p: 'vnt' }>): void {
+  private onAddVoidNotice({ nt, text, detail, level }: Extract<AixWire_Particles.PartParticleOp, { p: 'vnt' }>): void {
     // display-only notice at its stream position: close the open text fragment, so later text starts a new one after it
     this.S._textFragmentIndex = null;
-    this._pushFragment(createPlaceholderVoidFragment(text, 'notice', undefined, undefined, detail, nt));
+    this._pushFragment(createPlaceholderVoidFragment(text, 'notice', undefined, undefined, detail, nt, level));
   }
 
   private onAddUrlCitation(urlc: Extract<AixWire_Particles.PartParticleOp, { p: 'urlc' }>): void {
@@ -896,7 +910,18 @@ export class ContentReassembler {
       cts: anchorCts,
     };
 
-    const phIdx = this.S.fragments.findLastIndex(_isTransientPlaceholder);
+    let phIdx = this.S.fragments.findLastIndex(_isTransientPlaceholder);
+
+    // A pause divider ('flow-cont' notice) closes the placeholder before it: an op that started before the pause
+    // completes where it started (its result arrives in the continuation), a new op after the divider starts a
+    // new placeholder below it - otherwise the continuation's ops would stack above the divider
+    const dividerIdx = this.S.fragments.findLastIndex(_isPauseDivider);
+    if (phIdx >= 0 && phIdx < dividerIdx) {
+      const ph = this.S.fragments[phIdx];
+      if (!isVoidPlaceholderFragment(ph) || !ph.part.opLog?.some(e => e.opId === opId))
+        phIdx = -1;
+    }
+
     if (phIdx < 0) {
 
       // New placeholder with initial opLog entry (root level = 0)
@@ -1037,17 +1062,27 @@ export class ContentReassembler {
     //   return isVoidPlaceholderFragment(f) && !f.part.opLog?.length;
     // }
     // skip if none
-    if (this.S.fragments.findLastIndex(_isTransientPlaceholder) < 0) return false;
+    if (this._lastRemovableTransientPlaceholderIdx() < 0) return false;
 
     // delay before removal
     await new Promise(resolve => setTimeout(resolve, VP_PERSISTENCE_DELAY));
 
     // for stability, search the fragment Index again - this must not have changed, as any mutation would be queued to
     // this awaited function, but better safe than sorry
-    const idx = this.S.fragments.findLastIndex(_isTransientPlaceholder);
+    const idx = this._lastRemovableTransientPlaceholderIdx();
     if (idx < 0) return true; // already removed during the delay
     this._spliceFragment(idx);
     return true;
+  }
+
+  /**
+   * The last transient placeholder, unless a pause divider sits after it: the divider closes the placeholders before
+   * it (they stay until finalization, like onSetOperationState leaves them). Without this bound, every text particle
+   * of the continuation removes one more placeholder walking up the message, and the pre-pause ops list disappears.
+   */
+  private _lastRemovableTransientPlaceholderIdx(): number {
+    const idx = this.S.fragments.findLastIndex(_isTransientPlaceholder);
+    return idx < this.S.fragments.findLastIndex(_isPauseDivider) ? -1 : idx;
   }
 
 
