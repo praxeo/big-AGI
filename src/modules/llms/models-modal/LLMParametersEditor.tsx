@@ -98,9 +98,10 @@ const _oaiReasoningModeLegacyOptions = [
 ] as const;
 
 const _oaiServiceTierOptions = [
-  { value: 'fast', label: 'Fast', description: 'Up to 2.5x faster, 2x price' } as const,
-  { value: 'flex', label: 'Flex', description: 'Slower, half price' } as const,
   { value: _UNSPECIFIED, label: 'Standard', description: 'Standard processing' } as const,
+  { value: 'flex', label: 'Flex', description: 'Slower, half price' } as const,
+  { value: 'fast', label: 'Fast', description: 'Up to 2.5x faster, 2x price' } as const,
+  { value: 'ultrafast', label: 'Ultrafast', description: 'Up to 6x faster, 6x price' } as const,
 ] as const;
 
 const _verbosityOptions = [
@@ -257,7 +258,7 @@ export function LLMParametersEditor(props: {
 
 
   // enum options: one memo for all vendors, filtered to each model's allowed values (via parameterSpec.enumValues)
-  const { antEffortOptions, gemEffortOptions, oaiEffortOptions, miscEffortOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
+  const { antEffortOptions, gemEffortOptions, oaiEffortOptions, miscEffortOptions, oaiServiceTierOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
     // web search: filter to the model's allowed levels; when restricted to a single level (e.g. Sakana's
     // bare on/off web_search), relabel that lone level as a plain "On" (the "Off" entry is kept as-is).
     const ws = llmParametersFilterEffortOptions(_webSearchContextOptions, modelParamSpec['llmVndOaiWebSearchContext'], 'llmVndOaiWebSearchContext');
@@ -267,6 +268,7 @@ export function LLMParametersEditor(props: {
       gemEffortOptions: llmParametersFilterEffortOptions(_gemEffortOptions, modelParamSpec['llmVndGemEffort'], 'llmVndGemEffort'),
       oaiEffortOptions: llmParametersFilterEffortOptions(_oaiEffortOptions, modelParamSpec['llmVndOaiEffort'], 'llmVndOaiEffort'),
       miscEffortOptions: llmParametersFilterEffortOptions(_miscEffortOptions, modelParamSpec['llmVndMiscEffort'], 'llmVndMiscEffort'),
+      oaiServiceTierOptions: llmParametersFilterEffortOptions(_oaiServiceTierOptions, modelParamSpec['llmVndOaiServiceTier'], 'llmVndOaiServiceTier'),
       unslothThinkingOptions: llmParametersFilterEffortOptions(_unslothThinkingOptions, modelParamSpec['llmVndUnslothThinking'], 'llmVndUnslothThinking'),
       oaiWebSearchOptions: ws?.map(o => (wsOnOff && o.value !== _UNSPECIFIED) ? { ...o, label: 'On' } : o) ?? null,
     };
@@ -429,12 +431,12 @@ export function LLMParametersEditor(props: {
     )}
 
 
-    {/* pre-Effort: Anthropic [thinking switch (adaptive-only models, e.g. Opus 5) | thinking budget, effort, ...] */}
+    {/* pre-Effort: Anthropic [thinking switch (adaptive-only models, e.g. Opus 5, Sonnet 5.5) | thinking budget, effort, ...] */}
     {antThinkingShown && antThinkingAdaptiveOnly ? (
       <FormSwitchControl
         title='Thinking'
         description={antThinkingEnabled ? 'Adaptive (model decides)' : 'Off'}
-        tooltip='Adaptive: the model decides when and how much to reason. Off: no reasoning, faster first token, effort capped at High.'
+        tooltip='Adaptive: the model decides when and how much to reason. Off: no up-front reasoning, faster first token, effort capped at High.'
         checked={antThinkingEnabled}
         onChange={on => {
           if (on) onRemoveParameter('llmVndAntThinkingBudget'); // back to the model's initial value (-1, adaptive)
@@ -524,16 +526,16 @@ export function LLMParametersEditor(props: {
       />
     )}
     {/* OpenAI Service Tier */}
-    {showParam('llmVndOaiServiceTier') && (
+    {showParam('llmVndOaiServiceTier') && oaiServiceTierOptions && (
       <FormSelectControl
         title='Service Tier'
-        tooltip='Fast: faster at 2x price. Flex: slower at half price. A downgraded request bills at standard rates.'
+        tooltip='Flex: slower at half price. Fast: faster at 2x price. Ultrafast: fastest at 6x price. A downgraded request bills at standard rates.'
         value={llmVndOaiServiceTier ?? _UNSPECIFIED}
         onChange={(value) => {
           if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndOaiServiceTier');
           else onChangeParameter({ llmVndOaiServiceTier: value });
         }}
-        options={_oaiServiceTierOptions}
+        options={oaiServiceTierOptions}
       />
     )}
     {/* Moonshot/Z.ai Thinking */}

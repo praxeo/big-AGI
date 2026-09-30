@@ -227,10 +227,11 @@ export const DModelParameterRegistry = {
    *
    * - `-1`: adaptive thinking (4.6+), sent as `thinking: {type: 'adaptive'}` - the model decides when and how much to reason,
    *         `llmVndAntEffort` sets the depth. Deliberately outside `range` so no slider can produce it:
-   *         it is the `initialValue` on every adaptive model's spec, hidden on most, VISIBLE on Opus 5 where the editors
+   *         it is the `initialValue` on every adaptive model's spec, hidden on most, VISIBLE on Opus 5 and Sonnet 5.5 where the editors
    *         render it as a Thinking switch (on = -1, off = null).
    *
    * - `null`: thinking off, sent as `thinking: {type: 'disabled'}`. Legal on 4.x, Sonnet 5, and Opus 5 (at effort <= high, the adapter clamps);
+   *           sent as `{type: 'between_tools'}` on Sonnet 5.5 (no up-front thinking, effort <= high, clamped);
    *           rejected by Fable/Mythos 5 and 5.1 and Opus 5.5, where the adapter coerces it to adaptive.
    *
    * - `1024..65536`: a manual budget, sent as `thinking: {type: 'enabled', budget_tokens}` - 4.5 and earlier only.
@@ -426,13 +427,15 @@ export const DModelParameterRegistry = {
 
   llmVndOaiServiceTier: _enumDef({
     // [2026-09-03, OpenAI] request `service_tier`: 'flex' = slower, batch rates; 'fast' (formerly 'priority') = up to 2.5x faster, 2x rates.
+    // [2026-09-29, OpenAI] 'ultrafast' = up to 6x faster, 6x rates; GPT-6 Astra only, Responses only (400 elsewhere).
     // Multipliers apply to every token class after the cache discount; per-call tool fees are flat. The response echoes the tier
     // actually served ('default' on a downgrade), which the parser turns into the confirmed multiplier (metrics $xPrice).
+    // Every model declares its tiers via parameterSpec `enumValues` - a spec without them would offer 'ultrafast'.
     label: 'Service Tier',
     type: 'enum',
-    description: 'Flex: slower at half price. Fast: faster at double price. Downgrades bill at standard rates.',
-    values: ['flex', 'fast'],
-    enumPriceMultiplier: { flex: 0.5, fast: 2 },
+    description: 'Flex: slower at half price. Fast: faster at double price. Ultrafast: fastest at 6x price. Downgrades bill at standard rates.',
+    values: ['flex', 'fast', 'ultrafast'],
+    enumPriceMultiplier: { flex: 0.5, fast: 2, ultrafast: 6 },
     // undefined means standard processing (omitted from the request)
   }),
 
