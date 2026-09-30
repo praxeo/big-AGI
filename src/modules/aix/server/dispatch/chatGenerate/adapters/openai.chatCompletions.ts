@@ -174,8 +174,12 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     throw new Error('OpenAI Chat Completions API does not support the Reasoning Mode parameter (Responses API only)');
 
   // [2026-09-03, OpenAI] processing tier (native and OpenRouter - other compatible hosts do not know it)
-  if (model.vndOaiServiceTier && (openAIDialect === 'openai' || openAIDialect === 'openrouter'))
+  if (model.vndOaiServiceTier && (openAIDialect === 'openai' || openAIDialect === 'openrouter')) {
+    // [2026-09-29] 'ultrafast' is Responses-only: native Chat Completions 400s, OpenRouter silently serves it as 'priority' (2x)
+    if (model.vndOaiServiceTier === 'ultrafast')
+      throw new Error('OpenAI Chat Completions API does not support the Ultrafast service tier (Responses API only)');
     payload.service_tier = model.vndOaiServiceTier;
+  }
 
   // [OpenAI] Vendor-specific reasoning effort
   const reasoningEffort = model.reasoningEffort; // ?? model.vndOaiReasoningEffort;
@@ -1032,12 +1036,13 @@ function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsP
 
 
 /**
- * OpenRouter ids of Anthropic models that reject forced tool_choice upstream: Fable/Mythos 5 and 5.x, Opus 5.5, and the '~' router
+ * OpenRouter ids of Anthropic models that reject forced tool_choice upstream: Fable/Mythos 5 and 5.x, Opus 5.5, Sonnet 5.5, and the '~' router
  * aliases resolving to them. '~anthropic/claude-opus-latest' (-> Opus 5.5 since 2026-09-22) silently falls back to Opus 5 on a forced
- * call (probed), so it's degraded too, to stay on the aliased model.
+ * call (probed), so it's degraded too, to stay on the aliased model. '~anthropic/claude-sonnet-latest' still resolves to Sonnet 5 (2026-09-28,
+ * forced call 200), so it's not listed.
  */
 function _isOrtForcedToolRejectingAnt(modelId: string): boolean {
-  return /^~?anthropic\/claude-((fable|mythos)-(5|latest)|opus-(5\.5|latest))/.test(modelId);
+  return /^~?anthropic\/claude-((fable|mythos)-(5|latest)|opus-(5\.5|latest)|sonnet-5\.5)/.test(modelId);
 }
 
 
