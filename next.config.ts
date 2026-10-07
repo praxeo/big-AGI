@@ -101,7 +101,7 @@ let nextConfig: NextConfig = {
         const zustandUtils = fileURLToPath(new URL('./src/common/util/zustandUtils.ts', import.meta.url));
         config.plugins.push(new webpack.NormalModuleReplacementPlugin(/^zustand(\/vanilla)?$/, (resource: any) => {
           const issuer: string = resource.contextInfo?.issuer || '';
-          if (!issuer || issuer.includes('/node_modules/') || issuer.endsWith('zustandUtils.ts')) return; // the package's own internals and the entry point keep the package
+          if (!issuer || /[\\/]node_modules[\\/]/.test(issuer) || issuer.endsWith('zustandUtils.ts')) return; // the package's own internals and the entry point keep the package
           // console.log('- WEBPACK ZUSTAND REDIRECT:', resource.request, 'from', issuer); // console.log, not log(): the helper is silent past the first config pass
           resource.request = zustandUtils;
         }));
@@ -133,6 +133,12 @@ let nextConfig: NextConfig = {
       // Inspect: standalone static dev tools under /public/dev/inspect/*.html (clean URLs, no .html)
       // The (\w+) constraint excludes paths with a dot, so '/dev/inspect/storage.html' is still served directly.
       { source: '/dev/inspect/:tool(\\w+)', destination: '/dev/inspect/:tool.html' },
+    ];
+  },
+  async redirects() {
+    return [
+      // /preview: 2025 dark-launch marketing page (prod-only [PROD] commit) - Google indexed it, keep the 301 to preserve searchers
+      { source: '/preview', destination: 'https://big-agi.com/', permanent: true },
     ];
   },
 
