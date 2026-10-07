@@ -5,7 +5,7 @@ import type { OpenAIDialects } from '~/modules/llms/server/openai/openai.access'
 import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixMessages_SystemMessage, AixTools_ToolDefinition, AixTools_ToolsPolicy, AixWire_Vendors } from '../../../api/aix.wiretypes';
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Items, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
 
-import { aixDocPart_to_OpenAITextContent, aixMetaRef_to_OpenAIText, aixTexts_to_OpenAIInstructionText } from './openai.chatCompletions';
+import { AIX_OPENAI_MAX_ID_LENGTH, aixDocPart_to_OpenAITextContent, aixMetaRef_to_OpenAIText, aixOpenAICallId, aixTexts_to_OpenAIInstructionText } from './openai.chatCompletions';
 import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
 
 
@@ -116,7 +116,10 @@ export function aixToOpenAIResponses(
   // const strictJsonOutput = !!model.strictJsonOutput;
   const strictToolInvocations = !!model.strictToolInvocations;
 
-  const { requestInput, requestInstructions } = _toOpenAIResponsesRequestInput(chatGenerate.systemMessage, chatGenerate.chatSequence, model.vndOaiContainerId, quirks.emitMessagePhase, quirks.vndNamespace);
+  // the code-interpreter container of a prior turn is OpenAI's: no other Responses dialect can resolve it
+  const sessionContainerId = openAIDialect === 'openai' ? model.vndOaiContainerId : undefined;
+
+  const { requestInput, requestInstructions } = _toOpenAIResponsesRequestInput(chatGenerate.systemMessage, chatGenerate.chatSequence, sessionContainerId, quirks.emitMessagePhase, quirks.vndNamespace);
 
   // Pair every interior function_call with a function_call_output, or the request is rejected wholesale
   _pairInteriorFunctionCalls(requestInput);
@@ -360,6 +363,12 @@ export function aixToOpenAIResponses(
 }
 
 
+/** Whether a stored code cell carries an id OpenAI accepts on a 'code_interpreter_call' item: Gemini cells ('call_...') and
+ * xAI cells (83-char 'ci_...') 400 the request ("Expected an ID that begins with 'ci'", "string too long"). */
+function _isOpenAICodeInterpreterItemId(id: string): boolean {
+  return id.startsWith('ci') && id.length <= AIX_OPENAI_MAX_ID_LENGTH;
+}
+
 function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage | null, chatSequence: AixMessages_ChatMessage[], sessionContainerId: string | undefined, emitMessagePhase: boolean, vndNamespace: AixWire_Vendors.RspVendor): { requestInput: TRequestInput[], requestInstructions: TRequest['instructions'] } {
 
   /**
@@ -439,7 +448,7 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
   function newFunctionCallMessage(callId: string, functionName: string, functionArguments: string) {
     const newMessage: FunctionCallMessage = {
       type: 'function_call',
-      call_id: callId,
+      call_id: aixOpenAICallId(callId),
       name: functionName,
       arguments: functionArguments,
     };
@@ -464,11 +473,20 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
   function newFunctionCallOutputMessage(callId: string, functionOutputJson: string) {
     const newMessage: FunctionCallOutputMessage = {
       type: 'function_call_output',
-      call_id: callId,
+      call_id: aixOpenAICallId(callId),
       output: functionOutputJson,
     };
     chatMessages.push(newMessage);
     return newMessage;
+  }
+
+  /**
+   * Code cells (a code_execution invocation and its responses) replay as the native 'code_interpreter_call' item only when OpenAI
+   * can resolve them: a live session container and an OpenAI item id. Any other cell - expired container, another vendor's - is
+   * an 'execute_code' function call and output. Invocation and responses decide on the same cell id, so they take the same form.
+   */
+  function nativeCodeCellContainer(cellId: string): string | undefined {
+    return _isOpenAICodeInterpreterItemId(cellId) ? sessionContainerId : undefined;
   }
 
   // The following 2 functions are to recreate native code execution (which includes the output) blocks
@@ -492,12 +510,14 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
   function attachCodeInterpreterCallOutputs(itemId: string, result: string, isError: boolean) {
     // Merge the paired tool_response's logs into the 'code_interpreter_call' item created above (matched by id).
     // There is no separate output item type for code interpreter, so outputs live on the call item itself.
+    // A cell can have several responses (logs, an image placeholder): append them, and keep a failure.
     for (let i = chatMessages.length - 1; i >= 0; i--) {
       const candidate = chatMessages[i];
       if (candidate.type === 'code_interpreter_call' && candidate.id === itemId) {
         if (result)
-          candidate.outputs = [{ type: 'logs', logs: result }];
-        candidate.status = isError ? 'failed' : 'completed';
+          candidate.outputs = [...candidate.outputs ?? [], { type: 'logs', logs: result }];
+        if (isError)
+          candidate.status = 'failed';
         return;
       }
     }
@@ -624,14 +644,14 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
                   break;
                 case 'code_execution':
                   // A 'code_interpreter_call' input item REQUIRES a container_id that still exists upstream (omitting it
-                  // 400s with "Missing required parameter: 'input[..].container_id'"; a stale id 404s). We only have a live
-                  // one when sessionContainerId is set. Without it - idle/expired, OR the prior execution was another
-                  // vendor's container (e.g. Gemini, stored as 'vnd.gem.interactions') - fall back to the container-
-                  // independent 'execute_code' function_call, which carries the code as context with no container dependency.
-                  if (sessionContainerId)
-                    newCodeInterpreterCallMessage(modelPart.id, sessionContainerId, invocation.code || '');
+                  // 400s with "Missing required parameter: 'input[..].container_id'"; a stale id 404s) and an OpenAI item id.
+                  // Without both, the container-independent 'execute_code' function_call carries the code as context, its arguments
+                  // a JSON object as in every adapter (raw code 400s on strict validators: Meta AI "arguments must be valid JSON").
+                  const cellContainerId = nativeCodeCellContainer(modelPart.id);
+                  if (cellContainerId)
+                    newCodeInterpreterCallMessage(modelPart.id, cellContainerId, invocation.code || '');
                   else
-                    newFunctionCallMessage(modelPart.id, 'execute_code', invocation.code || '');
+                    newFunctionCallMessage(modelPart.id, 'execute_code', JSON.stringify({ code: invocation.code || '' }));
                   break;
                 default:
                   const _exhaustiveCheck: never = invocation;
@@ -661,9 +681,9 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
                   newFunctionCallOutputMessage(modelPart.id, functionCallOutput);
                   break;
                 case 'code_execution':
-                  // Mirror the invocation's representation (same sessionContainerId gate): merge outputs into the
-                  // code_interpreter_call when live, else emit a plain function_call_output for the 'execute_code' fallback.
-                  if (sessionContainerId)
+                  // Mirror the invocation's representation (same cell id, same decision): merge outputs into the
+                  // code_interpreter_call when native, else emit a plain function_call_output for the 'execute_code' fallback.
+                  if (nativeCodeCellContainer(modelPart.id))
                     attachCodeInterpreterCallOutputs(modelPart.id, modelPart.response.result, !!modelPart.error);
                   else
                     newFunctionCallOutputMessage(modelPart.id, modelPart.response.result);
@@ -709,8 +729,22 @@ function _toOpenAIResponsesRequestInput(systemMessage: AixMessages_SystemMessage
  * also retro-heals conversations already poisoned in users' stores. No-op when well-formed.
  * The LAST item is skipped: a trailing call is the in-flight call of an agentic loop.
  * Hosted calls (code_interpreter_call and friends) carry their own outputs and are untouched.
+ * The reverse orphan, an output answering no call, is a 400 too ("No tool call found for function call output"),
+ * e.g. a code cell stored without its invocation: dropped.
  */
 function _pairInteriorFunctionCalls(requestInput: TRequestInput[]): void {
+
+  const calledIds = new Set<string>();
+  for (const item of requestInput)
+    if ('type' in item && item.type === 'function_call')
+      calledIds.add(item.call_id);
+  for (let i = requestInput.length - 1; i >= 0; i--) {
+    const item = requestInput[i];
+    if ('type' in item && item.type === 'function_call_output' && !calledIds.has(item.call_id)) {
+      console.warn(`[OpenAI Responses] Dropping an orphan function_call_output (input.${i})`);
+      requestInput.splice(i, 1);
+    }
+  }
 
   // outputs may sit anywhere after their call, so collect them all first
   const answeredIds = new Set<string>();

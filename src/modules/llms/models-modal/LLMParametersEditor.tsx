@@ -7,7 +7,7 @@ import LocalFireDepartmentIcon from '@mui/icons-material/LocalFireDepartment';
 import PowerSettingsNewIcon from '@mui/icons-material/PowerSettingsNew';
 
 import type { DLLMMaxOutputTokens } from '~/common/stores/llms/llms.types';
-import { DModelParameterId, DModelParameterRegistry, DModelParameterSpec, DModelParameterSpecAny, DModelParameterValues, getAllModelParameterValues, LLMImplicitParametersRuntimeFallback } from '~/common/stores/llms/llms.parameters';
+import { DModelParameterId, DModelParameterRegistry, DModelParameterSpec, DModelParameterSpecAny, DModelParameterValue, DModelParameterValues, getAllModelParameterValues, LLMImplicitParametersRuntimeFallback } from '~/common/stores/llms/llms.parameters';
 import { FormSelectControl } from '~/common/components/forms/FormSelectControl';
 import { FormSliderControl } from '~/common/components/forms/FormSliderControl';
 import { FormSwitchControl } from '~/common/components/forms/FormSwitchControl';
@@ -74,7 +74,19 @@ const _unslothThinkingOptions = [
   { value: _UNSPECIFIED, label: 'Default', description: 'Model default' } as const,
 ] as const;
 
-export function llmParametersFilterEffortOptions<T extends { value: string, label: string }>(options: readonly T[], spec: DModelParameterSpecAny | undefined, registryKey: keyof typeof DModelParameterRegistry): T[] | null {
+/** Registry values of K absent from an options table - `never` when the table lists them all */
+type _OptionsMissingValues<K extends DModelParameterId, T extends { value: string }> = Exclude<DModelParameterValue<K>, T['value']>;
+
+/**
+ * Narrows an options table to the values the model allows (its `enumValues`, else the registry's).
+ * Filtering only removes, so every table must list every registry value - typechecked per call site: a value
+ * added to the registry fails the build at every picker that lacks it, instead of silently never showing (#1228).
+ */
+export function llmParametersFilterEffortOptions<K extends DModelParameterId, T extends { value: string, label: string }>(
+  options: readonly T[] & ([_OptionsMissingValues<K, T>] extends [never] ? unknown : { missingRegistryValues: _OptionsMissingValues<K, T> }),
+  spec: DModelParameterSpecAny | undefined,
+  registryKey: K,
+): T[] | null {
   if (!spec) return null;
   const registry = DModelParameterRegistry[registryKey];
   const allowedSet = new Set((spec.enumValues as readonly string[] | undefined) ?? ('values' in registry ? registry.values : []));
@@ -135,9 +147,15 @@ const _geminiAspectRatioOptions = [
   { value: '3:2', label: '3:2', description: 'Landscape' },
   { value: '3:4', label: '3:4', description: 'Portrait' },
   { value: '4:3', label: '4:3', description: 'Landscape' },
+  { value: '4:5', label: '4:5', description: 'Portrait' },
+  { value: '5:4', label: '5:4', description: 'Landscape' },
   { value: '9:16', label: '9:16', description: 'Tall portrait' },
   { value: '16:9', label: '16:9', description: 'Wide landscape' },
   { value: '21:9', label: '21:9', description: 'Ultra wide' },
+  { value: '1:4', label: '1:4', description: 'Banner, tall' },
+  { value: '4:1', label: '4:1', description: 'Banner, wide' },
+  { value: '1:8', label: '1:8', description: 'Strip, tall' },
+  { value: '8:1', label: '8:1', description: 'Strip, wide' },
 ] as const;
 
 const _geminiImageSizeOptions = [
@@ -258,7 +276,7 @@ export function LLMParametersEditor(props: {
 
 
   // enum options: one memo for all vendors, filtered to each model's allowed values (via parameterSpec.enumValues)
-  const { antEffortOptions, gemEffortOptions, oaiEffortOptions, miscEffortOptions, oaiServiceTierOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
+  const { antEffortOptions, gemEffortOptions, gemAspectRatioOptions, gemImageSizeOptions, oaiEffortOptions, miscEffortOptions, oaiServiceTierOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
     // web search: filter to the model's allowed levels; when restricted to a single level (e.g. Sakana's
     // bare on/off web_search), relabel that lone level as a plain "On" (the "Off" entry is kept as-is).
     const ws = llmParametersFilterEffortOptions(_webSearchContextOptions, modelParamSpec['llmVndOaiWebSearchContext'], 'llmVndOaiWebSearchContext');
@@ -266,6 +284,8 @@ export function LLMParametersEditor(props: {
     return {
       antEffortOptions: llmParametersFilterEffortOptions(_antEffortOptions, modelParamSpec['llmVndAntEffort'], 'llmVndAntEffort'),
       gemEffortOptions: llmParametersFilterEffortOptions(_gemEffortOptions, modelParamSpec['llmVndGemEffort'], 'llmVndGemEffort'),
+      gemAspectRatioOptions: llmParametersFilterEffortOptions(_geminiAspectRatioOptions, modelParamSpec['llmVndGeminiAspectRatio'], 'llmVndGeminiAspectRatio'),
+      gemImageSizeOptions: llmParametersFilterEffortOptions(_geminiImageSizeOptions, modelParamSpec['llmVndGeminiImageSize'], 'llmVndGeminiImageSize'),
       oaiEffortOptions: llmParametersFilterEffortOptions(_oaiEffortOptions, modelParamSpec['llmVndOaiEffort'], 'llmVndOaiEffort'),
       miscEffortOptions: llmParametersFilterEffortOptions(_miscEffortOptions, modelParamSpec['llmVndMiscEffort'], 'llmVndMiscEffort'),
       oaiServiceTierOptions: llmParametersFilterEffortOptions(_oaiServiceTierOptions, modelParamSpec['llmVndOaiServiceTier'], 'llmVndOaiServiceTier'),
@@ -769,7 +789,7 @@ export function LLMParametersEditor(props: {
     {/*  />*/}
     {/*)}*/}
 
-    {showParam('llmVndGeminiImageSize') && (
+    {showParam('llmVndGeminiImageSize') && gemImageSizeOptions && (
       <FormSelectControl
         title='Image Size'
         tooltip='Controls the resolution of generated images'
@@ -778,11 +798,11 @@ export function LLMParametersEditor(props: {
           if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndGeminiImageSize');
           else onChangeParameter({ llmVndGeminiImageSize: value });
         }}
-        options={_geminiImageSizeOptions}
+        options={gemImageSizeOptions}
       />
     )}
 
-    {showParam('llmVndGeminiAspectRatio') && (
+    {showParam('llmVndGeminiAspectRatio') && gemAspectRatioOptions && (
       <FormSelectControl
         title='Aspect Ratio'
         tooltip='Controls the aspect ratio of generated images'
@@ -791,7 +811,7 @@ export function LLMParametersEditor(props: {
           if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndGeminiAspectRatio');
           else onChangeParameter({ llmVndGeminiAspectRatio: value });
         }}
-        options={_geminiAspectRatioOptions}
+        options={gemAspectRatioOptions}
       />
     )}
 
