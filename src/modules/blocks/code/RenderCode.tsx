@@ -383,7 +383,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const renderChartJS = isChartJSCode && showChartJS;
 
   const renderSyntaxHighlight = !renderHTML && !renderMarkdown && !renderMermaid && !renderPlantUML && !renderSVG && !renderChartJS;
-  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || renderChartJS || blockIsPartial; // [praxeo fork]
+  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || renderChartJS;
   const renderLineNumbers = !cannotRenderLineNumbers && ((showLineNumbers && uiComplexityMode !== 'minimal') || isFullscreen);
 
 
@@ -642,7 +642,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
       <Box
         ref={fullScreenElementRef}
         component='code'
-        className={`language-${inferredCodeLanguage || 'unknown'}${renderLineNumbers ? ' line-numbers' : ''}`}
+        className={`language-${inferredCodeLanguage || 'unknown'}${(renderLineNumbers && !blockIsPartial /* [praxeo fork] */) ? ' line-numbers' : ''}`}
         sx={codeSx}
       >
 

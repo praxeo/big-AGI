@@ -1,13 +1,14 @@
 import * as z from 'zod/v4';
 
-import type { DebugWireLogger } from '~/server/wire';
+import type { AixAPI_Access } from '~/modules/aix/server/api/aix.wiretypes';
 import type { OpenAIWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/openai.wiretypes';
+import { createDebugWireLogger } from '~/server/wire';
 import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 
 import { DModelInterfaceV1, LLM_IF_HOTFIX_NoWebP, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
-import { OpenAIAccessSchema, OpenAIDialects, openAIAccess } from '../openai.access';
+import { openAIAccess } from '../openai.access';
 
 
 /**
@@ -92,20 +93,16 @@ export function unslothStatusFrom(response: unknown): UnslothWire_API_Status.Res
 }
 
 /**
- * Called by the models-list dispatch on every OpenAI-compatible list (one line there, so upstream changes rarely conflict).
+ * Called by listModelsRunDispatch on every fetched list (one line there, so upstream changes rarely conflict).
  * The loaded model's reasoning controls are template-derived, not name-derived: read the server's own flags so we
  * expose exactly the control it honors. Best-effort - on any failure the parser falls back to name heuristics.
- * Only fires on a confirmed Unsloth server, so no other OpenAI-compatible host pays for the extra request.
+ * Only fires on a confirmed Unsloth server, so no other host pays for the extra request.
  */
-export async function unslothAttachServerStatus(
-  dialect: OpenAIDialects,
-  wireModels: OpenAIWire_API_Models_List.Response,
-  access: OpenAIAccessSchema,
-  signal: AbortSignal | undefined,
-  wire: DebugWireLogger | null,
-): Promise<OpenAIWire_API_Models_List.Response & { [UNSLOTH_STATUS_KEY]?: UnslothWire_API_Status.Response | null }> {
-  if (dialect !== 'openai' || !unslothHeuristic(wireModels?.data || []))
-    return wireModels;
+export async function unslothAttachServerStatus<TWireModels>(access: AixAPI_Access, wireModels: TWireModels, signal: AbortSignal | undefined): Promise<TWireModels> {
+  if (access.dialect !== 'openai') return wireModels;
+  const data = (wireModels as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data) || !unslothHeuristic(data)) return wireModels;
+  const wire = createDebugWireLogger('LLMs');
   try {
     const { headers, url } = openAIAccess(access, null, UNSLOTH_API_PATHS.status);
     wire?.logRequest('GET', url, headers);

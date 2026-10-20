@@ -86,7 +86,7 @@ function createListModelsDispatch<T>(dispatch: ListModelsDispatch<T>): ListModel
 
 export async function listModelsRunDispatch(access: AixAPI_Access, signal?: AbortSignal): Promise<ModelDescriptionSchema[]> {
   const dispatch = _listModelsCreateDispatch(access, signal);
-  const wireModels = await dispatch.fetchModels();
+  const wireModels = await unslothAttachServerStatus(access, await dispatch.fetchModels(), signal); // [praxeo fork] no-op unless an Unsloth server
   const models = dispatch.convertToDescriptions(wireModels)
     .map(llmsAutoImplyInterfaces) // auto-inject implied IFs from parameterSpecs
     .map(llmsWireCompatCacheTag); // legacy cache tag for older clients - TODO: delete after 2026-12-03
@@ -436,7 +436,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
           if (dialect === 'openai' && minimaxHeuristic(oaiUrl))
             return _fetchModelsListCuratedFirst('MiniMax', fetchList);
 
-          return unslothAttachServerStatus(dialect, await fetchList(), access, signal, _wire); // [praxeo fork] no-op unless an Unsloth server
+          return fetchList();
         },
 
         // OpenAI models conversions: dependent on the dialect
