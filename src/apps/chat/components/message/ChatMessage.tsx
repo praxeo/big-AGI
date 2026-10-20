@@ -4,41 +4,33 @@ import { shallow } from 'zustand/vanilla/shallow';
 import TimeAgo from 'react-timeago';
 
 import type { SxProps } from '@mui/joy/styles/types';
-import { Box, Button, ButtonGroup, CircularProgress, Divider, IconButton, Tooltip, Typography } from '@mui/joy';
-import { ClickAwayListener, Popper } from '@mui/base';
+import { Box, Button, IconButton, Tooltip, Typography } from '@mui/joy';
 import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import ContentCopyIcon from '@mui/icons-material/ContentCopy';
-import ContentCutIcon from '@mui/icons-material/ContentCut';
-import FormatBoldIcon from '@mui/icons-material/FormatBold';
-import FormatPaintOutlinedIcon from '@mui/icons-material/FormatPaintOutlined';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
-import ReplyAllRoundedIcon from '@mui/icons-material/ReplyAllRounded';
-import ReplyRoundedIcon from '@mui/icons-material/ReplyRounded';
-import StrikethroughSIcon from '@mui/icons-material/StrikethroughS';
 
 import type { AixReattachMode } from '~/modules/aix/client/aix.client';
 import type { AutoBlocksHtmlRenderVariant } from '~/modules/blocks/AutoBlocksRenderer';
 import { ModelVendorAnthropic } from '~/modules/llms/vendors/anthropic/anthropic.vendor';
+import { useERCDiffActions } from '~/modules/blocks/enhanced-code/ERCDiffContext';
 import { vertexLinksCountInFragments, vertexLinksResolveFragments } from '~/modules/google/vertexai.client';
 
 import { DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, MESSAGE_FLAG_NOTIFY_COMPLETE, MESSAGE_FLAG_STARRED, MESSAGE_FLAG_VND_ANT_CACHE_AUTO, MESSAGE_FLAG_VND_ANT_CACHE_USER, messageFragmentsInFluxId, messageFragmentsReduceText, messageHasUserFlag, messageWasOutOfTokens } from '~/common/stores/chat/chat.message';
-import { MarkHighlightIcon } from '~/common/components/icons/MarkHighlightIcon';
-import { PhTreeStructure } from '~/common/components/icons/phosphor/PhTreeStructure';
-import { PhVoice } from '~/common/components/icons/phosphor/PhVoice';
 import { Release } from '~/common/app.release';
 import { TooltipOutlined } from '~/common/components/TooltipOutlined';
-import { adjustContentScaling, themeScalingMap, themeZIndexChatBubble } from '~/common/app.theme';
+import { adjustContentScaling, themeScalingMap } from '~/common/app.theme';
 import { avatarIconSx, makeMessageAvatarIcon, messageBackground, useMessageAvatarLabel } from '~/common/util/dMessageUtils';
 import { clipboardCopyDOMSelectionOrFallback, copyToClipboard } from '~/common/util/clipboardUtils';
 import { createTextContentFragment, DMessageFragment, DMessageFragmentId, updateFragmentWithEditedText } from '~/common/stores/chat/chat.fragments';
-import { useFragmentBuckets } from '~/common/stores/chat/hooks/useFragmentBuckets';
+import { useFragmentBuckets } from '~/common/stores/chat/hooks/app-chat/useFragmentBuckets';
 import { useUIPreferencesStore } from '~/common/stores/store-ui';
+import { useUXLabsStore } from '~/common/stores/store-ux-labs';
 
 import { BlockOpContinue } from './BlockOpContinue';
 import { BlockOpOptions, optionsExtractFromFragments_dangerModifyFragment } from './BlockOpOptions';
 import { BlockOpResolveLinks } from './BlockOpResolveLinks';
 import { BlockOpUpstreamResume } from './BlockOpUpstreamResume';
+import { ChatMessageBubble } from './ChatMessageBubble';
 import { ChatMessageEditAttachments, type EditModeAttachmentsHandle } from './ChatMessageEditAttachments';
 import { ChatMessageInfoPopup } from './ChatMessageInfoPopup';
 import { ChatMessageMenu } from './ChatMessageMenu';
@@ -348,8 +340,10 @@ export function ChatMessage(props: {
   onMessageFragmentAppend?: (messageId: DMessageId, fragment: DMessageFragment) => void
   onMessageFragmentDelete?: (messageId: DMessageId, fragmentId: DMessageFragmentId) => void,
   onMessageFragmentReplace?: (messageId: DMessageId, fragmentId: DMessageFragmentId, newFragment: DMessageFragment) => void,
+  onMessageFragmentsReorder?: (messageId: DMessageId, reorderedIds: DMessageFragmentId[], placement: 'end') => void,
   onMessageToggleUserFlag?: (messageId: string, flag: DMessageUserFlag, maxPerConversation?: number) => void,
   onMessageTruncate?: (messageId: string) => void,
+  onReattachAsFile?: (file: File) => void,
   onTextDiagram?: (messageId: string, text: string) => Promise<void>,
   onTextImagine?: (text: string) => Promise<void>,
   onTextSpeak?: (text: string) => Promise<void>,
@@ -363,6 +357,7 @@ export function ChatMessage(props: {
   const [opsMenuAnchor, setOpsMenuAnchor] = React.useState<HTMLElement | null>(null);
   const [textContentEditState, setTextContentEditState] = React.useState<ChatMessageTextPartEditState | null>(null);
   const [showInfoModal, setShowInfoModal] = React.useState(false);
+  const [userMarkdownFlipped, setUserMarkdownFlipped] = React.useState(false); // 'View as text/markdown', this message only, not saved
   const attachmentsEditRef = React.useRef<EditModeAttachmentsHandle>(null);
 
   // latest-message ref: lets stable callbacks read the current message without putting it in deps
@@ -370,13 +365,17 @@ export function ChatMessage(props: {
   messageRef.current = props.message;
 
   // external state
-  const { adjContentScaling, disableMarkdown, doubleClickToEdit, messageFullWidth, uiComplexityMode } = useUIPreferencesStore(useShallow(state => ({
+  const { adjContentScaling, devsUISymbolHighlight, disableMarkdown, doubleClickToEdit, messageFullWidth, uiComplexityMode } = useUIPreferencesStore(useShallow(state => ({
     adjContentScaling: adjustContentScaling(state.contentScaling, props.adjustContentScaling),
+    devsUISymbolHighlight: state.devsUISymbolHighlight,
     disableMarkdown: state.disableMarkdown,
     doubleClickToEdit: state.doubleClickToEdit,
     messageFullWidth: state.messageFullWidth,
     uiComplexityMode: state.complexityMode,
   })));
+  const _setContextHighlightText = useERCDiffActions()?.setContextHighlightText;
+  const setContextHighlightText = devsUISymbolHighlight ? _setContextHighlightText : undefined;
+  const labsUserMarkdown = useUXLabsStore(state => state.labsUserMarkdown);
 
 
   // derived state
@@ -395,6 +394,7 @@ export function ChatMessage(props: {
   const fromAssistant = messageRole === 'assistant';
   const fromSystem = messageRole === 'system';
   const fromUser = messageRole === 'user';
+  const userMarkdown = labsUserMarkdown !== userMarkdownFlipped;
   const messageHasBeenEdited = !!messageUpdated;
   const msgGenOutOfTokens = messageWasOutOfTokens(messageGenerator);
 
@@ -439,7 +439,7 @@ export function ChatMessage(props: {
   // const wordsDiff = useWordsDifference(textSubject, props.diffPreviousText, showDiff);
 
 
-  const { onMessageAssistantFrom, onMessageDelete, onMessageFragmentAppend, onMessageFragmentDelete, onMessageFragmentReplace, onMessageContinue, onMessageToggleUserFlag, onMessageUpstreamResume, onMessageUpstreamDetach, onMessageUpstreamDelete } = props;
+  const { onMessageAssistantFrom, onMessageDelete, onMessageFragmentAppend, onMessageFragmentDelete, onMessageFragmentReplace, onMessageFragmentsReorder, onMessageContinue, onMessageToggleUserFlag, onMessageUpstreamResume, onMessageUpstreamDetach, onMessageUpstreamDelete } = props;
 
   const handleFragmentNew = React.useCallback(() => {
     onMessageFragmentAppend?.(messageId, createTextContentFragment(''));
@@ -452,6 +452,17 @@ export function ChatMessage(props: {
   const handleFragmentReplace = React.useCallback((fragmentId: DMessageFragmentId, newFragment: DMessageFragment) => {
     onMessageFragmentReplace?.(messageId, fragmentId, newFragment);
   }, [messageId, onMessageFragmentReplace]);
+
+  const handleFragmentsReorder = React.useCallback((reorderedIds: DMessageFragmentId[]) => {
+    onMessageFragmentsReorder?.(messageId, reorderedIds, 'end');
+  }, [messageId, onMessageFragmentsReorder]);
+
+  const handleImagesReorder = React.useCallback((reorderedIds: DMessageFragmentId[]) => {
+    // Keep text and documents in their original slots.
+    const imageIds = new Set(reorderedIds);
+    let imageIndex = 0;
+    handleFragmentsReorder(messageFragments.map(({ fId }) => imageIds.has(fId) ? reorderedIds[imageIndex++] : fId));
+  }, [handleFragmentsReorder, messageFragments]);
 
   const handleResolveVertexLinks = React.useCallback(async () => {
     const outcome = await vertexLinksResolveFragments(messageFragments);
@@ -570,7 +581,8 @@ export function ChatMessage(props: {
     }
     setBubbleAnchor(null);
     setSelText(null);
-  }, [bubbleAnchor]);
+    setContextHighlightText?.(null);
+  }, [bubbleAnchor, setContextHighlightText]);
 
   // restore blocksRendererRef
   const handleOpenBubble = React.useCallback((_event?: MouseEvent | null) => {
@@ -613,10 +625,11 @@ export function ChatMessage(props: {
 
     setBubbleAnchor(anchorEl);
     setSelText(selectionText); /* TODO: operate on the underlying content, not the rendered text */
-  }, [closeBubble, props.isMobile]);
+    setContextHighlightText?.(selectionText);
+  }, [closeBubble, props.isMobile, setContextHighlightText]);
 
-  const handleBubbleClickAway = React.useCallback((event: MouseEvent | TouchEvent /* DOM, not React */) => {
-    if (!event.shiftKey)
+  const handleBubbleClickAway = React.useCallback((event?: MouseEvent | TouchEvent /* DOM, not React */) => {
+    if (!event?.shiftKey)
       closeBubble();
   }, [closeBubble]);
 
@@ -705,6 +718,12 @@ export function ChatMessage(props: {
     e.preventDefault();
     handleOpsMenuClose();
   }, [handleOpsMenuClose, handleEditsBegin, handleEditsCancel, isEditingText, messagePendingIncomplete]);
+
+  const handleOpsMessageViewToggle = React.useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setUserMarkdownFlipped(flipped => !flipped);
+    handleOpsMenuClose();
+  }, [handleOpsMenuClose]);
 
   const handleOpsMessageTruncate = React.useCallback((e: React.MouseEvent) => {
     e.preventDefault();
@@ -991,6 +1010,7 @@ export function ChatMessage(props: {
               messageRole={messageRole}
               isEditing={isEditingText}
               onFragmentDelete={!onMessageFragmentDelete ? undefined : handleFragmentDelete}
+              onFragmentsReorder={isEditingText && onMessageFragmentsReorder ? handleImagesReorder : undefined}
             />
           )}
 
@@ -1022,7 +1042,7 @@ export function ChatMessage(props: {
             messageGeneratorLlmId={messageGenerator?.mgt === 'aix' ? messageGenerator.aix?.mId : undefined}
             messagePendingIncomplete={messagePendingIncomplete}
             inFluxFragmentId={inFluxFragmentId}
-            disableMarkdownText={disableMarkdown || fromUser /* User messages are edited as text. Try to have them in plain text. NOTE: This may bite. */}
+            disableMarkdownText={disableMarkdown || (fromUser && !userMarkdown) /* user messages: plain text, unless Labs or this message's menu says markdown */}
             htmlRenderVariant={props.htmlRenderVariant}
 
             textEditsState={textContentEditState}
@@ -1036,6 +1056,7 @@ export function ChatMessage(props: {
             onMessageDelete={!onMessageDelete ? undefined : handleMessageDelete}
 
             onDoubleClick={(onMessageFragmentReplace /*&& doubleClickToEdit disabled, as we may have shift too */) ? handleBlocksDoubleClick : undefined}
+            onReattachAsFile={props.onReattachAsFile}
           />
 
           {/* [#1114] Resolve Vertex AI grounding redirect links in place */}
@@ -1052,13 +1073,16 @@ export function ChatMessage(props: {
             <DocumentAttachmentFragments
               attachmentFragments={nonImageAttachments}
               messageRole={messageRole}
+              renderVariant='chat-message'
               contentScaling={adjContentScaling}
               isMobile={props.isMobile}
               zenMode={zenMode}
               allowSelection={!isEditingText}
+              allowReordering={isEditingText}
               disableMarkdownText={disableMarkdown}
               onFragmentDelete={!onMessageFragmentDelete ? undefined : handleFragmentDelete}
               onFragmentReplace={!onMessageFragmentReplace ? undefined : handleFragmentReplace}
+              onFragmentsReorder={!onMessageFragmentsReorder ? undefined : handleFragmentsReorder}
             />
           )}
 
@@ -1078,6 +1102,7 @@ export function ChatMessage(props: {
               messageRole={messageRole}
               isEditing={isEditingText}
               onFragmentDelete={!onMessageFragmentDelete ? undefined : handleFragmentDelete}
+              onFragmentsReorder={isEditingText && onMessageFragmentsReorder ? handleImagesReorder : undefined}
             />
           )}
 
@@ -1177,6 +1202,7 @@ export function ChatMessage(props: {
           isUserNotifyComplete={isUserNotifyComplete}
           userNotifyCompleteLlmId={(messageGenerator?.mgt === 'aix' ? messageGenerator.aix?.mId : undefined) ?? null}
           isUserStarred={isUserStarred}
+          isViewMarkdown={userMarkdown}
           isVndAndCacheAuto={isVndAndCacheAuto}
           isVndAndCacheUser={isVndAndCacheUser}
           showVndAntCaching={uiComplexityMode === 'extra' && !!props.showAntPromptCaching && !isUserMessageSkipped}
@@ -1189,6 +1215,7 @@ export function ChatMessage(props: {
           onOpsMessageCopySrc={handleOpsMessageCopySrc}
           onOpsMessageEditToggle={!onMessageFragmentReplace ? undefined : handleOpsMessageEditToggle}
           onOpsMessageTruncate={!onMessageTruncate ? undefined : handleOpsMessageTruncate}
+          onOpsMessageViewToggle={!fromUser ? undefined : handleOpsMessageViewToggle}
           onOpsShowInfo={handleOpsShowInfo}
           onOpsTextDiagram={!onTextDiagram ? undefined : handleOpsTextDiagram}
           onOpsTextImagine={!onTextImagine ? undefined : handleOpsTextImagine}
@@ -1199,114 +1226,24 @@ export function ChatMessage(props: {
 
       {/* Bubble Over Toolbar */}
       {ENABLE_BUBBLE && !!bubbleAnchor && (
-        <Popper placement='top-start' open={true} anchorEl={bubbleAnchor} slotProps={{
-          root: { style: { zIndex: themeZIndexChatBubble } },
-        }}>
-          <ClickAwayListener onClickAway={handleBubbleClickAway}>
-            <ButtonGroup
-              variant='plain'
-              sx={{
-                '--ButtonGroup-separatorColor': 'none !important',
-                '--ButtonGroup-separatorSize': 0,
-                borderRadius: '0',
-                backgroundColor: 'background.popup',
-                border: '1px solid',
-                borderColor: 'primary.outlinedBorder',
-                boxShadow: '0px 4px 24px -8px rgb(var(--joy-palette-neutral-darkChannel) / 50%)',
-                mb: 1.5,
-                ml: -1.5,
-                alignItems: 'center',
-                '& > button': {
-                  '--Icon-fontSize': 'var(--joy-fontSize-lg, 1.125rem)',
-                  minHeight: '2.5rem',
-                  minWidth: '2.75rem',
-                },
-              }}
-            >
-              {/* Bubble Add Reference */}
-              {!!onAddInReferenceTo && <Tooltip disableInteractive arrow placement='top' title={props.hasInReferenceTo ? 'Reply to this too' : fromAssistant ? 'Reply' : 'Refer To'}>
-                <IconButton color='primary' onClick={handleOpsAddInReferenceTo}>
-                  {props.hasInReferenceTo ? <ReplyAllRoundedIcon sx={{ fontSize: 'xl' }} /> : <ReplyRoundedIcon sx={{ fontSize: 'xl' }} />}
-                </IconButton>
-              </Tooltip>}
-              {/*{!!onMessageBeam && fromAssistant && <Tooltip disableInteractive arrow placement='top' title='Beam'>*/}
-              {/*  <IconButton color='primary'>*/}
-              {/*    <ChatBeamIcon sx={{ fontSize: 'xl' }} />*/}
-              {/*  </IconButton>*/}
-              {/*</Tooltip>}*/}
-              {!!onAddInReferenceTo && <Divider />}
-
-              {/* Text Tools (edits fragment, only for assistant messages) */}
-              {fromAssistant && <Tooltip disableInteractive arrow placement='top' title='Highlight Text'>
-                <IconButton disabled={!handleHighlightSelText} onClick={!handleHighlightSelText ? undefined : () => {
-                  handleHighlightSelText('highlight');
-                  closeBubble();
-                }}>
-                  <MarkHighlightIcon hcolor={handleHighlightSelText ? 'yellow' : undefined} />
-                </IconButton>
-              </Tooltip>}
-              {fromAssistant && <Tooltip disableInteractive arrow placement='top' title='Strike Through'>
-                <IconButton disabled={!handleHighlightSelText} onClick={!handleHighlightSelText ? undefined : () => {
-                  handleHighlightSelText('strike');
-                  closeBubble();
-                }}>
-                  <StrikethroughSIcon />
-                </IconButton>
-              </Tooltip>}
-              {fromAssistant && <Tooltip disableInteractive arrow placement='top' title='Toggle Bold'>
-                <IconButton disabled={!handleHighlightSelText} onClick={!handleHighlightSelText ? undefined : () => {
-                  handleHighlightSelText('strong');
-                  closeBubble();
-                }}>
-                  <FormatBoldIcon />
-                </IconButton>
-              </Tooltip>}
-              {fromAssistant && <Tooltip disableInteractive arrow placement='top' title='Cut Text'>
-                <IconButton disabled={!handleHighlightSelText} onClick={!handleHighlightSelText ? undefined : () => {
-                  handleHighlightSelText('cut');
-                  closeBubble();
-                }}>
-                  <ContentCutIcon />
-                </IconButton>
-              </Tooltip>}
-              {fromAssistant && <Divider />}
-
-              {/* Intelligent functions */}
-              {onTextDiagram && <Tooltip disableInteractive arrow placement='top' title={couldDiagram ? 'Auto-Diagram...' : 'Too short to Auto-Diagram'}>
-                <IconButton color='success' onClick={couldDiagram ? handleOpsTextDiagram : undefined}>
-                  <PhTreeStructure sx={{ color: couldDiagram ? 'primary' : 'neutral.plainDisabledColor' }} />
-                </IconButton>
-              </Tooltip>}
-              {onTextImagine && <Tooltip disableInteractive arrow placement='top' title='Auto-Draw'>
-                <IconButton color='success' onClick={handleOpsTextImagine} disabled={!couldImagine || props.isImagining}>
-                  {!props.isImagining ? <FormatPaintOutlinedIcon /> : <CircularProgress sx={{ '--CircularProgress-size': '16px' }} />}
-                </IconButton>
-              </Tooltip>}
-              {onTextSpeak && <Tooltip disableInteractive arrow placement='top' title='Speak'>
-                <IconButton color='success' onClick={handleOpsTextSpeak} disabled={!couldSpeak || props.isSpeaking}>
-                  {!props.isSpeaking ? <PhVoice /> : <CircularProgress sx={{ '--CircularProgress-size': '16px' }} />}
-                </IconButton>
-              </Tooltip>}
-              {(onTextDiagram || onTextImagine || onTextSpeak) && <Divider />}
-
-              {/* Bubble Copy */}
-              <Tooltip disableInteractive arrow placement='top' title='Copy Selection'>
-                <IconButton onClick={handleBubbleCopyDOM}>
-                  <ContentCopyIcon />
-                </IconButton>
-              </Tooltip>
-
-              {/* Selection char & word count */}
-              {!!selText && <Divider />}
-              {!!selText && (
-                <Typography level='body-xs' sx={{ px: 1, whiteSpace: 'nowrap' }}>
-                  {selText.length.toLocaleString()}c · {(selText.match(/\S+/g) || []).length.toLocaleString()}w
-                </Typography>
-              )}
-
-            </ButtonGroup>
-          </ClickAwayListener>
-        </Popper>
+        <ChatMessageBubble
+          anchorEl={bubbleAnchor}
+          onClose={handleBubbleClickAway}
+          selText={selText}
+          fromAssistant={fromAssistant}
+          hasInReferenceTo={!!props.hasInReferenceTo /* 1+ */}
+          onReferenceTo={!onAddInReferenceTo ? undefined : handleOpsAddInReferenceTo}
+          onHighlight={handleHighlightSelText}
+          onImagine={!onTextImagine ? undefined : handleOpsTextImagine}
+          onSpeak={!onTextSpeak ? undefined : handleOpsTextSpeak}
+          onDiagram={!onTextDiagram ? undefined : handleOpsTextDiagram}
+          isImagining={!!props.isImagining}
+          isSpeaking={props.isSpeaking}
+          couldImagine={couldImagine}
+          couldSpeak={couldSpeak}
+          couldDiagram={couldDiagram}
+          onCopy={handleBubbleCopyDOM}
+        />
       )}
 
 

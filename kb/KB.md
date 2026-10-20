@@ -10,8 +10,12 @@ Architecture and system documentation is available in the `/kb/` knowledge base,
 
 ### Modules Documentation
 
+#### Trade - Export and Import
+- **[TRADE-claude-code-export.md](modules/TRADE-claude-code-export.md)** - export for Claude Code: session and chat folder formats, measured Claude Code resume behavior, gaps
+
 #### AIX - AI Communication Framework
 - **[AIX.md](modules/AIX.md)** - AIX streaming architecture documentation
+- **[AIX-ingestion.md](modules/AIX-ingestion.md)** - lossless parse/reassembly rule, checklist of open conflicts
 - **[AIX-callers-analysis.md](modules/AIX-callers-analysis.md)** - Analysis of AIX entry points, call chains, common and different rendering, error handling, etc.
 - **[AIX-anthropic-code-execution.md](modules/AIX-anthropic-code-execution.md)** - Anthropic code execution: the three triggers + one container, the #1087 single-environment history, empirically-verified behavior (version-pin/400, coexist, container continuity), the shipped standalone Sandbox toggle + container decoupling, and the forward Sandbox/execution-environment direction
 

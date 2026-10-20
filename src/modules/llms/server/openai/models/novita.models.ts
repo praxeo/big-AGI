@@ -1,4 +1,4 @@
-import { DModelInterfaceV1, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio } from '~/common/stores/llms/llms.types';
+import { DModelInterfaceV1, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
 
@@ -23,13 +23,9 @@ const _novitaDenyListContains: string[] = [
   'paddleocr',
   'deepseek-ocr',
   // internal test/staging rows: status=1 and zero-priced, but absent from the novita.ai/pricing catalog
-  // and their /models/llm/<slug> page answers "The requested model could not be found" (2026-08-17).
-  // 'gt-4p' also reports context_size 0 and description 'chatgpt-4o'.
-  // 'm2-her' self-describes as a test row; every real MiniMax id is shaped 'minimax/minimax-*'.
-  'ai_infer_test',
+  // and their /models/llm/<slug> page answers "The requested model could not be found".
+  'bunny',
   'dev/glm46',
-  'gt-4p',
-  'm2-her',
 ] as const;
 
 
@@ -55,6 +51,21 @@ function _prettyModelId(model: WireNovitaModel): string {
     .trim();
 }
 
+/** USD per 1M tokens from hundredths of a cent; 'is_tiered_billing' rows fold their input-length tiers into { upTo, price }[] */
+function _novitaTieredPrice(model: WireNovitaModel, field: 'prompt' | 'completion' | 'input_cache_read', flat: number | undefined) {
+  const flatUsd = flat === undefined ? undefined : flat / 10000;
+  const tiers = model.is_tiered_billing ? model.tiered_billing_configs : undefined;
+  if (!tiers?.length) return flatUsd;
+  const usd: { upTo: number | null, price: number }[] = [];
+  for (const [i, tier] of tiers.entries()) {
+    const upTo = i === tiers.length - 1 ? null : tier.max_tokens;
+    const price = tier.pricing?.[field]?.price_per_m;
+    if (upTo === undefined || price === undefined) return flatUsd;
+    usd.push({ upTo, price: price / 10000 });
+  }
+  return usd.every(t => t.price === usd[0].price) ? usd[0].price : usd;
+}
+
 
 export function novitaModelsToModelDescriptions(wireModels: unknown): ModelDescriptionSchema[] {
   const parsed = wireNovitaListOutputSchema.parse(wireModels);
@@ -62,11 +73,8 @@ export function novitaModelsToModelDescriptions(wireModels: unknown): ModelDescr
   return parsed.data
     // Filter out non-chat models and denied models
     .filter((model) => {
-      // Retired models keep their listing row with status=4 (30 of 147 on 2026-08-17, back to 2024 Llama 3
-      // plus recent pulls like qwen3-next-80b-a3b-thinking and glm-4.5). Verified three ways that day: none
-      // of the 30 appear in the novita.ai/pricing catalog payload (98 of the 117 status=1 ids do), every one
-      // of their /models/llm/<slug> pages answers "The requested model could not be found", and OpenRouter no
-      // longer lists Novita as a provider for them. Only 4 is excluded - an unknown future status stays in.
+      // status=4 marks retired rows (listed in Aug 2026, dropped from the listing since). Only 4 is excluded -
+      // an unknown future status stays in.
       if (model.status === 4)
         return false;
 
@@ -122,16 +130,17 @@ export function novitaModelsToModelDescriptions(wireModels: unknown): ModelDescr
 
       // Pricing: API returns hundredths of a cent per million tokens, convert to USD per 1M tokens
       // (the internal pricing unit). e.g., 2700 -> $0.27/1M input for deepseek-v3-0324; 700 -> $0.07/1M.
-      // KNOWN GAP (2026-08-17): 5 ids set 'is_tiered_billing' and carry input-length tiers in
-      // 'tiered_billing_configs'; qwen3.5-plus and qwen3.6-plus report 0 in the flat fields below, so they
-      // publish as free. 51 ids also carry 'pricing.input_cache_read'. Neither field is in the wire schema
-      // (novita.wiretypes.ts), so neither is reachable from here.
+      // Automatic upstream caching: a cache read price gets the informational caching tag.
+      const cacheRead = _novitaTieredPrice(model, 'input_cache_read', model.pricing?.input_cache_read?.price_per_m);
       const chatPrice = (model.input_token_price_per_m !== undefined && model.output_token_price_per_m !== undefined)
         ? {
-          input: model.input_token_price_per_m / 10000,
-          output: model.output_token_price_per_m / 10000,
+          input: _novitaTieredPrice(model, 'prompt', model.input_token_price_per_m),
+          output: _novitaTieredPrice(model, 'completion', model.output_token_price_per_m),
+          ...(cacheRead !== undefined && { cache: { read: cacheRead } }),
         }
         : undefined;
+      if (chatPrice?.cache)
+        interfaces.push(LLM_IF_OAI_PromptCaching);
 
       const md = fromManualMapping(_novitaKnownModels, model.id, model.created, undefined, {
         idPrefix: model.id,

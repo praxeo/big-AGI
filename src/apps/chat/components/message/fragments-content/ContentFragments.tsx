@@ -9,7 +9,7 @@ import { ScaledTextBlockRenderer } from '~/modules/blocks/ScaledTextBlockRendere
 
 import type { ContentScaling, UIComplexityMode } from '~/common/app.theme';
 import type { DMessageRole } from '~/common/stores/chat/chat.message';
-import type { InterleavedFragment } from '~/common/stores/chat/hooks/useFragmentBuckets';
+import type { InterleavedFragment } from '~/common/stores/chat/hooks/app-chat/useFragmentBuckets';
 import { DMessageContentFragment, DMessageFragmentId, isErrorContentFragment, isTextContentFragment, isTextPart, isVoidPlaceholderFragment } from '~/common/stores/chat/chat.fragments';
 import { Release } from '~/common/app.release';
 
@@ -77,6 +77,7 @@ export function ContentFragments(props: {
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newFragment: DMessageContentFragment) => void,
   onMessageDelete?: () => void,
 
+  onReattachAsFile?: (file: File) => void;
   onDoubleClick?: (event: React.MouseEvent) => void;
 
 }) {
@@ -353,6 +354,7 @@ export function ContentFragments(props: {
               htmlRenderVariant={props.htmlRenderVariant}
               inFlux={inFlux}
               onDoubleClick={props.onDoubleClick}
+              onReattachAsFile={props.onReattachAsFile}
             />
           );
 

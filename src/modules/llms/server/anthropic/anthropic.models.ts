@@ -60,6 +60,8 @@ const IF_47_R = [...IF_4_R, LLM_IF_HOTFIX_NoTemperature];
 //                              Opus 5.5 (2026-09-22): as Fable 5.1 ('disabled' and budget_tokens 400 at every effort); default effort 'medium'.
 //                              Sonnet 5.5 (2026-09-28): as Opus 5 (single entry, VISIBLE Thinking switch, off only at effort 'high' or
 //                              below), but off is sent as `thinking: {type: 'between_tools'}` - 'disabled' returns 400.
+//                              Haiku 5.5 (2026-10-07): as Opus 5 (single entry, VISIBLE Thinking switch, 'disabled' at effort 'high'
+//                              or below, 'between_tools' returns 400); default effort 'medium'.
 // - llmVndAntWebFetch/Search   seem an API feature available on all models
 
 const ANT_TOOLS: Exclude<ModelDescriptionSchema['parameterSpecs'], undefined> = [
@@ -222,20 +224,6 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
   },
 
   // Claude 4 models with thinking variants (retired June 15, 2026)
-  'claude-opus-4-20250514': {
-    idVariant: 'thinking',
-    // hidden: true, // retired
-    label: 'Claude Opus 4 (Thinking)',
-    description: 'Claude Opus 4 with extended thinking mode enabled for complex reasoning. Retired June 15, 2026.',
-    maxCompletionTokens: 32000,
-    interfaces: IF_4_R,
-    parameterSpecs: [
-      { paramId: 'llmVndAntThinkingBudget' },
-      ...ANT_TOOLS,
-    ],
-    benchmark: { cbaElo: 1425 }, // claude-opus-4-20250514-thinking-16k
-  },
-
   'claude-sonnet-4-20250514': {
     idVariant: 'thinking',
     // hidden: true, // retired
@@ -249,20 +237,6 @@ const _hardcodedAnthropicThinkingVariants: ModelVariantMap & { [id: string]: { i
       ...ANT_TOOLS,
     ],
     benchmark: { cbaElo: 1399 }, // claude-sonnet-4-20250514-thinking-32k
-  },
-
-  // Changes to the thinking variant (same model ID) for the Claude Sonnet 3.7 model
-  'claude-3-7-sonnet-20250219': {
-    idVariant: 'thinking',
-    label: 'Claude Sonnet 3.7 (Thinking)',
-    description: 'Claude 3.7 with extended thinking mode enabled for complex reasoning',
-    maxCompletionTokens: 64000,
-    interfaces: IF_4_R,
-    parameterSpecs: [
-      { paramId: 'llmVndAntThinkingBudget' },
-      ...ANT_TOOLS,
-    ],
-    benchmark: { cbaElo: 1387 }, // claude-3-7-sonnet-20250219-thinking-32k
   },
 
 } as const;
@@ -283,6 +257,39 @@ type _AnthropicModelDef = ModelDescriptionSchema & {
 
 export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
 
+  // Claude Haiku 5.5 - single entry with a user-facing Thinking switch, as Opus 5: thinking is ON by default; off is
+  // `thinking: {type: 'disabled'}`, legal at effort 'high' or below only (xhigh/max -> 400; the AIX adapter clamps).
+  {
+    id: 'claude-haiku-5-5', // Active - 2026-10-07
+    label: 'Claude Haiku 5.5',
+    pubDate: '20261007',
+    description: 'Fastest model, for high-volume and latency-sensitive tasks',
+    contextWindow: 1_000_000, // 1M default and max
+    maxCompletionTokens: 128000,
+    interfaces: [...IF_47_R, LLM_IF_ANT_ToolsSearch], // reasoning on the base model: thinking on by default
+    parameterSpecs: [
+      { paramId: 'llmVndAntThinkingBudget', initialValue: -1 /* VISIBLE Thinking switch: -1 adaptive (the API default), null off ('disabled'); budget_tokens and 'between_tools' return 400 */ },
+      { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] }, // default 'medium', the first Haiku with effort; xhigh/max need thinking on (editor hides them, adapter clamps)
+      ...ANT_TOOLS_DYNAMIC,
+    ],
+    // Haiku 5.5 (launch-verified 2026-10-07, probed live): Sonnet 5.5's tokenizer (count_tokens equal; 1.3-1.6x Haiku 4.5), 512-token
+    // min cacheable prompt, knowledge cutoff Jun 2026. temperature only at 1 / top_p only at 0.99 / top_k / prefill / speed 400,
+    // computer_20250124 400 (toolset only). Unlike Sonnet/Opus 5.5, forced tool_choice works (200, the reply skips thinking). Prompts
+    // over 100K tokens bill every class at 5x. No Priority Tier. Preserved thinking: account-bound blocks that Sonnet/Opus 5.5 also read.
+    // Measured 2026-10-07: ~200 tok/s with thinking off (Haiku 4.5 ~87); at default effort it thought ~5s before a 400-word answer.
+    chatPrice: {
+      input: [{ upTo: 100000, price: 0.10 }, { upTo: null, price: 0.50 }],
+      output: [{ upTo: 100000, price: 0.50 }, { upTo: null, price: 2.50 }],
+      cache: {
+        read: [{ upTo: 100000, price: 0.01 }, { upTo: null, price: 0.05 }],
+        write: [{ upTo: 100000, price: 0.125 }, { upTo: null, price: 0.625 }],
+        duration: 300,
+      },
+      tools: ANT_PRICE_TOOLS,
+    },
+    benchmark: { cbaElo: 1462 - 7 }, // (no arena data yet - launched 2026-10-07) assuming: claude-sonnet-5-high - 7 (vendor evals: far above Haiku 4.5 and GPT-6 Luna, below Sonnet 5.5)
+  },
+
   // Claude Sonnet 5.5 - single entry with a user-facing Thinking switch, as Opus 5 (no base + '(Adaptive)' split as on Sonnet 5):
   // thinking is ON by default; off is `between_tools` (no up-front thinking; progress updates between tool calls still arrive as
   // thinking blocks), legal at effort 'high' or below only (xhigh/max -> 400; the AIX adapter clamps).
@@ -302,8 +309,9 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     // Sonnet 5.5 (launch-verified 2026-09-28, probed live): Sonnet 5's price and tokenizer, 512-token min cacheable prompt (Sonnet 5: 1,024),
     // knowledge cutoff Jun 2026. Forced tool_choice 'any'/'tool' 400 (AIX downgrades to 'auto' + system hint), temperature only at 1 /
     // top_p / prefill / speed 400, computer_20251124 400 (toolset only). No fast mode. Preserved thinking: account-bound blocks that
-    // no other model reads; it reads Sonnet 5 / Opus 4.8 / Haiku 4.5 blocks, not Opus 5.x / Fable / Mythos.
-    chatPrice: { input: 2, output: 10, cache: { read: 0.20, write: 2.50, duration: 300 }, tools: ANT_PRICE_TOOLS },
+    // only Opus 5.5 also reads; it reads Sonnet 5 / Opus 4.8 / Haiku 4.5 / Haiku 5.5 blocks, not Opus 5.x / Fable / Mythos.
+    // Cache reads $0.10 (0.05x) since 2026-10-07, down from $0.20.
+    chatPrice: { input: 2, output: 10, cache: { read: 0.10, write: 2.50, duration: 300 }, tools: ANT_PRICE_TOOLS },
     benchmark: { cbaElo: 1462 + 4 }, // (no arena data yet - launched 2026-09-28) assuming: claude-sonnet-5-high + 4
   },
 
@@ -363,7 +371,7 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
       { paramId: 'llmVndAntEffort', enumValues: ['low', 'medium', 'high', 'xhigh', 'max'] },
       ...ANT_TOOLS_DYNAMIC,
     ],
-    // Mythos 5.1: same specs/pricing/constraints as Fable 5.1; invitation-only (404 elsewhere, not on OpenRouter/Bedrock).
+    // Mythos 5.1: same specs/pricing/constraints as Fable 5.1; invitation-only (404 elsewhere, not on OpenRouter; gated preview on Bedrock).
     // Skips the history-editing check on replayed thinking blocks (model binding only).
     chatPrice: { input: 10, output: 50, cache: { read: 0.25, write: 12.50, duration: 300 }, tools: ANT_PRICE_TOOLS },
     benchmark: { cbaElo: 1506 + 5 }, // (no arena data yet) assuming: claude-fable-5-1 + 1
@@ -563,10 +571,10 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     benchmark: { cbaElo: 1469 }, // claude-opus-4-5-20251101
   },
   {
-    id: 'claude-sonnet-4-5-20250929', // Active
+    id: 'claude-sonnet-4-5-20250929', // Deprecated: September 30, 2026 | Retiring: November 30, 2026 | Replacement: claude-sonnet-5-5
     label: 'Claude Sonnet 4.5',
     pubDate: '20250929',
-    description: 'Previous best combination of speed and intelligence for complex agents and coding',
+    description: 'Previous best combination of speed and intelligence for complex agents and coding. Retiring November 30, 2026.',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
     interfaces: [...IF_4, LLM_IF_ANT_ToolsSearch],
@@ -592,7 +600,7 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
     id: 'claude-haiku-4-5-20251001', // Active
     label: 'Claude Haiku 4.5',
     pubDate: '20251015',
-    description: 'Fastest model with exceptional speed and performance',
+    description: 'Previous Haiku model, with extended thinking and exceptional speed',
     contextWindow: 200000,
     maxCompletionTokens: 64000,
     interfaces: [...IF_4, LLM_IF_ANT_ToolsSearch],
@@ -618,20 +626,7 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
   },
 
   // Claude 4 models
-  {
-    hidden: true, // Deprecated: April 14, 2026 | Retired: June 15, 2026 | Replacement: claude-opus-4-8
-    id: 'claude-opus-4-20250514', // Retired (except on Vertex AI)
-    label: 'Claude Opus 4 [Retired]',
-    pubDate: '20250522',
-    description: 'Previous flagship model. Retired June 15, 2026 (except on Vertex AI).',
-    contextWindow: 200000,
-    maxCompletionTokens: 32000,
-    interfaces: IF_4,
-    parameterSpecs: ANT_TOOLS,
-    chatPrice: { input: 15, output: 75, cache: { read: 1.50, write: 18.75, duration: 300 }, tools: ANT_PRICE_TOOLS },
-    benchmark: { cbaElo: 1413 }, // claude-opus-4-20250514
-    isLegacy: true,
-  },
+  // retired: 'claude-opus-4-20250514'
   {
     hidden: true, // Deprecated: April 14, 2026 | Retired: June 15, 2026 | Replacement: claude-sonnet-4-6
     id: 'claude-sonnet-4-20250514', // Retired (except on Bedrock and Vertex AI)
@@ -662,38 +657,12 @@ export const hardcodedAnthropicModels = llmsDefineModels<_AnthropicModelDef>()([
   },
 
   // Claude 3.7 models
-  {
-    id: 'claude-3-7-sonnet-20250219', // Retired | Deprecated: October 28, 2025 | Retired: February 19, 2026 | Replacement: claude-opus-4-6
-    label: 'Claude Sonnet 3.7 [Retired]',
-    pubDate: '20250224',
-    description: 'High-performance model with early extended thinking. Retired February 19, 2026.',
-    contextWindow: 200000,
-    maxCompletionTokens: 64000,
-    interfaces: IF_4,
-    parameterSpecs: ANT_TOOLS,
-    chatPrice: { input: 3, output: 15, cache: { read: 0.30, write: 3.75, duration: 300 }, tools: ANT_PRICE_TOOLS },
-    benchmark: { cbaElo: 1371 }, // claude-3-7-sonnet-20250219
-    hidden: true, // retired
-    isLegacy: true,
-  },
+  // retired: 'claude-3-7-sonnet-20250219'
 
   // Claude 3.5 models
   // retired: 'claude-3-5-sonnet-20241022'
   // retired: 'claude-3-5-sonnet-20240620'
-  {
-    id: 'claude-3-5-haiku-20241022', // Retired | Deprecated: December 19, 2025 | Retired: February 19, 2026
-    label: 'Claude Haiku 3.5 [Retired]',
-    pubDate: '20241104',
-    description: 'Intelligence at blazing speeds. Retired February 19, 2026.',
-    contextWindow: 200000,
-    maxCompletionTokens: 8192,
-    interfaces: IF_4,
-    parameterSpecs: ANT_TOOLS,
-    chatPrice: { input: 0.80, output: 4.00, cache: { read: 0.08, write: 1.00, duration: 300 }, tools: ANT_PRICE_TOOLS },
-    benchmark: { cbaElo: 1323 }, // claude-3-5-haiku-20241022
-    hidden: true, // retired
-    isLegacy: true,
-  },
+  // retired: 'claude-3-5-haiku-20241022'
 
   // Claude 3 models
   // retired: 'claude-3-opus-20240229' - Retired January 5, 2026
@@ -755,11 +724,18 @@ export namespace AnthropicWire_API_Models_List {
     image_input: _Supported_schema.nullish(),
     pdf_input: _Supported_schema.nullish(),
     structured_outputs: _Supported_schema.nullish(),
+    // 2026-10-06: whether the model accepts the server tools; the top-level `code_execution` above is programmatic tool calling
+    server_tools: z.object({
+      supported: z.boolean(),
+      code_execution: _Supported_schema.nullish(),
+      web_search: _Supported_schema.nullish(),
+    }).nullish(),
     thinking: z.object({
       supported: z.boolean(),
       types: z.object({
         enabled: _Supported_schema.nullish(),
         adaptive: _Supported_schema.nullish(),
+        disabled: _Supported_schema.nullish(), // 2026-10-05: accepts `thinking: {type: 'disabled'}` (Sonnet 5.5: false, it takes 'between_tools')
       }).nullish(),
     }).nullish(),
   });
@@ -770,6 +746,7 @@ export namespace AnthropicWire_API_Models_List {
     id: z.string(),
     display_name: z.string(),
     created_at: z.string(),
+    line: z.string().nullish(), // 2026-10-01: model line, e.g. 'opus', 'haiku'; null for none
     // expanded fields (2026-04) - per API docs: `number | null`
     max_input_tokens: z.number().nullish(),
     max_tokens: z.number().nullish(),
@@ -792,7 +769,7 @@ export function llmsAntValidateModelDefs_DEV(availableModels: AnthropicWire_API_
   if (DEV_DEBUG_ANTHROPIC_MODELS) {
     llmDevCheckModels_DEV('Anthropic', availableModels.map(m => m.id), hardcodedAnthropicModels.map(m => m.id), {
       // deliberate keeps: invite-only Mythos 5.1/5 + retired ids still served by Bedrock/OpenRouter (file header rule)
-      ignoreStale: ['claude-mythos-5-1', 'claude-mythos-5', 'claude-opus-4-1-20250805', 'claude-opus-4-20250514', 'claude-sonnet-4-20250514', 'claude-3-7-sonnet-20250219', 'claude-3-5-haiku-20241022', 'claude-3-haiku-20240307'],
+      ignoreStale: ['claude-mythos-5-1', 'claude-mythos-5', 'claude-opus-4-1-20250805', 'claude-sonnet-4-20250514', 'claude-3-haiku-20240307'],
     });
     _llmsAntCheckApiCapabilities_DEV(availableModels);
     _llmsAntCheckInfSpeedTiers_DEV();
@@ -888,9 +865,9 @@ export function llmsAntCreatePlaceholderModel(model: AnthropicWire_API_Models_Li
 
   // derive thinking params
   if (caps?.thinking?.supported) {
-    // Adaptive thinking (4.6+) - force adaptive mode
+    // Adaptive thinking (4.6+) - adaptive on; a visible Thinking switch where 'disabled' is accepted (the editor hides xhigh/max when off)
     if (caps.thinking.types?.adaptive?.supported)
-      parameterSpecs.push({ paramId: 'llmVndAntThinkingBudget', hidden: true, initialValue: -1 });
+      parameterSpecs.push({ paramId: 'llmVndAntThinkingBudget', hidden: !caps.thinking.types.disabled?.supported, initialValue: -1 });
     // Classic extended thinking
     else if (caps.thinking.types?.enabled?.supported)
       parameterSpecs.push({ paramId: 'llmVndAntThinkingBudget' });
@@ -900,7 +877,8 @@ export function llmsAntCreatePlaceholderModel(model: AnthropicWire_API_Models_Li
   // Note: 1M context is GA for recent Anthropic models - we do NOT add the `llmVndAnt1MContext` opt-in
   // for unknown models. If a 0-day model still requires the beta header (rare now), users can hit it
   // through a hardcoded definition instead.
-  parameterSpecs.push(...ANT_TOOLS);
+  if (caps?.server_tools?.supported !== false)
+    parameterSpecs.push(...ANT_TOOLS);
 
   const maxInputTokens = model.max_input_tokens;
   const createdAt = model.created_at ? new Date(model.created_at) : undefined;

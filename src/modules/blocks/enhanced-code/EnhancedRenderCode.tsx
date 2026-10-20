@@ -2,6 +2,7 @@ import * as React from 'react';
 
 import type { SxProps } from '@mui/joy/styles/types';
 import { Box, ColorPaletteProp, IconButton, Typography } from '@mui/joy';
+import BarChartIcon from '@mui/icons-material/BarChart';
 import CodeIcon from '@mui/icons-material/Code';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 
@@ -9,8 +10,8 @@ import type { ContentScaling } from '~/common/app.theme';
 import { ExpanderControlledBox } from '~/common/components/ExpanderControlledBox';
 import { TooltipOutlined } from '~/common/components/TooltipOutlined';
 
+import { BLOCK_CODE_FALLBACK_TITLE, BLOCK_CODE_VND_AGI_CHARTJS, RenderCodeMemo } from '../code/RenderCode';
 import { EnhancedRenderCodeMenu } from './EnhancedRenderCodeMenu';
-import { RenderCodeMemo } from '../code/RenderCode';
 import { enhancedCodePanelTitleTooltipSx, RenderCodePanelFrame } from '../code/RenderCodePanelFrame';
 import { getCodeCollapseManager } from './codeCollapseManager';
 import { useLiveFilePatch } from './livefile-patch/useLiveFilePatch';
@@ -49,6 +50,8 @@ export function EnhancedRenderCode(props: {
   initialRenderHTML?: boolean,
   noCopyButton?: boolean,
   optimizeLightweight?: boolean,
+  onDeleteContainingCodeBlock?: (code: string, semiStableId: string | undefined) => void;
+  onReattachAsFile?: (file: File) => void;
   onReplaceInCode?: (search: string, replace: string) => boolean;
   codeSx?: SxProps,
   // enhanced props
@@ -87,6 +90,11 @@ export function EnhancedRenderCode(props: {
     setIsCodeCollapsed(c => !c);
     handleCloseContextMenu();
   }, [handleCloseContextMenu]);
+
+  const { onDeleteContainingCodeBlock } = props;
+  const handleDeleteContainingCodeBlock = React.useCallback((code: string) => {
+    onDeleteContainingCodeBlock?.(code, props.semiStableId);
+  }, [onDeleteContainingCodeBlock, props.semiStableId]);
 
   const handleToggleContextMenu = React.useCallback((event: React.MouseEvent<HTMLElement>) => {
     event.preventDefault(); // added for the Right mouse click (to prevent the menu)
@@ -148,22 +156,33 @@ export function EnhancedRenderCode(props: {
 
   const headerRow = React.useMemo(() => {
     if (props.frameless) return null;
-    const Icon = CodeIcon;
+    const isChart = props.title === BLOCK_CODE_VND_AGI_CHARTJS;
+    const Icon = (isChart && !isCodeCollapsed) ? BarChartIcon : CodeIcon;
     return <ERCHeader>
       {/* Icon and Title */}
       <TooltipOutlined placement='top-start' color='neutral' title={headerTooltipContents}>
         <Box sx={_styles.headerTitle}>
-          <Icon
-            aria-hidden
+          <IconButton
+            aria-label={isCodeCollapsed ? 'Expand code block' : 'Collapse code block'}
+            aria-expanded={!isCodeCollapsed}
+            size='sm'
+            variant={isCodeCollapsed ? 'outlined' : 'soft'}
             onClick={handleToggleCodeCollapse}
             sx={{
-              transform: isCodeCollapsed ? 'rotate(-90deg)' : 'none',
-              transition: 'transform 0.2s cubic-bezier(.17,.84,.44,1)',
-              cursor: 'pointer',
+              ml: -0.5,
+              backgroundColor: 'transparent',
+              '&:hover': { backgroundColor: 'background.popup' },
             }}
-          />
-          <Typography level={'title-sm'} className='agi-ellipsize'>
-            {props.title || 'Code'}
+          >
+            <Icon sx={{
+              transform: (isCodeCollapsed && !isChart) ? 'rotate(-90deg)' : 'none',
+              transition: 'transform 0.2s cubic-bezier(.17,.84,.44,1)',
+            }} />
+          </IconButton>
+          <Typography level={!isChart ? 'title-sm' : 'body-sm'} className='agi-ellipsize'>
+            {isChart ? 'Chart ' + (props.isPartial ? '.'.repeat(Math.round(props.code.length / 100) % 4) : '')
+              : props.title === 'markdown' ? ''
+                : props.title || BLOCK_CODE_FALLBACK_TITLE}
           </Typography>
         </Box>
       </TooltipOutlined>
@@ -173,6 +192,7 @@ export function EnhancedRenderCode(props: {
 
       {/* Menu Options button */}
       <IconButton
+        aria-label='Code block options'
         size='sm'
         onClick={handleToggleContextMenu}
         // onContextMenu={handleToggleContextMenu} // NOTE: disabled because onContextMenu prevents */ClickAwayListeners
@@ -182,22 +202,7 @@ export function EnhancedRenderCode(props: {
       </IconButton>
 
     </ERCHeader>;
-  }, [handleToggleCodeCollapse, handleToggleContextMenu, headerTooltipContents, isCodeCollapsed, liveFileButton, props.frameless, props.title]);
-
-  // const toolbarRow = React.useMemo(() => <>
-  //   {props.onLiveFileCreate && (
-  //     <Button
-  //       size='sm'
-  //       variant='outlined'
-  //       color='neutral'
-  //       startDecorator={<LiveHelpIcon />}
-  //       onClick={props.onLiveFileCreate}
-  //     >
-  //       Create Live File
-  //     </Button>
-  //   )}
-  //   {/* Add more toolbar items here */}
-  // </>, [props.onLiveFileCreate]);
+  }, [handleToggleCodeCollapse, handleToggleContextMenu, headerTooltipContents, isCodeCollapsed, liveFileButton, props.code.length, props.frameless, props.isPartial, props.title]);
 
 
   // styles
@@ -237,6 +242,7 @@ export function EnhancedRenderCode(props: {
           initialRenderHTML={props.initialRenderHTML}
           noCopyButton={props.noCopyButton}
           optimizeLightweight={props.optimizeLightweight}
+          onReattachAsFile={props.onReattachAsFile}
           onReplaceInCode={props.onReplaceInCode}
           renderHideTitle={!props.frameless /* the header shows it, when there is one */}
           sx={props.frameless ? framelessCodeSx : patchedCodeSx}
@@ -250,6 +256,7 @@ export function EnhancedRenderCode(props: {
           code={props.code} title={props.title}
           onClose={handleCloseContextMenu}
           isCollapsed={isCodeCollapsed}
+          onDeleteContainingCodeBlock={!onDeleteContainingCodeBlock || props.isPartial ? undefined : handleDeleteContainingCodeBlock}
           onToggleCollapse={handleToggleCodeCollapse}
         />
       )}

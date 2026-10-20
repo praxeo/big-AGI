@@ -1,3 +1,4 @@
+import type { Immutable } from '~/common/types/immutable.types';
 import type { LiveFileId } from '~/common/livefile/liveFile.types';
 import { agiId } from '~/common/util/idUtils';
 import { ellipsizeMiddle, humanReadableHyphenated } from '~/common/util/textUtils';
@@ -90,7 +91,10 @@ type _DMessageFragmentWrapper<TFragment, TPart extends { pt: string }> = {
   ft: TFragment;
   fId: DMessageFragmentId;
   part: TPart;
-  originId?: string;                  // optional, for multi-model, identifies which actor produced this fragment
+  originId?:
+    | 'cha-per-re-um-pre' | 'cha-per-re-um-post' // see DPersona.appChat.DPersonaChatReinforcement
+    | 'cha-live-feed-frame' // camera/screen frame attachments, see sampleLiveFeedsAsFragments
+    | (string & {}); // optional, for multi-model, identifies which actor produced this fragment
   vendorState?: DMessageFragmentVendorState; // optional vendor-specific protocol state (opaque, lossy-safe)
 }
 
@@ -604,7 +608,7 @@ function _createSentinelFragment(): _SentinelFragment {
 }
 
 
-export function duplicateDMessageFragments(fragments: Readonly<DMessageFragment[]>, skipVoid: boolean): DMessageFragment[] {
+export function duplicateDMessageFragments(fragments: Immutable<DMessageFragment[]>, skipVoid: boolean): DMessageFragment[] {
   return !skipVoid ? fragments.map(_duplicateFragment)
     : fragments.map(_duplicateFragment).filter(f => f.ft !== 'void');
 }
@@ -614,7 +618,7 @@ export function duplicateDMessageFragments(fragments: Readonly<DMessageFragment[
  * - Preserved: originId, vendorState, mutability
  * - Cleared: fId (new ID), identity (per spec: "removed on duplication (new edit)")
  */
-function _duplicateFragment(fragment: DMessageFragment): DMessageFragment {
+function _duplicateFragment(fragment: Immutable<DMessageFragment>): DMessageFragment {
   switch (fragment.ft) {
     case 'content':
       return _carryMeta(fragment, _createContentFragment(_duplicate_Part(fragment.part)));
@@ -728,7 +732,7 @@ function _create_Sentinel_Part(): _SentinelPart {
   return { pt: '_pt_sentinel' };
 }
 
-function _duplicate_Part<TPart extends (DMessageContentFragment | DMessageAttachmentFragment | DMessageVoidFragment)['part']>(part: TPart): TPart {
+function _duplicate_Part<TPart extends (DMessageContentFragment | DMessageAttachmentFragment | DMessageVoidFragment)['part']>(part: Immutable<TPart>): TPart {
   const pt = part.pt;
   switch (pt) {
     case 'doc':
@@ -828,7 +832,7 @@ export function createDMessageDataInlineText(text: string, mimeType?: string): D
   return { idt: 'text', text, mimeType };
 }
 
-function _duplicate_InlineData(data: DMessageDataInline): DMessageDataInline {
+function _duplicate_InlineData(data: Immutable<DMessageDataInline>): DMessageDataInline {
   switch (data.idt) {
     case 'text':
       return createDMessageDataInlineText(data.text, data.mimeType);
@@ -846,7 +850,7 @@ function _createDMessageDataRefUrl(url: string): Extract<DMessageDataRef, { reft
   return { reftype: 'url', url };
 }
 
-function _duplicate_DataReference(ref: DMessageDataRef): DMessageDataRef {
+function _duplicate_DataReference(ref: Immutable<DMessageDataRef>): DMessageDataRef {
   switch (ref.reftype) {
     case 'dblob':
       return createDMessageDataRefDBlob(ref.dblobAssetId, ref.mimeType, ref.bytesSize);
@@ -873,6 +877,30 @@ export function fragmentsSetOriginId(fragments: ReadonlyArray<Readonly<DMessageF
 
   // shallow-copy + set origin
   return fragments.map(fragment => ({ ...fragment, originId: originId }));
+}
+
+/** True when no actor stamped an originId - in user messages, the fragments the user authored. */
+export function isUnstampedFragment(fragment: Immutable<DMessageFragment>): boolean {
+  return !('originId' in fragment && fragment.originId);
+}
+
+export function reorderFragments<T extends DMessageFragment>(unsortedFragments: ReadonlyArray<T>, reorderedIds: DMessageFragmentId[], _placement: 'end'): T[] {
+
+  // quick lookup map
+  const fragmentMap = new Map<DMessageFragmentId, T>();
+  unsortedFragments.forEach(fragment => fragmentMap.set(fragment.fId, fragment));
+
+  // ensure existance in the new order
+  reorderedIds = reorderedIds.filter(id => fragmentMap.has(id));
+
+  // fragments not in the reordering operation
+  const remainingFragments = unsortedFragments.filter(({ fId }) => !reorderedIds.includes(fId));
+
+  // 1. prepend the remaining fragments, 2. then the reordered fragments
+  return [
+    ...remainingFragments,
+    ...reorderedIds.map(id => fragmentMap.get(id)!),
+  ];
 }
 
 export function splitFragmentsByType(fragments: DMessageFragment[]) {
