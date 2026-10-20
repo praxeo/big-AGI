@@ -60,9 +60,10 @@ import { openAIInjectVariants, openAIModelFilter, openAIModelToModelDescription,
 import { sakanaAIModelsToModelDescriptions } from './openai/models/sakanaai.models';
 import { perplexityHardcodedModelDescriptions, perplexityInjectVariants } from './openai/models/perplexity.models';
 import { togetherAIModelsToModelDescriptions } from './openai/models/together.models';
-import { unslothAttachServerStatus, unslothHeuristic, unslothModelsToModelDescriptions, unslothStatusFrom } from './openai/models/unsloth.models'; // [praxeo fork]
 import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.models';
 import { zaiCuratedModelDescriptions, zaiDiscoverModels, zaiModelSort } from './openai/models/zai.models';
+
+import { unslothAttachServerStatus, unslothHeuristic, unslothModelsToModelDescriptions, unslothStatusFrom } from './openai/models/unsloth.models'; // [praxeo fork]
 
 
 // -- Dispatch types --

@@ -1,6 +1,5 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 import { ortWebToolsToAixModel } from '~/modules/llms/vendors/openrouter/openrouter.webtools';
-import { unslothToAixModel } from '~/modules/llms/vendors/openai/openai.unsloth'; // [praxeo fork]
 
 import { vertexLinksAutoResolveFragments } from '~/modules/google/vertexai.client';
 
@@ -36,6 +35,8 @@ import { aixClassifyStreamingError } from './aix.client.errors';
 import { aixClientDebuggerGetRBO, getAixDebuggerNoStreaming } from './debugger/memstore-aix-client-debugger';
 import { createClientAnthropicFileInlineTransform } from './aix.client.transform-antFileInline';
 import { withDecimator } from './withDecimator';
+
+import { unslothToAixModel } from '~/modules/llms/vendors/openai/openai.unsloth'; // [praxeo fork]
 
 
 // configuration

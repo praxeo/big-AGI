@@ -37,12 +37,13 @@ import { RenderCodeSyntax } from './code-renderers/RenderCodeSyntax';
 import { heuristicIsBlockPureHTML } from '../danger-html/RenderDangerousHtml';
 import { heuristicIsCodePlantUML, plantUMLCodeCycleTheme, plantUMLCodeToggleDirection, RenderCodePlantUML } from './code-renderers/RenderCodePlantUML';
 import { heuristicIsSVGCode, RenderCodeSVG } from './code-renderers/RenderCodeSVG';
-import { RenderCodeStreamingPlain, streamingNoHighlight, streamingNoLanguage } from './code-renderers/RenderCodeStreamingPlain'; // [praxeo fork]
 import { useERCDiffContext } from '../enhanced-code/ERCDiffContext';
 import { useStickyCodeOverlay } from './useStickyCodeOverlay';
 
 // style for line-numbers
 import './RenderCode.css';
+
+import { RenderCodeStreamingPlain, streamingNoHighlight, streamingNoLanguage } from './code-renderers/RenderCodeStreamingPlain'; // [praxeo fork]
 
 
 // configuration
