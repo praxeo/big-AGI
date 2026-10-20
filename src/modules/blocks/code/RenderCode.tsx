@@ -37,6 +37,7 @@ import { RenderCodeSyntax } from './code-renderers/RenderCodeSyntax';
 import { heuristicIsBlockPureHTML } from '../danger-html/RenderDangerousHtml';
 import { heuristicIsCodePlantUML, plantUMLCodeCycleTheme, plantUMLCodeToggleDirection, RenderCodePlantUML } from './code-renderers/RenderCodePlantUML';
 import { heuristicIsSVGCode, RenderCodeSVG } from './code-renderers/RenderCodeSVG';
+import { RenderCodeStreamingPlain, streamingNoHighlight, streamingNoLanguage } from './code-renderers/RenderCodeStreamingPlain'; // [praxeo fork]
 import { useERCDiffContext } from '../enhanced-code/ERCDiffContext';
 import { useStickyCodeOverlay } from './useStickyCodeOverlay';
 
@@ -110,12 +111,12 @@ const _DynamicPrism = React.lazy(async () => {
   const { highlightCode, inferCodeLanguage } = await import('~/modules/blocks/code/code-highlight/codePrism');
 
   return {
-    default: (props: RenderCodeBaseProps) => <RenderCodeImpl highlightCode={highlightCode} inferCodeLanguage={inferCodeLanguage} {...props} />,
+    default: (props: RenderCodeBaseProps) => <RenderCodeImpl highlightCode={props.isPartial ? streamingNoHighlight : highlightCode} inferCodeLanguage={props.isPartial ? streamingNoLanguage : inferCodeLanguage} {...props} />, // [praxeo fork] streaming: plain
   };
 });
 
 
-// Actual implementation of the code rendering
+// Actual implemetation of the code rendering
 
 const _styles = {
   renderCodecontainer: {
@@ -147,13 +148,6 @@ const _styles = {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-  },
-
-  streamingPlainPre: {
-    m: 0,
-    overflowX: 'auto',
-    whiteSpace: 'pre',
-    fontFamily: 'monospace',
   },
 } as const satisfies Record<string, SxProps>;
 
@@ -359,11 +353,11 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
 
   // heuristics for specialized rendering
 
-  const _tCode = code.trim();
+  const _tCode = blockIsPartial ? '' : code.trim(); // [praxeo fork] streaming: no HTML/SVG/PlantUML render
   const lcBlockTitle = blockTitle.trim().toLowerCase();
 
   const isHTMLCode = heuristicIsBlockPureHTML(_tCode);
-  const renderHTML = isHTMLCode && showHTML && !blockIsPartial;
+  const renderHTML = isHTMLCode && showHTML;
 
   // 'render-at-end' enables HTML at completion without updating state for other code blocks.
   const shouldAutoRenderHTML = isHTMLCode && props.initialRenderHTML === true;
@@ -378,30 +372,28 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
   const renderMermaid = isMermaidCode && showMermaid;
 
   const isPlantUMLCode = heuristicIsCodePlantUML(_tCode);
-  const renderPlantUML = isPlantUMLCode && showPlantUML && !blockIsPartial;
+  const renderPlantUML = isPlantUMLCode && showPlantUML;
 
   const isSVGCode = heuristicIsSVGCode(_tCode);
-  const renderSVG = isSVGCode && showSVG && !blockIsPartial;
+  const renderSVG = isSVGCode && showSVG;
   const canScaleSVG = renderSVG && _tCode.includes('viewBox="');
 
   const isChartJSCode = lcBlockTitle === BLOCK_CODE_VND_AGI_CHARTJS && !blockIsPartial;
   const renderChartJS = isChartJSCode && showChartJS;
 
   const renderSyntaxHighlight = !renderHTML && !renderMarkdown && !renderMermaid && !renderPlantUML && !renderSVG && !renderChartJS;
-  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || renderChartJS || blockIsPartial;
+  const cannotRenderLineNumbers = !renderSyntaxHighlight || showSoftWrap || renderChartJS || blockIsPartial; // [praxeo fork]
   const renderLineNumbers = !cannotRenderLineNumbers && ((showLineNumbers && uiComplexityMode !== 'minimal') || isFullscreen);
 
 
   // Language & Highlight (2-stages)
   const inferredCodeLanguage = React.useMemo(() => {
-    if (blockIsPartial)
-      return null;
     // shortcut - this mimics a similar path in inferCodeLanguage
     if (isHTMLCode)
       return 'html';
     // workhorse - could be slow, hence the memo
     return inferCodeLanguage(blockTitle, code);
-  }, [blockIsPartial, blockTitle, code, inferCodeLanguage, isHTMLCode]);
+  }, [blockTitle, code, inferCodeLanguage, isHTMLCode]);
 
 
   // Optimization 1: highlight decimation: max 6.6Hz during large partial streams. Flush on stop, even with an unclosed fence.
@@ -433,7 +425,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     // style
     p: isBorderless ? 0 : 1.5, // this block gets a thicker border (but we 'fullscreen' html in case there's no title)
     overflowX: 'auto', // ensure per-block x-scrolling
-    whiteSpace: blockIsPartial ? 'pre' : (showSoftWrap ? 'break-spaces' : 'pre'),
+    whiteSpace: showSoftWrap ? 'break-spaces' : 'pre',
 
     // layout
     display: 'flex',
@@ -449,10 +441,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     // lots more style, incl font, background, embossing, radius, etc.
     ...props.sx,
 
-    // patch the min height if we have the second row
-    // ...(hasExternalButtons ? { minHeight: '5.25rem' } : {}),
-
-  }), [blockIsPartial, isBorderless, isFullscreen, isRenderingDiagram, props.sx, showSoftWrap]);
+  }), [isBorderless, isFullscreen, isRenderingDiagram, props.sx, showSoftWrap]);
 
 
   // Keep the overlay stable across streamed code updates. Copy reads the latest code through codeRef.
@@ -590,14 +579,14 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
           </OverlayButton>
 
           {/* Soft Wrap toggle */}
-          {renderSyntaxHighlight && !blockIsPartial && (
+          {renderSyntaxHighlight && (
             <OverlayButton tooltip={noTooltips ? null : 'Wrap Lines'} disabled={!renderSyntaxHighlight} variant={(showSoftWrap && renderSyntaxHighlight) ? 'solid' : 'outlined'} onClick={() => setShowSoftWrap(!showSoftWrap)}>
               <WrapTextIcon />
             </OverlayButton>
           )}
 
           {/* Line Numbers toggle */}
-          {renderSyntaxHighlight && !blockIsPartial && uiComplexityMode !== 'minimal' && (
+          {renderSyntaxHighlight && uiComplexityMode !== 'minimal' && (
             <OverlayButton tooltip={noTooltips ? null : 'Line Numbers'} disabled={cannotRenderLineNumbers} variant={(renderLineNumbers && renderSyntaxHighlight) ? 'solid' : 'outlined'} onClick={() => setShowLineNumbers(!showLineNumbers)}>
               <NumbersRoundedIcon />
             </OverlayButton>
@@ -631,7 +620,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
 
     </Box></RCOverlay>
   ), [
-    blockIsPartial, cannotRenderLineNumbers, compareBaseSet, compareThisIsBase, enterFullscreen, exitFullscreen, fitScreen, handleCompareClicked,
+    cannotRenderLineNumbers, compareBaseSet, compareThisIsBase, enterFullscreen, exitFullscreen, fitScreen, handleCompareClicked,
     handleCopyToClipboard, handleHtmlRenderToggle, handleRenderHandleCopy, handleRenderHandleDownload,
     handleRenderHandleReattach, isChartJSCode, isFullscreen, isHTMLCode, isMdCode, isMermaidCode, isPlantUMLCode, isSVGCode,
     noTooltips, onReplaceInCode, overlayRef, props.noCopyButton, props.onReattachAsFile, renderChartJS, renderHTML,
@@ -672,6 +661,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
             Since this damages the 'fullscreen' operation, we restore it somehow.
         */}
         <span style={!isFullscreen ? undefined : _styles.fullscreenSyntaxFix}>
+          {blockIsPartial && <RenderCodeStreamingPlain code={code} />/* [praxeo fork] */}
           {/* Renders HTML, or inline SVG, inline plantUML rendered, or highlighted code */}
           {renderHTML ? <RenderCodeHtmlIFrame key={htmlReloadKey} htmlCode={code} isFullscreen={isFullscreen} />
             : renderMarkdown ? <RenderCodeMarkdown mdCode={code} />
@@ -679,22 +669,14 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
                 : renderSVG ? <RenderCodeSVG ref={renderHandleRef} svgCode={code} fitScreen={fitScreen} />
                   : renderPlantUML ? <RenderCodePlantUML ref={renderHandleRef} plantUMLCode={code} fitContainer={fitScreen} allowDetails={uiComplexityMode === 'extra'} onReplaceInCode={onReplaceInCode} />
                     : renderChartJS ? <RenderCodeChartJS ref={renderHandleRef} chartJSCode={code} onReplaceInCode={onReplaceInCode} />
-                      : blockIsPartial ? (
-                        <Box component='pre' sx={_styles.streamingPlainPre}>
-                          <Box component='code'>
-                            {code}
-                          </Box>
-                        </Box>
-                      ) : (
-                        <RCSyntaxHighlight
-                          code={throttledCodeForHighlight}
-                          inferredCodeLanguage={inferredCodeLanguage}
-                          renderLineNumbers={renderLineNumbers}
-                          presenterMode={isFullscreen}
-                          performSymbolHighlight={performSymbolHighlight}
-                          highlightCode={highlightCode}
-                        />
-                      )}
+                      : <RCSyntaxHighlight
+                        code={throttledCodeForHighlight}
+                        inferredCodeLanguage={inferredCodeLanguage}
+                        renderLineNumbers={renderLineNumbers}
+                        presenterMode={isFullscreen}
+                        performSymbolHighlight={performSymbolHighlight}
+                        highlightCode={highlightCode}
+                      />}
         </span>
 
       </Box>

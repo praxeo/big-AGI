@@ -1,10 +1,13 @@
 import * as z from 'zod/v4';
 
+import type { DebugWireLogger } from '~/server/wire';
 import type { OpenAIWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/openai.wiretypes';
+import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 
 import { DModelInterfaceV1, LLM_IF_HOTFIX_NoWebP, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
+import { OpenAIAccessSchema, OpenAIDialects, openAIAccess } from '../openai.access';
 
 
 /**
@@ -86,6 +89,33 @@ export const UNSLOTH_STATUS_KEY = '_unslothStatus' as const;
 export function unslothStatusFrom(response: unknown): UnslothWire_API_Status.Response | null {
   if (!response || typeof response !== 'object' || !(UNSLOTH_STATUS_KEY in response)) return null;
   return unslothParseStatus(response[UNSLOTH_STATUS_KEY]);
+}
+
+/**
+ * Called by the models-list dispatch on every OpenAI-compatible list (one line there, so upstream changes rarely conflict).
+ * The loaded model's reasoning controls are template-derived, not name-derived: read the server's own flags so we
+ * expose exactly the control it honors. Best-effort - on any failure the parser falls back to name heuristics.
+ * Only fires on a confirmed Unsloth server, so no other OpenAI-compatible host pays for the extra request.
+ */
+export async function unslothAttachServerStatus(
+  dialect: OpenAIDialects,
+  wireModels: OpenAIWire_API_Models_List.Response,
+  access: OpenAIAccessSchema,
+  signal: AbortSignal | undefined,
+  wire: DebugWireLogger | null,
+): Promise<OpenAIWire_API_Models_List.Response & { [UNSLOTH_STATUS_KEY]?: UnslothWire_API_Status.Response | null }> {
+  if (dialect !== 'openai' || !unslothHeuristic(wireModels?.data || []))
+    return wireModels;
+  try {
+    const { headers, url } = openAIAccess(access, null, UNSLOTH_API_PATHS.status);
+    wire?.logRequest('GET', url, headers);
+    const wireStatus = await fetchJsonOrTRPCThrow({ url, headers, name: 'OpenAI/Unsloth', signal });
+    wire?.logResponse(wireStatus);
+    return { ...wireModels, [UNSLOTH_STATUS_KEY]: unslothParseStatus(wireStatus) };
+  } catch (error) {
+    console.warn('[Unsloth] /v1/status probe failed, using name heuristics:', (error as Error)?.message || error);
+    return wireModels;
+  }
 }
 
 

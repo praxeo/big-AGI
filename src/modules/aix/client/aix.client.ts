@@ -1,5 +1,6 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 import { ortWebToolsToAixModel } from '~/modules/llms/vendors/openrouter/openrouter.webtools';
+import { unslothToAixModel } from '~/modules/llms/vendors/openai/openai.unsloth'; // [praxeo fork]
 
 import { vertexLinksAutoResolveFragments } from '~/modules/google/vertexai.client';
 
@@ -81,7 +82,6 @@ export function aixCreateModelFromLLMOptions(
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget,
     // llmVndMoonshotWebSearch,
     llmVndOaiReasoningMode, llmVndOaiRestoreMarkdown, llmVndOaiServiceTier, llmVndOaiVerbosity, llmVndOaiWebSearchContext, llmVndOaiWebSearchGeolocation, llmVndOaiImageGeneration, llmVndOaiCodeInterpreter,
-    llmVndUnslothThinking, llmVndUnslothWebSearch,
     llmVndOrtWebFetch, llmVndOrtWebSearch, llmVndOrtWebToolsAdvanced,
     llmVndPerplexityDateFilter, llmVndPerplexitySearchMode,
     llmVndXaiCodeExecution, llmVndXaiSearchInterval, llmVndXaiWebSearch, llmVndXaiXSearch, llmVndXaiXSearchHandles,
@@ -140,10 +140,6 @@ export function aixCreateModelFromLLMOptions(
     // Cross-provider unified options
     reasoningEffort: llmVndAntEffort ?? llmVndGemEffort ?? llmVndOaiEffort ?? llmVndMiscEffort, // strippable
 
-    // Unsloth - kept OUT of the unified effort field: it is a boolean template gate, not an effort level
-    ...(llmVndUnslothThinking ? { vndUnslothThinking: llmVndUnslothThinking } : {}),
-    ...(llmVndUnslothWebSearch === 'auto' ? { vndUnslothWebSearch: llmVndUnslothWebSearch } : {}),
-
     // Anthropic - (vndAntContainerId, vndAntTransformInlineFiles are set in the decorate function)
     ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget === -1 ? 'adaptive' as const : llmVndAntThinkingBudget } : {}),
     ...(llmVndAnt1MContext ? { vndAnt1MContext: llmVndAnt1MContext } : {}),
@@ -191,6 +187,9 @@ export function aixCreateModelFromLLMOptions(
     // Perplexity
     ...(llmVndPerplexityDateFilter ? { vndPerplexityDateFilter: llmVndPerplexityDateFilter } : {}),
     ...(llmVndPerplexitySearchMode ? { vndPerplexitySearchMode: llmVndPerplexitySearchMode } : {}),
+
+    // [praxeo fork] Unsloth (local server)
+    ...unslothToAixModel({ ...llmOptions, ...llmOptionOverrides }),
 
     // xAI
     ...(llmVndXaiCodeExecution === 'auto' ? { vndXaiCodeExecution: llmVndXaiCodeExecution } : {}),
