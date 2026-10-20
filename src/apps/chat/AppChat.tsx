@@ -34,13 +34,14 @@ import { getChatLLMId } from '~/common/stores/llms/store-llms';
 import { getConversation, getConversationSystemPurposeId, useConversation } from '~/common/stores/chat/store-chats';
 import { optimaActions, optimaOpenModels, optimaOpenPreferences, useOptimaChromeless } from '~/common/layout/optima/useOptima';
 import { useFolderStore } from '~/common/stores/folders/store-chat-folders';
+import { useChatFolderValidateId } from '~/common/stores/folders/hooks/useChatFolderValidateId';
 import { useIsMobile, useIsTallScreen } from '~/common/components/useMatchMedia';
 import { useLLM } from '~/common/stores/llms/llms.hooks';
 import { useModelDomain } from '~/common/stores/llms/hooks/useModelDomain';
 import { useOverlayComponents } from '~/common/layout/overlays/useOverlayComponents';
 import { useRouterQuery } from '~/common/app.routes';
 import { useUIComplexityIsMinimal } from '~/common/stores/store-ui';
-import { ChatPane } from './components/layout-pane/ChatPane';
+import { ChatPanelMemo } from './components/layout-panel/ChatPanel';
 import { ChatBarBeam } from './components/layout-bar/ChatBarBeam';
 import { ChatBarAltTitle } from './components/layout-bar/ChatBarAltTitle';
 import { ChatBarChat } from './components/layout-bar/ChatBarChat';
@@ -204,11 +205,7 @@ export function AppChat() {
 
   const { mayWork: capabilityHasT2I, mayEdit: capabilityHasT2IEdit } = useCapabilityTextToImage();
 
-  const activeFolderId = useFolderStore(({ enableFolders, folders }) => {
-    const activeFolderId = enableFolders ? _activeFolderId : null;
-    const activeFolder = activeFolderId ? folders.find(folder => folder.id === activeFolderId) : null;
-    return activeFolder?.id ?? null;
-  });
+  const activeFolderId = useChatFolderValidateId(_activeFolderId);
 
   // Composer Auto-hiding
   const isChromeless = useOptimaChromeless() && isMobile; // auto-hide on Chromeless too
@@ -480,7 +477,7 @@ export function AppChat() {
 
   const drawerContent = React.useMemo(() => !isDrawerOpen ? null :
       <ChatDrawerMemo
-        // isMobile={isMobile /* expensive as it undoes the memo; not passed anymore */}
+        isMobile={isMobile}
         activeConversationId={focusedPaneConversationId}
         activeFolderId={activeFolderId}
         chatPanesConversationIds={paneUniqueConversationIds}
@@ -493,24 +490,7 @@ export function AppChat() {
         onConversationsImportDialog={handleConversationImportDialog}
         setActiveFolderId={setActiveFolderId}
       />,
-    [activeFolderId, disableNewButton, focusedPaneConversationId, handleConversationBranch, handleConversationExport, handleConversationImportDialog, handleConversationNewInFocusedPane, handleDeleteConversations, handleOpenConversationInFocusedPane, isDrawerOpen, paneUniqueConversationIds],
-  );
-
-  const focusedChatPanelContent = React.useMemo(() => !focusedPaneConversationId ? null :
-      <ChatPane
-        isMobile={isMobile}
-        conversationId={focusedPaneConversationId}
-        disableItems={!focusedPaneConversationId || isFocusedChatEmpty}
-        hasConversations={hasConversations}
-        isMessageSelectionMode={isMessageSelectionMode}
-        isVerticalSplit={isMobile || isTallScreen}
-        onConversationBranch={handleConversationBranch}
-        onConversationClear={handleConversationReset}
-        onConversationFlatten={handleConversationFlatten}
-        // onConversationNew={handleConversationNewInFocusedPane}
-        setIsMessageSelectionMode={setIsMessageSelectionMode}
-      />,
-    [focusedPaneConversationId, handleConversationBranch, handleConversationFlatten, handleConversationReset, hasConversations, isFocusedChatEmpty, isMessageSelectionMode, isMobile, isTallScreen],
+    [activeFolderId, disableNewButton, focusedPaneConversationId, handleConversationBranch, handleConversationExport, handleConversationImportDialog, handleConversationNewInFocusedPane, handleDeleteConversations, handleOpenConversationInFocusedPane, isDrawerOpen, isMobile, paneUniqueConversationIds],
   );
 
 
@@ -620,7 +600,21 @@ export function AppChat() {
     {/* -> Toolbar, -> Drawer, -> Panel*/}
     <OptimaToolbarIn>{focusedBarContent}</OptimaToolbarIn>
     <OptimaDrawerIn>{drawerContent}</OptimaDrawerIn>
-    <OptimaPanelIn>{focusedChatPanelContent}</OptimaPanelIn>
+    <OptimaPanelIn>
+      <ChatPanelMemo
+        isMobile={isMobile}
+        conversationId={focusedPaneConversationId}
+        disableItems={!focusedPaneConversationId || isFocusedChatEmpty}
+        hasConversations={hasConversations}
+        isMessageSelectionMode={isMessageSelectionMode}
+        isVerticalSplit={isMobile || isTallScreen}
+        onConversationBranch={handleConversationBranch}
+        onConversationClear={handleConversationReset}
+        onConversationFlatten={handleConversationFlatten}
+        // onConversationNew={handleConversationNewInFocusedPane}
+        setIsMessageSelectionMode={setIsMessageSelectionMode}
+      />
+    </OptimaPanelIn>
 
     {liveSvgModeActive ? (
       <LiveSvgAnimator isMobile={isMobile} />

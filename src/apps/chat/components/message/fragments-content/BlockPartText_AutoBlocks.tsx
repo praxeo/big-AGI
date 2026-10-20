@@ -39,6 +39,7 @@ function BlockPartText_AutoBlocks(props: {
 
   inFlux: boolean,
 
+  onReattachAsFile?: (file: File) => void;
   onDoubleClick?: (event: React.MouseEvent) => void;
 
 }) {
@@ -83,10 +84,11 @@ function BlockPartText_AutoBlocks(props: {
       inputAsWordsDiff={props.inputAsWordsDiff}
       codeRenderVariant='enhanced' // can still be downgraded to 'outlined', e.g. for small snippets or given vnd types
       htmlRenderVariant={props.htmlRenderVariant}
-      textRenderVariant={props.disableMarkdownText ? 'text' : 'markdown'}
+      textRenderVariant={props.disableMarkdownText ? 'text' : props.messageRole === 'user' ? 'markdown-user' : 'markdown'}
       inFlux={props.inFlux}
       onDoubleClick={props.onDoubleClick}
       setText={!props.setEditedText ? undefined : handleSetText}
+      onReattachAsFile={props.onReattachAsFile}
     />
   );
 }

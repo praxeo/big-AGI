@@ -1,8 +1,7 @@
 import * as React from 'react';
 import { useShallow } from 'zustand/react/shallow';
 
-import { Box, Checkbox, IconButton, ListItem, ListItemButton, ListItemDecorator, MenuItem, Switch, Tooltip, Typography } from '@mui/joy';
-import AddIcon from '@mui/icons-material/Add';
+import { Box, Checkbox, ListItemButton, ListItemDecorator, MenuItem, Switch, Typography } from '@mui/joy';
 import ArchiveOutlinedIcon from '@mui/icons-material/ArchiveOutlined';
 import CleaningServicesOutlinedIcon from '@mui/icons-material/CleaningServicesOutlined';
 import CompressIcon from '@mui/icons-material/Compress';
@@ -14,16 +13,13 @@ import UnarchiveOutlinedIcon from '@mui/icons-material/UnarchiveOutlined';
 
 import type { DConversationId } from '~/common/stores/chat/chat.conversation';
 import { ChromelessItemButton } from '~/common/layout/optima/ChromelessItemButton';
-import { CodiconSplitHorizontal } from '~/common/components/icons/CodiconSplitHorizontal';
-import { CodiconSplitHorizontalRemove } from '~/common/components/icons/CodiconSplitHorizontalRemove';
-import { CodiconSplitVertical } from '~/common/components/icons/CodiconSplitVertical';
-import { CodiconSplitVerticalRemove } from '~/common/components/icons/CodiconSplitVerticalRemove';
 import { FormLabelStart } from '~/common/components/forms/FormLabelStart';
 import { OptimaPanelGroupedList, OptimaPanelGroupGutter } from '~/common/layout/optima/panel/OptimaPanelGroupedList';
 import { useChatStore } from '~/common/stores/chat/store-chats'; // may be replaced with a dedicated hook for the chat pane
 
 import { useChatShowSystemMessages } from '../../store-app-chat';
-import { panesManagerActions, usePaneDuplicateOrClose } from '../panes/store-panes-manager';
+import { ActionFolder } from './ActionFolder';
+import { WindowSplitControls } from './WindowSplitControls';
 
 
 function VariformPaneFrame() {
@@ -37,7 +33,9 @@ function VariformPaneFrame() {
 }
 
 
-export function ChatPane(props: {
+export const ChatPanelMemo = React.memo(ChatPanel);
+
+function ChatPanel(props: {
   isMobile: boolean,
   conversationId: DConversationId | null,
   disableItems: boolean,
@@ -52,7 +50,6 @@ export function ChatPane(props: {
 }): React.ReactNode {
 
   // external state
-  const { canAddPane, isMultiPane } = usePaneDuplicateOrClose();
   const [showSystemMessages, setShowSystemMessages] = useChatShowSystemMessages();
 
   const { isArchived, setArchived } = useChatStore(useShallow((state) => {
@@ -62,30 +59,6 @@ export function ChatPane(props: {
       setArchived: state.setArchived,
     };
   }));
-
-
-  // Window
-
-  const handleIncreaseMultiPane = React.useCallback((event?: React.MouseEvent) => {
-    event?.stopPropagation();
-
-    // create a new pane with the current conversation
-    // duplicateFocusedPane();
-
-    // create a new empty pane
-    panesManagerActions().insertEmptyAfterFocusedPane(true);
-
-    // load a brand new conversation inside
-    // FIXME: still testing this
-    // props.onConversationNew(true);
-  }, []);
-
-  const handleToggleMultiPane = React.useCallback((_event: React.MouseEvent) => {
-    if (isMultiPane)
-      panesManagerActions().removeNonFocusedPanes();
-    else
-      handleIncreaseMultiPane(undefined);
-  }, [handleIncreaseMultiPane, isMultiPane]);
 
 
   // Actions
@@ -117,50 +90,32 @@ export function ChatPane(props: {
   return <>
 
     {/* Window group */}
-    <OptimaPanelGroupedList title='Window'>
+    <OptimaPanelGroupedList title='Window' hideExpandedCheckbox persistentCollapsibleId='chat-window'>
 
-      <ListItem
-        endAction={!isMultiPane ? undefined : (
-          <Tooltip title='Add Another Split'>
-            <IconButton
-              size='sm'
-              variant='outlined'
-              disabled={!canAddPane}
-              onClick={handleIncreaseMultiPane}
-              sx={{ ml: 'auto', /*mr: '2px',*/ my: '-0.25rem' /* absorb the menuItem padding */ }}
-            >
-              <AddIcon />
-            </IconButton>
-          </Tooltip>
-        )}
-      >
-        <ListItemButton onClick={handleToggleMultiPane}>
-          <ListItemDecorator>{props.isVerticalSplit
-            ? (isMultiPane ? <CodiconSplitVerticalRemove /> : <CodiconSplitVertical />)
-            : (isMultiPane ? <CodiconSplitHorizontalRemove /> : <CodiconSplitHorizontal />)
-          }</ListItemDecorator>
-          {props.isVerticalSplit
-            ? (isMultiPane ? 'Unsplit' : 'Split Down')
-            : (isMultiPane ? 'Unsplit' : 'Split Right')}
-        </ListItemButton>
-      </ListItem>
+      <WindowSplitControls isVerticalSplit={props.isVerticalSplit} />
 
       {props.isMobile && <ChromelessItemButton />}
 
     </OptimaPanelGroupedList>
 
     {/* Chat Actions group */}
-    <OptimaPanelGroupedList title='Actions'>
+    <OptimaPanelGroupedList title='Actions' hideExpandedCheckbox persistentCollapsibleId='chat-actions'>
       {/* Use 2 columns */}
       <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr' }}>
 
         {/* Left column */}
-        <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', overflowX: 'hidden' /* for clipping folder long names */ }}>
 
-          <MenuItem disabled={props.disableItems} onClick={handleToggleArchive}>
-            <ListItemDecorator>{isArchived ? <UnarchiveOutlinedIcon /> : <ArchiveOutlinedIcon />}</ListItemDecorator>
-            {isArchived ? <b>Unarchive</b> : 'Archive'}
-          </MenuItem>
+          {/* [PROD] Not comfortable with Archive yet, so let's just give the option to 'unarchive' chats, and have that as the alternative to the Folder button */}
+          {isArchived ? (
+            // Archive / Unarchive button
+            <MenuItem disabled={props.disableItems} onClick={handleToggleArchive}>
+              <ListItemDecorator>{isArchived ? <UnarchiveOutlinedIcon /> : <ArchiveOutlinedIcon />}</ListItemDecorator>
+              {isArchived ? <b>Unarchive</b> : 'Archive'}
+            </MenuItem>
+          ) : (
+            <ActionFolder conversationId={props.conversationId} disabled={!props.conversationId} /* folder actions work on any existing conversation, unlike other actions that need non-empty chats */ />
+          )}
 
           <MenuItem disabled={props.disableItems} onClick={handleConversationBranch}>
             <ListItemDecorator><ForkRightIcon /></ListItemDecorator>
@@ -203,7 +158,7 @@ export function ChatPane(props: {
     </OptimaPanelGroupedList>
 
     {/* ... how do we name this? ... */}
-    <OptimaPanelGroupedList title='Persona'>
+    <OptimaPanelGroupedList title='Persona' hideExpandedCheckbox persistentCollapsibleId='chat-persona'>
       <ListItemButton disabled={props.disableItems} onClick={handleToggleSystemMessages}>
         <ListItemDecorator><SettingsSuggestOutlinedIcon /></ListItemDecorator>
         Show Instruction

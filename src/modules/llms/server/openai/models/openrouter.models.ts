@@ -35,9 +35,9 @@ const orModelFamilyOrder = [
   // Other major providers
   'mistralai/', 'meta-llama/', 'amazon/', 'cohere/',
   // Specialized/AI companies
-  'perplexity/', 'inclusionai/', 'inception/', 'arcee-ai/', 'thinkingmachines/', 'sakana/', 'upstage/', 'nex-agi/',
+  'perplexity/', 'inclusionai/', 'inception/', 'arcee-ai/', 'thinkingmachines/', 'sakana/', 'upstage/', 'nex-agi/', 'fireworks/',
   // Chinese majors (surfaced on OpenRouter directly)
-  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'baidu/', 'stepfun/', 'meituan/', 'kwaipilot/',
+  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'stepfun/', 'meituan/',
   // Research/open models
   'nvidia/', 'microsoft/', 'nousresearch/', 'ibm-granite/', 'poolside/', 'xiaomi/',
 ] as const;
@@ -329,7 +329,10 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       // would be a mislabel (no brain icon, but it reasons and bills for it): drop the spec so those models ship
       // as ONE always-thinking entry, matching their native defs. Revisit if the adapter learns to send an
       // explicit reasoning.enabled=false for the base variant - that would give Sonnet 5 a real non-thinking twin.
-      if (model.reasoning?.mandatory || model.reasoning?.default_enabled) {
+      // [2026-10-07] Haiku 5.5 also thinks by default through OR (probed: 48 reasoning tokens with no field), but OR lists it
+      // without `default_enabled`: a native visible Thinking switch (initialValue -1) carries the same fact, so trust it too.
+      const isNativeThinkingOnByDefault = !!antLookup?.parameterSpecs?.some(p => p.paramId === 'llmVndAntThinkingBudget' && p.initialValue === -1 && !p.hidden);
+      if (model.reasoning?.mandatory || model.reasoning?.default_enabled || isNativeThinkingOnByDefault) {
         const budgetIndex = parameterSpecs.findIndex(p => p.paramId === 'llmVndAntThinkingBudget');
         if (budgetIndex !== -1)
           parameterSpecs.splice(budgetIndex, 1);
@@ -389,7 +392,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       else if (modelIdUnaliased.startsWith('sakana/'))
         _mergeLookup(llmOrtSakLookup(llmRef));
       else if (modelIdUnaliased.startsWith('meta/'))
-        _mergeLookup(llmOrtMetaLookup(llmRef)); // Muse Spark; 'meta/muse-glimmer-30b' (open weights, not on api.meta.ai) falls through
+        _mergeLookup(llmOrtMetaLookup(llmRef)); // Muse Spark, Wonder, Spark Open; 'meta/muse-glimmer-30b' (open weights, not on api.meta.ai) falls through
 
       // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek/Sakana models get default reasoning effort if not inherited.
       // Checks llmVndOaiEffort too (else an inherited spec gets a 2nd control stacked); skips mandatory models,

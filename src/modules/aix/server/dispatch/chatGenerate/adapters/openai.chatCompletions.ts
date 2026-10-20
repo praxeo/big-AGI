@@ -175,7 +175,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
   // [2026-09-03, OpenAI] processing tier (native and OpenRouter - other compatible hosts do not know it)
   if (model.vndOaiServiceTier && (openAIDialect === 'openai' || openAIDialect === 'openrouter')) {
-    // [2026-09-29] 'ultrafast' is Responses-only on native Chat Completions (400); OpenRouter serves it on Astra (2026-10-06)
+    // [2026-09-29] 'ultrafast' is Responses-only on native Chat Completions (400); OpenRouter serves it
     if (model.vndOaiServiceTier === 'ultrafast' && openAIDialect === 'openai')
       throw new Error('OpenAI Chat Completions API does not support the Ultrafast service tier (Responses API only)');
     payload.service_tier = model.vndOaiServiceTier;
@@ -1006,10 +1006,10 @@ function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsP
     case 'auto':
       return 'auto';
     case 'any':
-      // [Moonshot, 2026-08-17] 'required' 400s while thinking is on (k2.5/k2.6/k2.7-code, probed); K3, moonshot-v1
+      // [Moonshot, 2026-08-17] 'required' 400s while thinking is on (k2.5/k2.6/k2.7-code, probed); K3
       // and thinking-off requests accept it. Degrade to 'auto' rather than hard-fail.
       if (openAIDialect === 'moonshot' && model.reasoningEffort !== 'none'
-        && !(model.id === 'k3' || model.id.startsWith('kimi-k3') || model.id.startsWith('moonshot-v1')))
+        && !(model.id === 'k3' || model.id.startsWith('kimi-k3')))
         return 'auto';
       // [OpenRouter -> Anthropic, 2026-09-01] Fable/Mythos 5.x reject forced tool use and OR relays the 400 ('tool_choice: type "tool"
       // and "any" are not supported for this model.', probed on claude-fable-5.1; Fable 5 400s with the older wording). Degrade to
