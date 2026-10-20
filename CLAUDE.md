@@ -26,7 +26,7 @@ For AI protocol development (model listing, live API requests/responses, paramet
 
 ### Git/GitHub remotes
 
-The `gh` command is available to interact with GitHub from the terminal.
+The `gh` command is available to interact with GitHub from the terminal. This is the praxeo fork: read `FORK.md` before syncing with upstream or editing upstream files.
 - `opensource` -> `enricoros/big-AGI` (public, default branch: `main`, MIT) - community issues/PRs/releases
 - `private` -> `big-agi/big-agi-private` (private, default branch: `dev`) - main dev repo with `dev`->`staging`->`prod` pipeline
 - **Always use `git mv` instead of `mv`** when renaming or moving files - preserves git history tracking

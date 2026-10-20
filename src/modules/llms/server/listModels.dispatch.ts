@@ -60,9 +60,10 @@ import { openAIInjectVariants, openAIModelFilter, openAIModelToModelDescription,
 import { sakanaAIModelsToModelDescriptions } from './openai/models/sakanaai.models';
 import { perplexityHardcodedModelDescriptions, perplexityInjectVariants } from './openai/models/perplexity.models';
 import { togetherAIModelsToModelDescriptions } from './openai/models/together.models';
-import { UNSLOTH_API_PATHS, UNSLOTH_STATUS_KEY, unslothHeuristic, unslothModelsToModelDescriptions, unslothParseStatus, unslothStatusFrom } from './openai/models/unsloth.models';
 import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.models';
 import { zaiCuratedModelDescriptions, zaiDiscoverModels, zaiModelSort } from './openai/models/zai.models';
+
+import { unslothAttachServerStatus, unslothHeuristic, unslothModelsToModelDescriptions, unslothStatusFrom } from './openai/models/unsloth.models'; // [praxeo fork]
 
 
 // -- Dispatch types --
@@ -85,7 +86,7 @@ function createListModelsDispatch<T>(dispatch: ListModelsDispatch<T>): ListModel
 
 export async function listModelsRunDispatch(access: AixAPI_Access, signal?: AbortSignal): Promise<ModelDescriptionSchema[]> {
   const dispatch = _listModelsCreateDispatch(access, signal);
-  const wireModels = await dispatch.fetchModels();
+  const wireModels = await unslothAttachServerStatus(access, await dispatch.fetchModels(), signal); // [praxeo fork] no-op unless an Unsloth server
   const models = dispatch.convertToDescriptions(wireModels)
     .map(llmsAutoImplyInterfaces) // auto-inject implied IFs from parameterSpecs
     .map(llmsWireCompatCacheTag); // legacy cache tag for older clients - TODO: delete after 2026-12-03
@@ -435,25 +436,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
           if (dialect === 'openai' && minimaxHeuristic(oaiUrl))
             return _fetchModelsListCuratedFirst('MiniMax', fetchList);
 
-          const wireModels = await fetchList();
-
-          // [Unsloth] the loaded model's reasoning controls are template-derived, not name-derived: read the
-          // server's own flags so we expose exactly the control it honors. Best-effort - on any failure the
-          // parser falls back to name heuristics. Only fires on a confirmed Unsloth server, so no other
-          // OpenAI-compatible host pays for the extra request.
-          if (dialect === 'openai' && unslothHeuristic(wireModels?.data || [])) {
-            try {
-              const { headers: unslothHeaders, url: unslothUrl } = openAIAccess(access, null, UNSLOTH_API_PATHS.status);
-              _wire?.logRequest('GET', unslothUrl, unslothHeaders);
-              const wireStatus = await fetchJsonOrTRPCThrow({ url: unslothUrl, headers: unslothHeaders, name: 'OpenAI/Unsloth', signal });
-              _wire?.logResponse(wireStatus);
-              return { ...wireModels, [UNSLOTH_STATUS_KEY]: unslothParseStatus(wireStatus) };
-            } catch (error) {
-              console.warn('[Unsloth] /v1/status probe failed, using name heuristics:', (error as Error)?.message || error);
-            }
-          }
-
-          return wireModels;
+          return fetchList();
         },
 
         // OpenAI models conversions: dependent on the dialect
@@ -575,7 +558,7 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               if (llmapiHeuristic(oaiUrl))
                 return llmapiModelsToModelDescriptions(openAIWireModelsResponse);
 
-              // [Unsloth] local Studio/CLI server - detected by the owned_by marker stamped on every model entry
+              // [praxeo fork] [Unsloth] local Studio/CLI server - detected by the owned_by marker stamped on every model entry
               if (unslothHeuristic(maybeModels))
                 return unslothModelsToModelDescriptions(maybeModels, unslothStatusFrom(openAIWireModelsResponse));
 

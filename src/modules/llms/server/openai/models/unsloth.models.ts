@@ -1,10 +1,14 @@
 import * as z from 'zod/v4';
 
+import type { AixAPI_Access } from '~/modules/aix/server/api/aix.wiretypes';
 import type { OpenAIWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/openai.wiretypes';
+import { createDebugWireLogger } from '~/server/wire';
+import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 
 import { DModelInterfaceV1, LLM_IF_HOTFIX_NoWebP, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 
 import type { ModelDescriptionSchema } from '../../llm.server.types';
+import { openAIAccess } from '../openai.access';
 
 
 /**
@@ -86,6 +90,29 @@ export const UNSLOTH_STATUS_KEY = '_unslothStatus' as const;
 export function unslothStatusFrom(response: unknown): UnslothWire_API_Status.Response | null {
   if (!response || typeof response !== 'object' || !(UNSLOTH_STATUS_KEY in response)) return null;
   return unslothParseStatus(response[UNSLOTH_STATUS_KEY]);
+}
+
+/**
+ * Called by listModelsRunDispatch on every fetched list (one line there, so upstream changes rarely conflict).
+ * The loaded model's reasoning controls are template-derived, not name-derived: read the server's own flags so we
+ * expose exactly the control it honors. Best-effort - on any failure the parser falls back to name heuristics.
+ * Only fires on a confirmed Unsloth server, so no other host pays for the extra request.
+ */
+export async function unslothAttachServerStatus<TWireModels>(access: AixAPI_Access, wireModels: TWireModels, signal: AbortSignal | undefined): Promise<TWireModels> {
+  if (access.dialect !== 'openai') return wireModels;
+  const data = (wireModels as { data?: unknown } | null)?.data;
+  if (!Array.isArray(data) || !unslothHeuristic(data)) return wireModels;
+  const wire = createDebugWireLogger('LLMs');
+  try {
+    const { headers, url } = openAIAccess(access, null, UNSLOTH_API_PATHS.status);
+    wire?.logRequest('GET', url, headers);
+    const wireStatus = await fetchJsonOrTRPCThrow({ url, headers, name: 'OpenAI/Unsloth', signal });
+    wire?.logResponse(wireStatus);
+    return { ...wireModels, [UNSLOTH_STATUS_KEY]: unslothParseStatus(wireStatus) };
+  } catch (error) {
+    console.warn('[Unsloth] /v1/status probe failed, using name heuristics:', (error as Error)?.message || error);
+    return wireModels;
+  }
 }
 
 

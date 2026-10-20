@@ -1,8 +1,8 @@
 > [!NOTE]
-> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), rebased on upstream `main`. 
+> Fork of [enricoros/big-AGI](https://github.com/enricoros/big-AGI), merged with upstream `main`. Customizations and the sync procedure: [FORK.md](FORK.md).
 > - Voice input: Tried many, defaults to ElevenLabs (`scribe_v2`) STT engines (`app/api/stt/*`, `src/.../speechrecognition/*`)
-> - Clinical personas in `src/data.ts` (MDM Helper, HPI Helper, Clinical Assistant) 
-> - Fireworks: dynamic serverless catalog + per-model `reasoning_effort`
+> - Clinical personas in `src/data.ts` (MDM Helper v2/v3, HPI Helper, Wound Care Note, Clinical Assistant)
+> - Unsloth local server: model listing, Thinking and Web Search controls
 > - Code blocks: HTML/SVG/PlantUML render gating, plain text while streaming to avoid crashes on my system
 
 <div align="center">

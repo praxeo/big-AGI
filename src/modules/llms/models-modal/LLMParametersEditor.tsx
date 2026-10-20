@@ -18,6 +18,8 @@ import { webGeolocationRequest } from '~/common/util/webGeolocationUtils';
 import { AnthropicSkillsConfig } from './AnthropicSkillsConfig';
 import { OpenRouterWebToolsConfig } from './OpenRouterWebToolsConfig';
 
+import { UnslothParametersConfig } from './UnslothParametersConfig'; // [praxeo fork]
+
 
 const _UNSPECIFIED = '_UNSPECIFIED' as const;
 
@@ -60,20 +62,6 @@ const _miscEffortOptions = [
   { value: _UNSPECIFIED, label: 'Default', description: 'Model Default' } as const,
 ] as const;
 
-const _unslothWebSearchOptions = [
-  { value: 'auto', label: 'On', description: 'Model may search the web to ground answers' } as const,
-  { value: _UNSPECIFIED, label: 'Off', description: 'No server-side tools (default)' } as const,
-] as const;
-
-const _unslothThinkingOptions = [
-  { value: 'max', label: 'Max', description: 'Hardest thinking' } as const,
-  { value: 'high', label: 'High', description: 'Deep reasoning' } as const,
-  { value: 'medium', label: 'Medium', description: 'Balanced' } as const,
-  { value: 'low', label: 'Low', description: 'Light thinking' } as const,
-  { value: 'none', label: 'Off', description: 'Answer directly' } as const,
-  { value: _UNSPECIFIED, label: 'Default', description: 'Model default' } as const,
-] as const;
-
 /** Registry values of K absent from an options table - `never` when the table lists them all */
 type _OptionsMissingValues<K extends DModelParameterId, T extends { value: string }> = Exclude<DModelParameterValue<K>, T['value']>;
 
@@ -93,7 +81,7 @@ export function llmParametersFilterEffortOptions<K extends DModelParameterId, T 
   const filtered = options.filter(o => o.value === _UNSPECIFIED || allowedSet.has(o.value));
   // 'Thinking' label nuance: on a graded model (low/max present) 'high' is a rung on the scale -> 'High';
   // on a pure toggle ({none,high}, e.g. Qwen/GLM/Nemotron) it just means enabled -> 'On'
-  if ((registryKey === 'llmVndMiscEffort' || registryKey === 'llmVndUnslothThinking') && !allowedSet.has('low') && !allowedSet.has('max'))
+  if (registryKey === 'llmVndMiscEffort' && !allowedSet.has('low') && !allowedSet.has('max'))
     return filtered.map(o => o.value === 'high' ? { ...o, label: 'On' } as T : o);
   return filtered;
 }
@@ -276,7 +264,7 @@ export function LLMParametersEditor(props: {
 
 
   // enum options: one memo for all vendors, filtered to each model's allowed values (via parameterSpec.enumValues)
-  const { antEffortOptions, gemEffortOptions, gemAspectRatioOptions, gemImageSizeOptions, oaiEffortOptions, miscEffortOptions, oaiServiceTierOptions, unslothThinkingOptions, oaiWebSearchOptions } = React.useMemo(() => {
+  const { antEffortOptions, gemEffortOptions, gemAspectRatioOptions, gemImageSizeOptions, oaiEffortOptions, miscEffortOptions, oaiServiceTierOptions, oaiWebSearchOptions } = React.useMemo(() => {
     // web search: filter to the model's allowed levels; when restricted to a single level (e.g. Sakana's
     // bare on/off web_search), relabel that lone level as a plain "On" (the "Off" entry is kept as-is).
     const ws = llmParametersFilterEffortOptions(_webSearchContextOptions, modelParamSpec['llmVndOaiWebSearchContext'], 'llmVndOaiWebSearchContext');
@@ -289,7 +277,6 @@ export function LLMParametersEditor(props: {
       oaiEffortOptions: llmParametersFilterEffortOptions(_oaiEffortOptions, modelParamSpec['llmVndOaiEffort'], 'llmVndOaiEffort'),
       miscEffortOptions: llmParametersFilterEffortOptions(_miscEffortOptions, modelParamSpec['llmVndMiscEffort'], 'llmVndMiscEffort'),
       oaiServiceTierOptions: llmParametersFilterEffortOptions(_oaiServiceTierOptions, modelParamSpec['llmVndOaiServiceTier'], 'llmVndOaiServiceTier'),
-      unslothThinkingOptions: llmParametersFilterEffortOptions(_unslothThinkingOptions, modelParamSpec['llmVndUnslothThinking'], 'llmVndUnslothThinking'),
       oaiWebSearchOptions: ws?.map(o => (wsOnOff && o.value !== _UNSPECIFIED) ? { ...o, label: 'On' } : o) ?? null,
     };
   }, [modelParamSpec]);
@@ -331,8 +318,6 @@ export function LLMParametersEditor(props: {
     llmVndOaiImageGeneration,
     llmVndOaiCodeInterpreter,
     llmVndOaiVerbosity,
-    llmVndUnslothThinking,
-    llmVndUnslothWebSearch,
     llmVndOrtWebFetch,
     llmVndOrtWebSearch,
     llmVndOrtWebToolsAdvanced,
@@ -571,32 +556,7 @@ export function LLMParametersEditor(props: {
         options={miscEffortOptions}
       />
     )}
-    {/* Unsloth Thinking (boolean template gate) */}
-    {showParam('llmVndUnslothThinking') && unslothThinkingOptions && (
-      <FormSelectControl
-        title='Thinking'
-        tooltip='Enable or disable thinking mode on the local model'
-        value={llmVndUnslothThinking ?? _UNSPECIFIED}
-        onChange={(value) => {
-          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndUnslothThinking');
-          else onChangeParameter({ llmVndUnslothThinking: value });
-        }}
-        options={unslothThinkingOptions}
-      />
-    )}
-    {/* Unsloth server-side Web Search */}
-    {showParam('llmVndUnslothWebSearch') && (
-      <FormSelectControl
-        title='Web Search'
-        tooltip='Let the local model search the web to ground its answers (runs on the Unsloth server, which must allow tools)'
-        value={llmVndUnslothWebSearch ?? _UNSPECIFIED}
-        onChange={(value) => {
-          if (value === _UNSPECIFIED || !value) onRemoveParameter('llmVndUnslothWebSearch');
-          else onChangeParameter({ llmVndUnslothWebSearch: value });
-        }}
-        options={_unslothWebSearchOptions}
-      />
-    )}
+    <UnslothParametersConfig modelParamSpec={modelParamSpec} parameters={allParameters} onChangeParameter={onChangeParameter} onRemoveParameter={onRemoveParameter} />{/* [praxeo fork] */}
 
 
     {showParam('llmVndAntWebSearch') && (
