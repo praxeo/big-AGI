@@ -14,26 +14,28 @@ import { speakText, speakTextSurfaceFailure } from '~/modules/speex/speex.client
 
 import type { ConversationHandler } from '~/common/chat-overlay/ConversationHandler';
 import type { DLLMContextTokens } from '~/common/stores/llms/llms.types';
-import { DConversationId, excludeSystemMessages } from '~/common/stores/chat/chat.conversation';
 import { ShortcutKey, useGlobalShortcuts } from '~/common/components/shortcuts/useGlobalShortcuts';
 import { clipboardInterceptCtrlCForCleanup } from '~/common/util/clipboardUtils';
 import { convertFilesToDAttachmentFragments } from '~/common/attachment-drafts/attachment.pipeline';
-import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem } from '~/common/stores/chat/chat.message';
-import { createTextContentFragment, DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import { getRenderHTMLInitial, useUIContentScaling } from '~/common/stores/store-ui';
 import { openFileForAttaching } from '~/common/components/ButtonAttachFiles';
 import { optimaOpenPreferences } from '~/common/layout/optima/useOptima';
 import { themeMinWidthChatPane } from '~/common/app.theme';
 import { useChatOverlayStore } from '~/common/chat-overlay/store-perchat_vanilla';
-import { useChatStore } from '~/common/stores/chat/store-chats';
 import { useScrollToBottom } from '~/common/scroll-to-bottom/useScrollToBottom';
+
+import { DConversationId, excludeSystemMessages } from '~/common/stores/chat/chat.conversation';
+import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem } from '~/common/stores/chat/chat.message';
+import { createTextContentFragment, DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
+import { orderedUserFragments } from '~/common/stores/chat/chat.fragment-order';
+import { useChatStore } from '~/common/stores/chat/store-chats';
 
 import { CMLZeroConversation } from './messages-list/CMLZeroConversation';
 import { ChatCleanupControls } from './ChatCleanupList';
 import { ChatMessageStreamingMemo } from './message/ChatMessage';
 import { Ephemerals } from './Ephemerals';
 import { PersonaSelector } from './persona-selector/PersonaSelector';
-import { useChatShowSystemMessages, useChatMessageTimestampMode } from '../store-app-chat';
+import { getUserMessageFragmentPlacement, useChatShowSystemMessages, useChatMessageTimestampMode } from '../store-app-chat';
 
 
 const stableNoMessages: DMessage[] = [];
@@ -114,10 +116,8 @@ export function ChatMessageList(props: {
 
           // Create a User message with the prompt and the attachment fragments
           if (attachmentFragments.length) {
-            conversationHandler.messageAppend(createDMessageFromFragments('user', [ // [chat] append user:persona question + attachment(s)
-              createTextContentFragment(example.prompt),
-              ...attachmentFragments,
-            ]));
+            const sortedUserFragments = orderedUserFragments([createTextContentFragment(example.prompt), ...attachmentFragments], getUserMessageFragmentPlacement());
+            conversationHandler.messageAppend(createDMessageFromFragments('user', sortedUserFragments)); // [chat] append user:persona question + attachment(s)
             await onConversationExecuteHistory(conversationId);
           }
         });
@@ -267,20 +267,8 @@ export function ChatMessageList(props: {
     conversationHandler?.messagesDelete([messageId]);
   }, [conversationHandler]);
 
-  const handleMessageAppendFragment = React.useCallback((messageId: DMessageId, fragment: DMessageFragment) => {
-    conversationHandler?.messageFragmentAppend(messageId, fragment, false, false);
-  }, [conversationHandler]);
-
-  const handleMessageDeleteFragment = React.useCallback((messageId: DMessageId, fragmentId: DMessageFragmentId) => {
-    conversationHandler?.messageFragmentDelete(messageId, fragmentId, false, true);
-  }, [conversationHandler]);
-
-  const handleMessageReplaceFragment = React.useCallback((messageId: DMessageId, fragmentId: DMessageFragmentId, newFragment: DMessageFragment) => {
-    conversationHandler?.messageFragmentReplace(messageId, fragmentId, newFragment, true);
-  }, [conversationHandler]);
-
-  const handleMessageReorderFragments = React.useCallback((messageId: DMessageId, reorderedIds: DMessageFragmentId[], placement: 'end') => {
-    conversationHandler?.messageFragmentsReorder(messageId, reorderedIds, placement, false, true);
+  const handleMessageReplaceFragments = React.useCallback((messageId: DMessageId, fragments: DMessageFragment[]) => {
+    conversationHandler?.messageFragmentsReplace(messageId, fragments);
   }, [conversationHandler]);
 
   const handleMessageToggleUserFlag = React.useCallback((messageId: DMessageId, userFlag: DMessageUserFlag, _maxPerConversation?: number) => {
@@ -439,10 +427,7 @@ export function ChatMessageList(props: {
               onMessageUpstreamDelete={handleMessageUpstreamDelete}
               upstreamResumeMode={resumeInFlight[message.id]}
               onMessageDelete={handleMessageDelete}
-              onMessageFragmentAppend={handleMessageAppendFragment}
-              onMessageFragmentDelete={handleMessageDeleteFragment}
-              onMessageFragmentReplace={handleMessageReplaceFragment}
-              onMessageFragmentsReorder={handleMessageReorderFragments}
+              onMessageFragmentsReplace={handleMessageReplaceFragments}
               onMessageToggleUserFlag={handleMessageToggleUserFlag}
               onMessageTruncate={handleMessageTruncate}
               onReattachAsFile={handleReattachAsFile}

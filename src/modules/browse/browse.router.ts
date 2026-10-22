@@ -15,6 +15,9 @@ import { workerPuppeteerDownloadFileOrThrow } from './browse.files';
 const DISABLE_FILE_DOWNLOADS = true;
 const WORKER_TIMEOUT = 20 * 1000; // 20 seconds
 const SCREENSHOT_TIMEOUT = 8 * 1000; // 8 seconds - a thumbnail is never worth the full protocol ceiling (WORKER_TIMEOUT + 2s)
+const MAX_REQUESTS_PER_CALL = 4; // the client sends 1
+const SCREENSHOT_MIN_SIDE = 16;
+const SCREENSHOT_MAX_SIDE = 2048;
 
 
 // Input schemas
@@ -30,14 +33,14 @@ const fetchPageInputSchema = z.object({
   }),
   requests: z.array(z.object({
     url: z.url(),
-    transforms: z.array(pageTransformSchema),
+    transforms: z.array(pageTransformSchema).max(pageTransformSchema.options.length),
     allowFileDownloads: z.boolean().optional(),
     screenshot: z.object({
-      width: z.number(),
-      height: z.number(),
-      quality: z.number().optional(),
+      width: z.number().int().min(SCREENSHOT_MIN_SIDE).max(SCREENSHOT_MAX_SIDE),
+      height: z.number().int().min(SCREENSHOT_MIN_SIDE).max(SCREENSHOT_MAX_SIDE),
+      quality: z.number().int().min(1).max(100).optional(),
     }).optional(),
-  })),
+  })).min(1).max(MAX_REQUESTS_PER_CALL),
 });
 
 
@@ -349,7 +352,13 @@ function _shortError(error: any): string {
 }
 
 
+const CLEAN_HTML_MAX_CHARS = 5_000_000;
+
 function cleanHtml(html: string): string {
+  // bound parse/serialize cost on attacker-controlled pages
+  if (html.length > CLEAN_HTML_MAX_CHARS)
+    html = html.slice(0, CLEAN_HTML_MAX_CHARS);
+
   try {
     const _C = cheerioLoad(html);
 
@@ -486,19 +495,17 @@ function cleanHtml(html: string): string {
         $div.replaceWith(`<p>${$div.html()}</p>`);
     });
 
-    // 7. clean up whitespace
-    _C('*').each(function() {
-      if (this.type === 'text') {
-        const text = _C(this).text().trim().replace(/\s+/g, ' ');
-        if (text) _C(this).text(text);
-      }
+    // 7. clean up whitespace (text nodes, outside preformatted content)
+    _C('*:not(pre, pre *, textarea)').contents().each(function() {
+      if (this.type === 'text')
+        this.data = this.data.replace(/\s+/g, ' ');
     });
 
     // 8. format final output
     return _C.html()
       .replace(/>\s+</g, '>\n<')
       .replace(/\n\s+/g, '\n')
-      .replace(/^\s+|\s+$/gm, '')
+      .split('\n').map(line => line.trim()).join('\n')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
 

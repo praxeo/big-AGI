@@ -94,7 +94,7 @@ export const EditorialDefaults = {
     { vendor: 'openrouter', modelId: 'openai/gpt-5.6-sol' },
     { vendor: 'openai',     modelId: 'gpt-5.5' },
     { vendor: 'openrouter', modelId: 'openai/gpt-5.5' },
-    { vendor: 'googleai',   modelId: 'models/gemini-4-argon' }, // SPECULATIVE: announced 2026-09-30, API-gated; Elo 1525 prelim (#1), $2/$10 intro. Prefix match also takes '-preview'
+    { vendor: 'googleai',   modelId: 'models/gemini-4-argon' }, // 2026-10-13 API GA; Elo 1525 prelim (#1), $2/$10 intro through 2026-11-30, then $4/$20
     { vendor: 'openrouter', modelId: 'google/gemini-4-argon' },
     { vendor: 'googleai',   modelId: 'models/gemini-3.8-flash' }, // 2026-09-02 GA - newest Flash flagship, same intro price as 3.6 (3.7 Flash, deprecated 2026-10-08, routes here)
     { vendor: 'googleai',   modelId: 'models/gemini-3.6-flash' }, // 2026-07-21 GA - cheaper output (3.5 Flash, deprecated 2026-10-08, routes here)
@@ -144,7 +144,7 @@ export const EditorialDefaults = {
     { vendor: 'moonshot',   modelId: 'kimi-k2.6' },
     { vendor: 'deepseek',   modelId: 'deepseek-flash' },
     // NVIDIA NIM: free trial catalog, tail picks (z-ai/glm-5.2 dropped: NVIDIA EOL 2026-08-24)
-    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-super-120b-a12b' }, // agentic/tool-use tuned, 12B active
+    { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3.5-super-vl-120b-a12b' }, // agentic/tool-use tuned, 12B active (3 Super 404s for our key since 2026-10-21)
     { vendor: 'nvidianim',  modelId: 'deepseek-ai/deepseek-v4.1-flash' },
   ],
 
@@ -176,9 +176,8 @@ export const EditorialDefaults = {
     { vendor: 'zai',        modelId: 'glm-5.3-flash' }, // 2026-08-27: 18B active, $0.15/$0.5 - the actual Z.ai fast tier (5.2 was a pre-flash placeholder)
     { vendor: 'zai',        modelId: 'glm-5.2' },
     { vendor: 'deepseek',   modelId: 'deepseek-flash' },
-    // NVIDIA NIM: free trial catalog, tail picks (nemotron-3-nano-30b-a3b and nemotron-nano-9b-v2 dropped: NVIDIA EOL 2026-08-25)
+    // NVIDIA NIM: free trial catalog, tail pick (gpt-oss-20b dropped: invokes time out since 2026-10-21)
     { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3.5-lightning-30b-a3b' }, // fastest Nemotron MoE, 3B active, 1M ctx
-    { vendor: 'nvidianim',  modelId: 'openai/gpt-oss-20b' },
   ],
 
   imageCaption: [

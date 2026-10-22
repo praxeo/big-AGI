@@ -94,6 +94,7 @@ type _DMessageFragmentWrapper<TFragment, TPart extends { pt: string }> = {
   originId?:
     | 'cha-per-re-um-pre' | 'cha-per-re-um-post' // see DPersona.appChat.DPersonaChatReinforcement
     | 'cha-live-feed-frame' // camera/screen frame attachments, see sampleLiveFeedsAsFragments
+    | 'cha-live-feed-state' // the live feeds' vision state text appended to the user message, not the prompt
     | (string & {}); // optional, for multi-model, identifies which actor produced this fragment
   vendorState?: DMessageFragmentVendorState; // optional vendor-specific protocol state (opaque, lossy-safe)
 }
@@ -434,6 +435,11 @@ export function isDocPart(part: DMessageContentFragment['part'] | DMessageAttach
 
 export function isImageRefPart(part: DMessageContentFragment['part'] | DMessageAttachmentFragment['part']) {
   return part.pt === 'image_ref';
+}
+
+/** An image of either generation: a legacy image ref, or a zync asset reference to an image. */
+export function isImagePart(part: DMessageContentFragment['part'] | DMessageAttachmentFragment['part']): boolean {
+  return isImageRefPart(part) || isZyncAssetImageReferencePart(part);
 }
 
 export function isTextPart(part: DMessageContentFragment['part']) {
@@ -904,7 +910,7 @@ export function reorderFragments<T extends DMessageFragment>(unsortedFragments: 
 }
 
 export function splitFragmentsByType(fragments: DMessageFragment[]) {
-  // also see `useFragmentBuckets.ts` which inspired this function
+  // display grouping lives in cmRenderTree.build.ts
   return fragments.reduce((acc, frag) => {
     if (isContentFragment(frag))
       acc.contentFragments.push(frag);

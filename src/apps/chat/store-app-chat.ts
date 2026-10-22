@@ -4,6 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type { DLLMId } from '~/common/stores/llms/llms.types';
 import { Is } from '~/common/util/pwaUtils';
+import { normalizeUserFragmentGroupsOrder, UserMessageFragmentGroup, UserMessageFragmentPlacement } from '~/common/stores/chat/chat.fragment-order';
 
 
 export type ChatAutoSpeakType = 'off' | 'firstLine' | 'all';
@@ -40,11 +41,19 @@ interface AppChatStore {
   autoVndAntBreakpoints: boolean;
   setAutoVndAntBreakpoints: (autoVndAntBreakpoints: boolean) => void;
 
+  // chat Mechanics / Policies
+
   chatThinkingPolicy: ChatThinkingPolicy,
   setChatThinkingPolicy: (chatThinkingPolicy: ChatThinkingPolicy) => void;
 
   tokenCountingMethod: TokenCountingMethod;
   setTokenCountingMethod: (tokenCountingMethod: TokenCountingMethod) => void;
+
+  userMessageFragmentOrder?: UserMessageFragmentGroup[];
+  setUserMessageFragmentOrder: (order: undefined | UserMessageFragmentGroup[]) => void;
+
+  userMessageAttachmentsMarker?: boolean; // a `{{attachments}}` prompt line places the attachments there
+  setUserMessageAttachmentsMarker: (enabled: boolean) => void;
 
   // chat UI
 
@@ -134,6 +143,12 @@ const useAppChatStore = create<AppChatStore>()(persist(
 
     tokenCountingMethod: Is.Desktop ? 'accurate' : 'approximate',
     setTokenCountingMethod: (tokenCountingMethod: TokenCountingMethod) => _set({ tokenCountingMethod }),
+
+    // userMessageFragmentOrder: undefined, // keep the default implicit
+    setUserMessageFragmentOrder: (order) => _set({ userMessageFragmentOrder: !order ? undefined : normalizeUserFragmentGroupsOrder(order) }),
+
+    // userMessageAttachmentsMarker: undefined, // off when omitted
+    setUserMessageAttachmentsMarker: (enabled) => _set({ userMessageAttachmentsMarker: enabled || undefined }),
 
     // Chat UI
 
@@ -264,6 +279,21 @@ export const getChatThinkingPolicy = (): ChatThinkingPolicy =>
 
 export const getChatTokenCountingMethod = (): TokenCountingMethod =>
   useAppChatStore.getState().tokenCountingMethod;
+
+/** Where the attachments go in a new user message: the group order, and whether a `{{attachments}}` marker places them. */
+export const getUserMessageFragmentPlacement = (): UserMessageFragmentPlacement => {
+  const { userMessageFragmentOrder, userMessageAttachmentsMarker } = useAppChatStore.getState();
+  return { order: userMessageFragmentOrder, splitAtMarker: !!userMessageAttachmentsMarker };
+};
+
+export const setUserMessageFragmentOrder = (order: undefined | UserMessageFragmentGroup[]) =>
+  useAppChatStore.getState().setUserMessageFragmentOrder(order);
+
+export const setUserMessageAttachmentsMarker = (enabled: boolean) =>
+  useAppChatStore.getState().setUserMessageAttachmentsMarker(enabled);
+
+export const useUserMessageFragmentPlacement = () =>
+  useAppChatStore(useShallow(state => ({ order: state.userMessageFragmentOrder, splitAtMarker: !!state.userMessageAttachmentsMarker })));
 
 export const useChatMicTimeoutMsValue = (): number =>
   useAppChatStore(state => state.micTimeoutMs);

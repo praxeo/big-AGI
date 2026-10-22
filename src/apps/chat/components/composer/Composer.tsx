@@ -35,6 +35,7 @@ import { copyToClipboard, supportsClipboardRead } from '~/common/util/clipboardU
 import { createHostedResourceContentFragment, createTextContentFragment, DMessageAttachmentFragment, DMessageContentFragment, duplicateDMessageFragments } from '~/common/stores/chat/chat.fragments';
 import { glueForMessageTokens, marshallWrapDocFragments } from '~/common/stores/chat/chat.tokens';
 import { isValidConversation, useChatStore } from '~/common/stores/chat/store-chats';
+import { orderedUserFragments } from '~/common/stores/chat/chat.fragment-order';
 import { getModelParameterValueWithFallback } from '~/common/stores/llms/llms.parameters';
 import { launchAppCall, removeQueryParam, useRouterQuery } from '~/common/app.routes';
 import { lineHeightTextareaMd, themeBgAppChatComposer } from '~/common/app.theme';
@@ -62,6 +63,7 @@ import { useLLMImageInputPolicy } from '~/common/attachment-drafts/llm-enrichmen
 import { useGoogleDrivePicker } from '~/common/attachment-drafts/attachment-sources/useGoogleDrivePicker';
 
 import type { ChatExecuteMode } from '../../execute-mode/execute-mode.types';
+import { getUserMessageFragmentPlacement } from '../../store-app-chat';
 import { chatExecuteModeCanAttach, useChatExecuteMode } from '../../execute-mode/useChatExecuteMode';
 
 import { ButtonBeamMemo } from './buttons/ButtonBeam';
@@ -316,7 +318,7 @@ export function Composer(props: {
 
     const canAttach = chatExecuteModeCanAttach(_chatExecuteMode, props.capabilityHasT2IEdit);
     if (canAttach) {
-      // enhancer-pending parts (e.g. video URLs) become content fragments after the text
+      // Enhancer-pending media and uploaded files join the same send-order policy.
       fragments.push(...(pendingParts || []).map(part => createHostedResourceContentFragment(part.resource)));
       const attachmentFragments = await attachmentsTakeAllFragments('global', 'app-chat');
       fragments.push(...attachmentFragments);
@@ -331,7 +333,8 @@ export function Composer(props: {
     const metadata = inReferenceTo?.length ? { inReferenceTo: inReferenceTo } : undefined;
 
     // send the message - NOTE: if successful, the ownership of the fragments is transferred to the receiver, so we just clear them
-    const enqueued = onAction(targetConversationId, _chatExecuteMode, fragments, metadata);
+    const sortedUserFragments = orderedUserFragments(fragments, getUserMessageFragmentPlacement());
+    const enqueued = onAction(targetConversationId, _chatExecuteMode, sortedUserFragments, metadata);
     if (enqueued)
       _handleClearText();
     return enqueued;
@@ -986,6 +989,7 @@ export function Composer(props: {
                   enrichment={attEnrichment}
                   enrichmentSummary={attEnrichSummary}
                   agiAttachmentPrompts={agiAttachmentPrompts}
+                  hasPendingMedia={!!pendingParts?.length}
                   onAttachmentDraftsAction={handleAttachmentDraftsAction}
                 />
               )}
