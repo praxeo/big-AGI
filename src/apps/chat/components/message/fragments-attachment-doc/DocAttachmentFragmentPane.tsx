@@ -59,10 +59,8 @@ export const DocAttachmentFragmentPane = React.memo(function DocAttachmentFragme
   editedText?: string,
   setEditedText: (fragmentId: DMessageFragmentId, value: string) => void,
   messageRole: DMessageRole,
-  renderVariant: 'chat-message' | 'data-editor',
   contentScaling: ContentScaling,
   isMobile: boolean,
-  zenMode: boolean,
   disableMarkdownText: boolean,
   onFragmentDelete?: (fragmentId: DMessageFragmentId) => void,
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newContent: DMessageAttachmentFragment) => void,
@@ -360,13 +358,13 @@ export const DocAttachmentFragmentPane = React.memo(function DocAttachmentFragme
               startDecorator={showDeleteInstead ? <DeleteForeverIcon /> : props.controlledEditor ? undefined : <CheckRoundedIcon />}
               sx={_styles.button}
             >
-              {!showDeleteInstead ? (props.renderVariant === 'data-editor' ? 'Ok' : 'Save') : 'Delete'}
+              {!showDeleteInstead ? (props.controlledEditor ? 'Ok' : 'Save') : 'Delete'}
             </Button>
           )}
         </Box>
       )}
     </Box>
-  ), [handleEditApply, handleFragmentDelete, handleToggleDeleteArmed, handleToggleEdit, isDeleteArmed, isEditing, onFragmentDelete, onFragmentReplace, props.controlledEditor, props.renderVariant, reverseToolbar, showDeleteInstead]);
+  ), [handleEditApply, handleFragmentDelete, handleToggleDeleteArmed, handleToggleEdit, isDeleteArmed, isEditing, onFragmentDelete, onFragmentReplace, props.controlledEditor, reverseToolbar, showDeleteInstead]);
 
 
   return (

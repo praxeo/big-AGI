@@ -15,8 +15,7 @@ import { dndDragEndReorder } from '~/common/components/dnd/dndDragEndReorder';
 import { dndModifiers } from '~/common/components/dnd/dnd.config';
 import { useDndDefaultSensors } from '~/common/components/dnd/useDndDefaultSensors';
 import { useDndDragHandleSortable } from '~/common/components/dnd/useDndDragHandleSortable';
-
-import { ViewImageRefPartModal } from '../fragments-content/ViewImageRefPartModal';
+import { ViewImageRefPartModal } from '~/common/components/modals/ViewImageRefPartModal';
 
 
 // configuration
@@ -29,11 +28,8 @@ const _styles = {
 
   // wrap around image cards
   flow: {
-    // style
-    my: 'auto',
-    flex: 0,
-
-    // layout
+    // layout: the full width of the body grid, then wrap
+    justifySelf: 'stretch',
     display: 'flex',
     flexWrap: 'wrap',
     // alignItems: 'center',        // commented to keep them to the top
@@ -88,6 +84,21 @@ const _styles = {
     position: 'relative',
     display: 'inline-block',
   },
+  // compact: the title shows on hover or focus (always on touch devices, and while editing it)
+  imageCardTitleWrapperCompact: {
+    position: 'relative',
+    display: 'inline-block',
+    '& .agi-image-title': {
+      opacity: 0,
+      transition: 'opacity 0.15s',
+    },
+    '&:hover .agi-image-title, &:focus-within .agi-image-title, & .agi-image-title.agi-editing': {
+      opacity: 1,
+    },
+    '@media (hover: none)': {
+      '& .agi-image-title': { opacity: 1 },
+    },
+  },
   // title overlay for image
   titleOverlay: {
     position: 'absolute',
@@ -103,8 +114,31 @@ const _styles = {
     '&:hover': { backgroundColor: 'primary.solidHoverBg', },
     cursor: 'pointer',
   },
+  // compact thumbnails: one line, small
+  titleOverlayCompact: {
+    px: 0.5,
+    py: 0.25,
+    fontSize: 'xs',
+  },
+  titleText: {
+    color: 'text.primary',
+    // clamp to 3 lines
+    display: '-webkit-box',
+    WebkitLineClamp: 3,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden',
+  },
+  titleTextCompact: {
+    color: 'text.primary',
+    display: '-webkit-box',
+    WebkitLineClamp: 1,
+    WebkitBoxOrient: 'vertical',
+    overflow: 'hidden',
+  },
 
 } as const satisfies Record<string, SxProps>;
+
+const _titleOverlayCompactSx: SxProps = { ..._styles.titleOverlay, ..._styles.titleOverlayCompact };
 
 
 /**
@@ -113,6 +147,7 @@ const _styles = {
 function ImageTitleEditorOverlay(props: {
   title?: string,
   fragment: DMessageAttachmentFragment,
+  compact?: boolean,
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newFragment: DMessageAttachmentFragment) => void,
 }) {
 
@@ -167,7 +202,7 @@ function ImageTitleEditorOverlay(props: {
   if (!onFragmentReplace) return null;
 
   return (
-    <Sheet color='primary' variant='solid' invertedColors sx={_styles.titleOverlay} onClick={handleStartEditTitle}>
+    <Sheet color='primary' variant='solid' invertedColors className={isEditingTitle ? 'agi-image-title agi-editing' : 'agi-image-title'} sx={props.compact ? _titleOverlayCompactSx : _styles.titleOverlay} onClick={handleStartEditTitle}>
       {isEditingTitle ? (
         <Input
           size='sm'
@@ -180,14 +215,7 @@ function ImageTitleEditorOverlay(props: {
           sx={{ color: 'text.primary' }}
         />
       ) : (
-        <Typography level='body-sm' sx={{
-          color: 'text.primary',
-          // clamp to 3 lines
-          display: '-webkit-box',
-          WebkitLineClamp: 3,
-          WebkitBoxOrient: 'vertical',
-          overflow: 'hidden',
-        }}>
+        <Typography level={props.compact ? 'body-xs' : 'body-sm'} sx={props.compact ? _styles.titleTextCompact : _styles.titleText}>
           {title || 'Click to add title...'}
         </Typography>
       )}
@@ -202,6 +230,7 @@ function ImageTitleEditorOverlay(props: {
 function ImageAttachmentCard(props: {
   fragment: DMessageAttachmentFragment,
   isEditing?: boolean,
+  compact?: boolean,
   onFragmentDelete?: (fragmentId: DMessageFragmentId) => void,
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newFragment: DMessageAttachmentFragment) => void,
   onViewImageRefPart: (part: DMessageImageRefPart) => void,
@@ -230,7 +259,7 @@ function ImageAttachmentCard(props: {
 
       const legacy = part._legacyImageRefPart;
       return (
-        <Box sx={_styles.imageCardTitleWrapper}>
+        <Box sx={props.compact ? _styles.imageCardTitleWrapperCompact : _styles.imageCardTitleWrapper}>
           <RenderImageRefDBlob
             key={'att-img-legacy-' + fId}
             dataRefDBlobAssetId={legacy.dataRef.dblobAssetId}
@@ -249,6 +278,7 @@ function ImageAttachmentCard(props: {
           <ImageTitleEditorOverlay
             title={title}
             fragment={props.fragment}
+            compact={props.compact}
             onFragmentReplace={props.onFragmentReplace}
           />
         </Box>
@@ -265,7 +295,7 @@ function ImageAttachmentCard(props: {
       }
 
       return (
-        <Box sx={_styles.imageCardTitleWrapper}>
+        <Box sx={props.compact ? _styles.imageCardTitleWrapperCompact : _styles.imageCardTitleWrapper}>
           <RenderImageRefDBlob
             key={'att-img-' + fId}
             dataRefDBlobAssetId={dataRef.dblobAssetId}
@@ -284,6 +314,7 @@ function ImageAttachmentCard(props: {
           <ImageTitleEditorOverlay
             title={title}
             fragment={props.fragment}
+            compact={props.compact}
             onFragmentReplace={props.onFragmentReplace}
           />
         </Box>
@@ -309,22 +340,39 @@ function ImageAttachmentCard(props: {
 }
 
 
+/** The card style at the content scale; the data editor adds a shadow; `compact` crops to a square thumbnail (edit list). */
+export function imageAttachmentCardSx(contentScaling: ContentScaling, renderVariant?: 'chat-message' | 'data-editor', compact?: boolean): SxProps {
+  return {
+    fontSize: themeScalingMap[contentScaling]?.blockFontSize ?? undefined,
+    lineHeight: themeScalingMap[contentScaling]?.blockLineHeight ?? 1.75,
+    ..._styles.imageCard,
+    ...(renderVariant !== 'data-editor' ? {} : {
+      // border: 0, // no border in data-editor
+      boxShadow: `0px 2px 4px -2px rgb(var(--joy-palette-primary-darkChannel) / 50%)`,
+    }),
+    ...(!compact ? {} : {
+      '& picture > img': { width: CARD_MIN_SQR, height: CARD_MIN_SQR, objectFit: 'cover' },
+    }),
+  };
+}
+
+
 /**
- * Wrapper for a RenderImageRefDBlob that adds DnD support with a grab handle.
+ * Wrapper for a RenderImageRefDBlob that adds DnD support with a grab handle. Also an item of `EditAttachmentFragments`.
  */
-function SortableImageAttachmentCard(props: {
+export function SortableImageAttachmentCard(props: {
   fragment: DMessageAttachmentFragment,
   isEditing?: boolean,
+  compact?: boolean, // square thumbnail with a one-line title (edit list)
   onFragmentDelete?: (fragmentId: DMessageFragmentId) => void,
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newFragment: DMessageAttachmentFragment) => void,
   onViewImageRefPart: (part: DMessageImageRefPart) => void,
   cardStyleSx: SxProps,
-  isReordering: boolean,
 }) {
 
-  const { fragment, isEditing, onFragmentDelete, onFragmentReplace, onViewImageRefPart, cardStyleSx, isReordering } = props;
+  const { fragment, isEditing, onFragmentDelete, onFragmentReplace, onViewImageRefPart, cardStyleSx } = props;
 
-  const { dragContainerSetRef, dragContainerStyle, dragHandle } = useDndDragHandleSortable(fragment.fId, !isReordering, isEditing ? 'warning' : 'neutral');
+  const { dragContainerSetRef, dragContainerStyle, dragHandle } = useDndDragHandleSortable(fragment.fId, false, isEditing ? 'warning' : 'neutral');
 
   return (
     <Box ref={dragContainerSetRef} style={dragContainerStyle} sx={_styles.sortableContainer}>
@@ -336,6 +384,7 @@ function SortableImageAttachmentCard(props: {
       <ImageAttachmentCard
         fragment={fragment}
         isEditing={isEditing}
+        compact={props.compact}
         onFragmentDelete={onFragmentDelete}
         onFragmentReplace={onFragmentReplace}
         onViewImageRefPart={onViewImageRefPart}
@@ -355,7 +404,6 @@ export function ImageAttachmentFragments(props: {
   contentScaling: ContentScaling,
   messageRole: DMessageRole,
   renderVariant?: 'chat-message' | 'data-editor',
-  isEditing?: boolean,
   onFragmentDelete?: (fragmentId: DMessageFragmentId) => void,
   onFragmentReplace?: (fragmentId: DMessageFragmentId, newFragment: DMessageAttachmentFragment) => void,
   onFragmentsReorder?: (reorderedIds: DMessageFragmentId[]) => void,
@@ -371,7 +419,7 @@ export function ImageAttachmentFragments(props: {
   }, [props.imageAttachments]);
 
   // derived state
-  const isReorderable = !!props.onFragmentsReorder && (props.isEditing || props.imageAttachments.length > 1);
+  const isReorderable = !!props.onFragmentsReorder && props.imageAttachments.length > 1;
 
 
   // handlers
@@ -398,15 +446,7 @@ export function ImageAttachmentFragments(props: {
     justifyContent: (props.messageRole === 'assistant' || props.renderVariant === 'data-editor') ? 'flex-start' : 'flex-end',
   }), [props.messageRole, props.renderVariant]);
 
-  const cardStyleMemo = React.useMemo((): SxProps => ({
-    fontSize: themeScalingMap[props.contentScaling]?.blockFontSize ?? undefined,
-    lineHeight: themeScalingMap[props.contentScaling]?.blockLineHeight ?? 1.75,
-    ..._styles.imageCard,
-    ...(props.renderVariant !== 'data-editor' ? {} : {
-      // border: 0, // no border in data-editor
-      boxShadow: `0px 2px 4px -2px rgb(var(--joy-palette-primary-darkChannel) / 50%)`,
-    }),
-  }), [props.contentScaling, props.renderVariant]);
+  const cardStyleMemo = React.useMemo(() => imageAttachmentCardSx(props.contentScaling, props.renderVariant), [props.contentScaling, props.renderVariant]);
 
 
   return (
@@ -418,7 +458,6 @@ export function ImageAttachmentFragments(props: {
           <ImageAttachmentCard
             key={fragment.fId}
             fragment={fragment}
-            isEditing={props.isEditing}
             onFragmentDelete={props.onFragmentDelete}
             onFragmentReplace={props.onFragmentReplace}
             onViewImageRefPart={handleViewImageRefPart}
@@ -432,12 +471,10 @@ export function ImageAttachmentFragments(props: {
               <SortableImageAttachmentCard
                 key={fragment.fId}
                 fragment={fragment}
-                isEditing={props.isEditing}
                 onFragmentDelete={props.onFragmentDelete}
                 onFragmentReplace={props.onFragmentReplace}
                 onViewImageRefPart={handleViewImageRefPart}
                 cardStyleSx={cardStyleMemo}
-                isReordering={true}
               />,
             )}
           </SortableContext>

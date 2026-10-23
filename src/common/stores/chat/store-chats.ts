@@ -14,7 +14,7 @@ import { workspaceActions } from '~/common/stores/workspace/store-client-workspa
 import { workspaceForConversationIdentity } from '~/common/stores/workspace/workspace.types';
 
 import { DMessage, DMessageId, DMessageMetadata, MESSAGE_FLAG_AIX_SKIP, messageHasUserFlag } from './chat.message';
-import { DMessageFragment, DMessageFragmentId, isVoidThinkingFragment } from './chat.fragments';
+import { isVoidThinkingFragment } from './chat.fragments';
 import { V3StoreDataToHead, V4ToHeadConverters } from './chats.converters';
 import { conversationTitle, createDConversation, DConversation, DConversationId, duplicateDConversation } from './chat.conversation';
 import { estimateTokensForFragments } from './chat.tokens';
@@ -45,10 +45,7 @@ export interface ChatActions {
   historyView: (cId: DConversationId) => Readonly<DMessage[]> | undefined;
   appendMessage: (cId: DConversationId, message: DMessage) => void;
   deleteMessage: (cId: DConversationId, mId: DMessageId) => void;
-  editMessage: (cId: DConversationId, mId: DMessageId, update: Partial<DMessage> | ((message: DMessage) => Partial<DMessage>), removePendingState: boolean, touchUpdated: boolean) => void;
-  appendMessageFragment: (cId: DConversationId, mId: DMessageId, fragment: DMessageFragment, removePendingState: boolean, touchUpdated: boolean) => void;
-  deleteMessageFragment: (cId: DConversationId, mId: DMessageId, fId: DMessageFragmentId, removePendingState: boolean, touchUpdated: boolean) => void;
-  replaceMessageFragment: (cId: DConversationId, mId: DMessageId, fId: DMessageFragmentId, newFragment: DMessageFragment, removePendingState: boolean, touchUpdated: boolean) => void;
+  editMessage: (cId: DConversationId, mId: DMessageId, update: Partial<DMessage> | ((message: DMessage) => (Partial<DMessage> | false)), removePendingState: boolean, touchUpdated: boolean) => void;
   updateMetadata: (cId: DConversationId, mId: DMessageId, metadataDelta: Partial<DMessageMetadata>, touchUpdated?: boolean) => void;
   setSystemPurposeId: (cId: DConversationId, personaId: SystemPurposeId) => void;
   setAutoTitle: (cId: DConversationId, autoTitle: string) => void;
@@ -58,7 +55,7 @@ export interface ChatActions {
   title: (cId: DConversationId) => string | undefined;
 
   // utility function
-  _editConversation: (cId: DConversationId, update: Partial<DConversation> | ((conversation: DConversation) => Partial<DConversation>)) => void;
+  _editConversation: (cId: DConversationId, update: Partial<DConversation> | ((conversation: DConversation) => (Partial<DConversation> | false))) => void;
 }
 
 type ConversationsStore = ChatState & ChatActions;
@@ -167,17 +164,18 @@ export const useChatStore = create<ConversationsStore>()(/*devtools(*/
 
       // within a conversation
 
-      _editConversation: (conversationId: DConversationId, update: Partial<DConversation> | ((conversation: DConversation) => Partial<DConversation>)) =>
+      _editConversation: (conversationId: DConversationId, update: Partial<DConversation> | ((conversation: DConversation) => (Partial<DConversation> | false))) => {
+        const conversation = _get().conversations.find(c => c.id === conversationId);
+        if (!conversation) return;
+
+        // an updater may decline (false): no state change, no persistence
+        const conversationUpdate = typeof update === 'function' ? update(conversation) : update;
+        if (!conversationUpdate) return;
+
         _set(state => ({
-          conversations: state.conversations.map((conversation): DConversation =>
-            conversation.id === conversationId
-              ? {
-                ...conversation,
-                ...(typeof update === 'function' ? update(conversation) : update),
-              }
-              : conversation,
-          ),
-        })),
+          conversations: state.conversations.map((c): DConversation => c.id === conversationId ? { ...c, ...conversationUpdate } : c),
+        }));
+      },
 
       isIncognito: (conversationId: DConversationId): boolean | undefined =>
         _get().conversations.find(_c => _c.id === conversationId)?._isIncognito ?? undefined,
@@ -320,19 +318,27 @@ export const useChatStore = create<ConversationsStore>()(/*devtools(*/
           };
         }),
 
-      editMessage: (conversationId: DConversationId, messageId: DMessageId, update: Partial<DMessage> | ((message: DMessage) => Partial<DMessage>), removePendingState: boolean, touchUpdated: boolean) =>
+      editMessage: (conversationId: DConversationId, messageId: DMessageId, update: Partial<DMessage> | ((message: DMessage) => (Partial<DMessage> | false)), removePendingState: boolean, touchUpdated: boolean) =>
         _get()._editConversation(conversationId, conversation => {
 
+          let didUpdate = false;
           const messages = conversation.messages.map((message): DMessage => {
-            if (message.id !== messageId)
-              return message;
 
+            // non-target messages pass through
+            if (message.id !== messageId) return message;
+
+            // verify real update, or pass through
+            const messageUpdate = typeof update === 'function' ? update(message) : update;
+            if (!messageUpdate) return message;
+
+            didUpdate = true;
             const updatedMessage: DMessage = {
               ...message,
-              ...(typeof update === 'function' ? update(message) : update),
-              ...(touchUpdated && { updated: Date.now() }),
+              ...messageUpdate,
+              ...(touchUpdated && { updated: Date.now() }), // update Message timestamp if requested
             };
 
+            // [optimization] pending state is removed at the end, and indicator of message readiness
             if (removePendingState)
               delete updatedMessage.pendingIncomplete;
 
@@ -341,6 +347,9 @@ export const useChatStore = create<ConversationsStore>()(/*devtools(*/
 
             return updatedMessage;
           });
+
+          // skip conversation update if no message changes
+          if (!didUpdate) return false;
 
           // [workspaces]
           // NOTE: we assume that no workspace side-effect-producing change is performed
@@ -352,41 +361,6 @@ export const useChatStore = create<ConversationsStore>()(/*devtools(*/
           };
         }),
 
-
-      appendMessageFragment: (conversationId: DConversationId, messageId: DMessageId, fragment: DMessageFragment, removePendingState: boolean, touchUpdated: boolean) => {
-        _get().editMessage(conversationId, messageId, message => ({
-          fragments: [...message.fragments, fragment],
-        }), removePendingState, touchUpdated);
-
-        // [workspace]
-        // Note: in the future when we have side-effect appends (e.g. new Attachment/Docs/Etc) we may
-        // need implementation of the fragment methods here
-      },
-
-      deleteMessageFragment: (conversationId: DConversationId, messageId: DMessageId, fragmentId: DMessageFragmentId, removePendingState: boolean, touchUpdated: boolean) =>
-        _get().editMessage(conversationId, messageId, message => ({
-          fragments: message.fragments.filter(f => f.fId !== fragmentId),
-        }), removePendingState, touchUpdated),
-
-      replaceMessageFragment: (conversationId: DConversationId, messageId: DMessageId, fragmentId: DMessageFragmentId, newFragment: DMessageFragment, removePendingState: boolean, touchUpdated: boolean) =>
-        _get().editMessage(conversationId, messageId, message => {
-
-          // Warn if the fragment is not found
-          const fragmentIndex = message.fragments.findIndex(f => f.fId === fragmentId);
-          if (fragmentIndex < 0) {
-            console.error(`replaceFragment: fragment not found for ID ${fragmentId}`);
-            return {};
-          }
-
-          // Replace the fragment
-          return {
-            fragments: message.fragments.map((fragment, index) =>
-              (index === fragmentIndex)
-                ? { ...newFragment } // force the object tree to change, just in case the contents changed but not the object reference
-                : fragment,
-            ),
-          };
-        }, removePendingState, touchUpdated),
 
       updateMetadata: (conversationId: DConversationId, messageId: DMessageId, metadataDelta: Partial<DMessageMetadata>, touchUpdated: boolean = true) => {
         _get()._editConversation(conversationId, conversation => {

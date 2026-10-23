@@ -1,18 +1,30 @@
 import * as React from 'react';
 
 import type { SxProps } from '@mui/joy/styles/types';
-import { Box, Button, Typography } from '@mui/joy';
+import { Box, IconButton, Typography } from '@mui/joy';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+
+import { DndContext, DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 
 import type { AutoBlocksHtmlRenderVariant } from '~/modules/blocks/AutoBlocksRenderer';
 import { HostedLinksProvider } from '~/modules/blocks/markdown/HostedLinksContext';
 import { ScaledTextBlockRenderer } from '~/modules/blocks/ScaledTextBlockRenderer';
 
 import type { ContentScaling, UIComplexityMode } from '~/common/app.theme';
-import { DMessageAttachmentFragment, DMessageFragment, DMessageFragmentId, isImagePart } from '~/common/stores/chat/chat.fragments';
+import type { DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import type { DMessageRole } from '~/common/stores/chat/chat.message';
 import { Release } from '~/common/app.release';
+import { dndDragEndReorder } from '~/common/components/dnd/dndDragEndReorder';
+import { dndModifiers } from '~/common/components/dnd/dnd.config';
+import { useDndDefaultSensors } from '~/common/components/dnd/useDndDefaultSensors';
+import { useDndDragHandleSortable } from '~/common/components/dnd/useDndDragHandleSortable';
+import { ConfirmationModal } from '~/common/components/modals/ConfirmationModal';
+import { useOverlayComponents } from '~/common/layout/overlays/useOverlayComponents';
 
+import type { CMEditDrafts } from '../cmEditDrafts';
 import { BlockEdit_TextFragment } from '../fragments-content/BlockEdit_TextFragment';
+import { CMEditAttach } from '../CMEditAttach';
 import { BlockOpEmpty } from '../fragments-content/BlockOpEmpty';
 import { BlockPartError } from '../fragments-content/BlockPartError';
 import { BlockPartHostedResource } from '../fragments-content/BlockPartHostedResource';
@@ -24,29 +36,35 @@ import { BlockPartText_AutoBlocksMemo } from '../fragments-content/BlockPartText
 import { BlockPartToolInvocation } from '../fragments-content/BlockPartToolInvocation';
 import { BlockPartToolResponse } from '../fragments-content/BlockPartToolResponse';
 import { DocumentAttachmentFragments } from '../fragments-attachment-doc/DocumentAttachmentFragments';
+import { EditAttachmentFragments } from '../fragments-attachment-edit/EditAttachmentFragments';
 import { ImageAttachmentFragments } from '../fragments-attachment-image/ImageAttachmentFragments';
 import { humanReadableFunctionName } from '../fragments-content/BlockPartToolInvocation.utils';
 
-import type { CMNodeCitations, CMNodeReasoning, CMNodeReference, CMNodeText, CMRenderNode, CMRenderTree } from './cmRenderTree.types';
+import { CMNodeCitations, CMNodeReasoning, CMNodeReference, CMNodeText, cmNodeFragments, CMRenderNode, CMRenderTree } from './cmRenderTree.types';
 import { CMRT_REASONING_SEPARATOR } from './cmRenderTree.build';
 
 
-// layout
+// configuration
+const CMRT_ASSISTANT_BLOCK_REORDER = true; // assistant blocks move too; the edit shows a warning, as some providers reject replays with reasoning or tool calls out of order
 
-const _stretchLayoutSx: SxProps = {
-  // no justifyContent: the implicit grid column (and all nodes) stretches to the container width
+
+// layout: one grid holds the body; text-like blocks hug (each its own width, start or end by role) or stretch,
+// attachment lists stretch to the full width (`justifySelf`) and wrap inside it
+
+const _bodyStretchSx: SxProps = {
   display: 'grid',
+  gridTemplateColumns: 'minmax(0, 1fr)',
   gap: 1.5,     // see why we give more space on ChatMessage
 };
 
-const _startLayoutSx: SxProps = {
-  ..._stretchLayoutSx,
-  justifyContent: 'flex-start',
+const _bodyStartSx: SxProps = {
+  ..._bodyStretchSx,
+  justifyItems: 'start',
 } as const;
 
-const _endLayoutSx: SxProps = {
-  ..._stretchLayoutSx,
-  justifyContent: 'flex-end',
+const _bodyEndSx: SxProps = {
+  ..._bodyStretchSx,
+  justifyItems: 'end',
 } as const;
 
 // citations keep a row of their own above the body: the body grid may hug its content, the citations stretch
@@ -68,17 +86,60 @@ const _separatorSx: SxProps = {
   fontWeight: 'lg',
 } as const;
 
-// the zero-state button keeps a fill, so it stays visible on the message background (#934)
-const _addTextAssistantSx: SxProps = {
-  justifyContent: 'flex-start',
-  backgroundColor: 'neutral.softBg',
-  '&:hover': { backgroundColor: 'neutral.softHoverBg' },
+// a reorderable block: the handle in a left gutter, the node in the middle, Delete in a right gutter (on mobile, under
+// the handle instead); a gutter never shrinks below a 2rem IconButton, so the add bar's empty gutters keep the content
+// column aligned
+const _blockSx: SxProps = {
+  display: 'grid',
+  gridTemplateColumns: 'minmax(2rem, auto) minmax(0, 1fr) minmax(2rem, auto)',
+  alignItems: 'start',
+  columnGap: 0.5,
 } as const;
 
-const _addTextUserSx: SxProps = {
-  justifyContent: 'flex-start',
-  backgroundColor: 'primary.softBg',
-  '&:hover': { backgroundColor: 'primary.softHoverBg' },
+const _blockMobileSx: SxProps = {
+  ..._blockSx,
+  gridTemplateColumns: 'minmax(2rem, auto) minmax(0, 1fr)',
+} as const;
+
+// the add bar below the blocks, in the content column when the blocks have gutters
+const _editBarSx: SxProps = {
+  mt: 1.5, // the grid gap
+} as const;
+
+const _editBarGutteredSx: SxProps = {
+  ..._blockSx,
+  ..._editBarSx,
+} as const;
+
+const _editBarGutteredMobileSx: SxProps = {
+  ..._blockMobileSx,
+  ..._editBarSx,
+} as const;
+
+const _assistantReorderNoticeSx: SxProps = {
+  mb: 1,
+} as const;
+
+const _blockGutterSx: SxProps = {
+  display: 'flex',
+  flexDirection: 'column',
+  pl: 1.5, // undo the handle's inline margin
+  pt: 1,
+} as const;
+
+const _blockDeleteSx: SxProps = {
+  borderRadius: '50%',
+} as const;
+
+// under the handle, which pulls its block margins in
+const _blockDeleteStackedSx: SxProps = {
+  ..._blockDeleteSx,
+  ml: -1.5,
+  mt: 1.5,
+} as const;
+
+const _blockDeleteIconSx = {
+  fontSize: '1.25rem',
 } as const;
 
 
@@ -205,83 +266,63 @@ const CMTextNode = React.memo(function CMTextNode(props: {
 });
 
 
-// body layout: text-like nodes share a grid (hugging or stretching with the role); each attachment list is a
-// full-width row of its own, as before the render tree, so an attachment never widens the text column
+/** Edit mode: a node as one block, movable by its gutter handle and deletable from the right gutter (on mobile, under the handle). */
+function CMSortableBlock(props: { id: string, isMobile: boolean, deleteConfirm: string | null, onDelete?: () => void, children: React.ReactNode }) {
+  const { dragContainerSetRef, dragContainerStyle, dragHandle } = useDndDragHandleSortable(props.id, false, 'warning');
+  const { showPromisedOverlay } = useOverlayComponents();
+  const { isMobile, deleteConfirm, onDelete } = props;
 
-interface AttachmentRow {
-  kind: 'images' | 'documents';
-  fragments: readonly DMessageAttachmentFragment[];
-  editing: boolean;
+  // the dialog only when there is something to lose (null: an empty text block, which Done would drop anyway)
+  const deleteButton = !onDelete ? null : (
+    <IconButton
+      size='sm' variant='plain' color='warning' aria-label='Delete block' title='Delete this block'
+      onClick={async () => {
+        if (deleteConfirm && !await showPromisedOverlay('chat-message-delete-block', { rejectWithValue: false }, ({ onResolve, onUserReject }) =>
+          <ConfirmationModal
+            open onClose={onUserReject} onPositive={() => onResolve(true)}
+            title='Delete Block'
+            confirmationText={deleteConfirm}
+            positiveActionText='Delete'
+          />,
+        )) return;
+        onDelete();
+      }}
+      sx={isMobile ? _blockDeleteStackedSx : _blockDeleteSx}
+    >
+      <DeleteOutlineIcon sx={_blockDeleteIconSx} />
+    </IconButton>
+  );
+
+  return (
+    <Box ref={dragContainerSetRef} style={dragContainerStyle} sx={isMobile ? _blockMobileSx : _blockSx}>
+      <Box sx={_blockGutterSx}>{dragHandle}{isMobile && deleteButton}</Box>
+      <Box>{props.children}</Box>
+      {!isMobile && <Box>{deleteButton}</Box>}
+    </Box>
+  );
 }
 
-type BodySegment =
-  | { kind: 'grid', key: string, nodes: CMRenderNode[], emptyNotice?: boolean, addText?: boolean }
-  | { kind: 'row', key: string, row: AttachmentRow };
-
-/** Keyed by membership, not position: the list survives the mode switch, a reorder, and the removal of other members. */
-function _attachmentRowKey(kind: AttachmentRow['kind'], fragments: readonly DMessageAttachmentFragment[]): string {
-  let minId = fragments[0].fId;
-  for (const fragment of fragments)
-    if (fragment.fId < minId) minId = fragment.fId;
-  return `${kind}:${minId}`;
-}
-
-function _bodySegments(body: readonly CMRenderNode[], emptyNotice: boolean, addText: boolean): BodySegment[] {
-  const segments: BodySegment[] = [];
-  let grid: CMRenderNode[] | null = null;
-
-  const pushRow = (kind: AttachmentRow['kind'], fragments: readonly DMessageAttachmentFragment[], editing: boolean) =>
-    segments.push({ kind: 'row', key: _attachmentRowKey(kind, fragments), row: { kind, fragments, editing } });
-
-  for (const node of body) {
-    switch (node.kind) {
-      case 'images':
-      case 'documents':
-        grid = null;
-        pushRow(node.kind, node.fragments, false);
-        break;
-      case 'edit-attachments':
-        // one row per contiguous kind, keyed like the view rows so the lists keep their state across the mode switch
-        grid = null;
-        for (const fragment of node.fragments) {
-          const kind = isImagePart(fragment.part) ? 'images' : 'documents';
-          const last = segments[segments.length - 1];
-          if (last?.kind === 'row' && last.row.kind === kind && last.row.editing) {
-            const fragments = [...last.row.fragments, fragment];
-            segments[segments.length - 1] = { kind: 'row', key: _attachmentRowKey(kind, fragments), row: { kind, fragments, editing: true } };
-          } else
-            pushRow(kind, [fragment], true);
-        }
-        break;
-      default:
-        if (!grid) {
-          grid = [];
-          segments.push({ kind: 'grid', key: `grid:${node.key}`, nodes: grid });
-        }
-        grid.push(node);
-    }
+/** What the Delete dialog asks; null skips the dialog. */
+function _blockDeleteConfirm(node: CMRenderNode): string | null {
+  switch (node.kind) {
+    case 'edit-text':
+      return node.fragment.part.pt === 'text' && !node.fragment.part.text ? null : 'Delete this text block?';
+    case 'edit-attachments':
+      return node.fragments.length === 1 ? 'Delete this attachment?' : `Delete these ${node.fragments.length} attachments?`;
+    default:
+      return 'Delete this block?';
   }
-
-  if (emptyNotice && !segments.length)
-    segments.push({ kind: 'grid', key: 'grid:empty', nodes: [], emptyNotice: true });
-  if (addText) {
-    const last = segments[segments.length - 1];
-    if (last?.kind === 'grid') last.addText = true;
-    else segments.push({ kind: 'grid', key: 'grid:add-text', nodes: [], addText: true });
-  }
-  return segments;
 }
 
 
 /**
- * Renders a CMRenderTree: the citations row, then the body segments.
+ * Renders a CMRenderTree: the citations row, then the body grid.
  */
 export function CMRenderTreeNodes(props: {
 
   tree: CMRenderTree,
   inFluxFragmentId?: DMessageFragmentId,
   showEmptyNotice: boolean,
-  showAddText: boolean,
 
   contentScaling: ContentScaling,
   uiComplexityMode: UIComplexityMode,
@@ -296,11 +337,13 @@ export function CMRenderTreeNodes(props: {
   htmlRenderVariant?: AutoBlocksHtmlRenderVariant,
 
   editedFragmentIds: ReadonlySet<DMessageFragmentId> | null, // the fragments the edit session changed: their editors count as edited
+  editFocus?: { fragmentId: DMessageFragmentId, seq: number }, // the editor to focus, per request
+  editDrafts?: CMEditDrafts, // the session's drafts registry: the add controls take attachments (none: text only)
   setEditedText?: (fragmentId: DMessageFragmentId, value: string, applyNow: boolean) => void,
   onEditsApply: (withControl: boolean) => void,
   onEditsCancel: () => void,
 
-  onFragmentAddBlank?: () => void,
+  onFragmentAddText?: () => void,
   onFragmentDelete?: FragmentDeleteHandler,
   onFragmentReplace?: FragmentReplaceHandler,
   onFragmentsReorder?: FragmentsReorderHandler,
@@ -311,7 +354,7 @@ export function CMRenderTreeNodes(props: {
 
 }) {
 
-  const { tree, setEditedText } = props;
+  const { tree, setEditedText, onFragmentDelete } = props;
   const fromAssistant = props.messageRole === 'assistant';
   const fromUser = props.messageRole === 'user';
   const isEditing = tree.mode === 'edit';
@@ -324,8 +367,7 @@ export function CMRenderTreeNodes(props: {
     return first?.kind === 'citations' ? { citations: first, body: tree.nodes.slice(1) } : { citations: null, body: tree.nodes };
   }, [tree]);
 
-  const showEmptyNotice = props.showEmptyNotice && !isEditing;
-  const segments = React.useMemo(() => _bodySegments(body, showEmptyNotice, props.showAddText), [body, props.showAddText, showEmptyNotice]);
+  const showEmptyNotice = props.showEmptyNotice && !isEditing && !body.length;
 
   // solo placeholder: the data stream visualization while generating
   const showDataStreamViz =
@@ -338,7 +380,24 @@ export function CMRenderTreeNodes(props: {
   // input-transform notices are neutral infos: hidden (not removed) beside an error, where they'd read as its cause
   const noticesYieldToError = body.some(node => node.kind === 'error' || (node.kind === 'edit-text' && node.fragment.part.pt === 'error'));
 
-  if (!segments.length && !citations)
+  // block reordering: edit mode moves whole nodes; a drop permutes the blocks' fragments among the slots they held
+  const { onFragmentsReorder } = props;
+  const blockKeys = React.useMemo(() => body.filter(node => cmNodeFragments(node).length).map(node => node.key), [body]);
+  const canReorderBlocks = isEditing && (!fromAssistant || CMRT_ASSISTANT_BLOCK_REORDER) && !!onFragmentsReorder && blockKeys.length > 1;
+  const blockSensors = useDndDefaultSensors();
+  const handleBlocksDragEnd = React.useCallback((event: DragEndEvent) => {
+    dndDragEndReorder(event, blockKeys, reorderedKeys => {
+      const idsByKey = new Map(body.map(node => [node.key, cmNodeFragments(node).map(fragment => fragment.fId)]));
+      onFragmentsReorder?.(reorderedKeys.flatMap(key => idsByKey.get(key) ?? []));
+    });
+  }, [blockKeys, body, onFragmentsReorder]);
+
+  // the add bar: a new text block, and attachments at the end (the registry decides); none when the host is read-only
+  const editBar = !isEditing || (!props.editDrafts && !props.onFragmentAddText) ? null : (
+    <CMEditAttach variant='bar' drafts={props.editDrafts} isMobile={props.isMobile} onAddText={props.onFragmentAddText} />
+  );
+
+  if (!body.length && !showEmptyNotice && !citations && !editBar)
     return null;
 
 
@@ -397,9 +456,46 @@ export function CMRenderTreeNodes(props: {
         return <CMCitationsNode key={node.key} node={node} contentScaling={props.contentScaling} />;
 
       case 'images':
+        return (
+          <ImageAttachmentFragments
+            key={node.key}
+            imageAttachments={node.fragments}
+            contentScaling={props.contentScaling}
+            messageRole={props.messageRole}
+            onFragmentDelete={props.onFragmentDelete}
+          />
+        );
+
       case 'documents':
+        return (
+          <DocumentAttachmentFragments
+            key={node.key}
+            attachmentFragments={node.fragments}
+            messageRole={props.messageRole}
+            renderVariant='chat-message'
+            contentScaling={props.contentScaling}
+            isMobile={props.isMobile}
+            disableMarkdownText={props.disableMarkdownDocuments}
+            onFragmentDelete={props.onFragmentDelete}
+            onFragmentReplace={props.onFragmentReplace}
+          />
+        );
+
       case 'edit-attachments':
-        return null; // the attachment rows render outside the grids
+        return (
+          <EditAttachmentFragments
+            key={node.key}
+            fragments={node.fragments}
+            contentScaling={props.contentScaling}
+            messageRole={props.messageRole}
+            isMobile={props.isMobile}
+            disableMarkdownText={props.disableMarkdownDocuments}
+            drafts={props.editDrafts}
+            onFragmentDelete={props.onFragmentDelete}
+            onFragmentReplace={props.onFragmentReplace}
+            onFragmentsReorder={props.onFragmentsReorder}
+          />
+        );
 
       case 'reasoning':
         return (
@@ -574,6 +670,8 @@ export function CMRenderTreeNodes(props: {
             fragmentId={fragment.fId}
             contentScaling={props.contentScaling}
             enableRestart={enableRestartFromEdit}
+            placeholder={props.editedFragmentIds?.has(fragment.fId) && !editText ? 'New text' : undefined}
+            focusSeq={props.editFocus?.fragmentId === fragment.fId ? props.editFocus.seq : undefined}
             editedText={props.editedFragmentIds?.has(fragment.fId) ? editText : undefined}
             setEditedText={setEditedText}
             onSubmit={props.onEditsApply}
@@ -600,45 +698,14 @@ export function CMRenderTreeNodes(props: {
     }
   };
 
-  const renderRow = (key: string, row: AttachmentRow): React.ReactNode => row.kind === 'images' ? (
-    <ImageAttachmentFragments
-      key={key}
-      imageAttachments={row.fragments}
-      contentScaling={props.contentScaling}
-      messageRole={props.messageRole}
-      isEditing={row.editing}
-      onFragmentDelete={props.onFragmentDelete}
-      onFragmentReplace={row.editing ? props.onFragmentReplace : undefined}
-      onFragmentsReorder={row.editing ? props.onFragmentsReorder : undefined}
-    />
-  ) : (
-    <DocumentAttachmentFragments
-      key={key}
-      attachmentFragments={row.fragments}
-      messageRole={props.messageRole}
-      renderVariant='chat-message'
-      contentScaling={props.contentScaling}
-      isMobile={props.isMobile}
-      zenMode={zenMode}
-      allowSelection={!row.editing}
-      allowReordering={row.editing}
-      disableMarkdownText={props.disableMarkdownDocuments}
-      onFragmentDelete={props.onFragmentDelete}
-      onFragmentReplace={props.onFragmentReplace}
-      onFragmentsReorder={row.editing ? props.onFragmentsReorder : undefined}
-    />
-  );
+  const bodySx = (showDataStreamViz || isEditing || (fromAssistant && props.blocksStretch)) ? _bodyStretchSx : fromAssistant ? _bodyStartSx : _bodyEndSx;
 
-
-  const gridSx = (showDataStreamViz || isEditing || (fromAssistant && props.blocksStretch)) ? _stretchLayoutSx : fromAssistant ? _startLayoutSx : _endLayoutSx;
-
-  // every grid carries data-cm-body for hosts that measure the body; the aria-label names the first one
-  const firstGridKey = segments.find(segment => segment.kind === 'grid')?.key;
-  const bodyElements = segments.map(segment => segment.kind === 'row' ? renderRow(segment.key, segment.row) : (
-    <Box key={segment.key} aria-label={segment.key === firstGridKey ? 'message body' : undefined} data-cm-body='' sx={gridSx}>
+  // the body grid, when there is anything to show; hosts that measure the body look for data-cm-body
+  const bodyGrid = (!body.length && !showEmptyNotice) ? null : (
+    <Box aria-label='message body' data-cm-body='' sx={bodySx}>
 
       {/* Empty Message Block - if empty */}
-      {segment.emptyNotice && (
+      {showEmptyNotice && (
         <BlockOpEmpty
           text={`empty ${fromAssistant ? 'model ' : fromUser ? 'user ' : ''}message`}
           contentScaling={props.contentScaling}
@@ -646,23 +713,28 @@ export function CMRenderTreeNodes(props: {
         />
       )}
 
-      {segment.nodes.map(renderNode)}
-
-      {/* Edit zero-state: nothing to type into yet */}
-      {segment.addText && (
-        <Button
-          aria-label='Add message text'
-          color={fromAssistant ? 'neutral' : 'primary'}
-          variant='outlined'
-          onClick={props.onFragmentAddBlank}
-          sx={fromAssistant ? _addTextAssistantSx : _addTextUserSx}
+      {body.map(node => !canReorderBlocks || !cmNodeFragments(node).length ? renderNode(node) : (
+        <CMSortableBlock
+          key={node.key}
+          id={node.key}
+          isMobile={props.isMobile}
+          deleteConfirm={_blockDeleteConfirm(node)}
+          onDelete={!onFragmentDelete ? undefined : () => cmNodeFragments(node).forEach(fragment => onFragmentDelete(fragment.fId))}
         >
-          Add text
-        </Button>
-      )}
+          {renderNode(node)}
+        </CMSortableBlock>
+      ))}
 
     </Box>
-  ));
+  );
+
+  const sortableBody = !canReorderBlocks ? bodyGrid : (
+    <DndContext sensors={blockSensors} modifiers={dndModifiers} onDragEnd={handleBlocksDragEnd}>
+      <SortableContext items={blockKeys} strategy={verticalListSortingStrategy}>
+        {bodyGrid}
+      </SortableContext>
+    </DndContext>
+  );
 
   return <>
 
@@ -672,8 +744,18 @@ export function CMRenderTreeNodes(props: {
       </Box>
     )}
 
+    {/* assistant blocks move at the user's risk */}
+    {canReorderBlocks && fromAssistant && (
+      <Typography level='body-xs' color='warning' sx={_assistantReorderNoticeSx}>
+        Editing or moving the blocks of a model reply can break the next request: some models need their original text, reasoning and tool calls.
+      </Typography>
+    )}
+
     {/* links in the text resolve to this message's hosted-file blocks; no provider when there are none, so text-only messages pay nothing */}
-    {body.some(node => node.kind === 'hosted-resource') ? <HostedLinksProvider>{bodyElements}</HostedLinksProvider> : bodyElements}
+    {body.some(node => node.kind === 'hosted-resource') ? <HostedLinksProvider>{sortableBody}</HostedLinksProvider> : sortableBody}
+
+    {/* the add bar, aligned with the blocks' content column */}
+    {editBar && (!canReorderBlocks ? <Box sx={_editBarSx}>{editBar}</Box> : props.isMobile ? <Box sx={_editBarGutteredMobileSx}><Box />{editBar}</Box> : <Box sx={_editBarGutteredSx}><Box />{editBar}<Box /></Box>)}
 
   </>;
 }
