@@ -3,7 +3,7 @@ import { serverSideId } from '~/server/trpc/trpc.nanoid';
 
 import { objectDeepCloneWithStringLimit, objectEstimateJsonSize, objectStringifyWithIndentDepth } from '~/common/util/objectUtils';
 
-import type { AixWire_Particles } from '../../api/aix.wiretypes';
+import { AixWire_Particles } from '../../api/aix.wiretypes';
 
 import type { IParticleTransmitter, ParticleCGDialectEndReason, ParticleServerLogLevel } from './parsers/IParticleTransmitter';
 
@@ -11,6 +11,24 @@ import type { IParticleTransmitter, ParticleCGDialectEndReason, ParticleServerLo
 // configuration
 const ENABLE_EXTRA_DEV_MESSAGES = true;
 const DEBUG_REQUEST_MAX_STRING_BYTES = 2048;
+
+// query-string credentials (Gemini's `?key=`, and anything named like one) never reach the client
+const DEBUG_REQUEST_URL_SECRET_PARAMS = new Set(['key', 'api_key', 'apikey', 'api-key', 'token', 'access_token', 'sig', 'signature']);
+
+function _redactUrlSecrets(url: string): string {
+  try {
+    const parsed = new URL(url);
+    let redacted = false;
+    for (const name of [...parsed.searchParams.keys()])
+      if (DEBUG_REQUEST_URL_SECRET_PARAMS.has(name.toLowerCase())) {
+        parsed.searchParams.set(name, 'hidden');
+        redacted = true;
+      }
+    return redacted ? parsed.toString() : url;
+  } catch {
+    return url.split('?')[0]; // unparsable: drop the whole query string
+  }
+}
 
 /**
  * This is enabled by default because probabilistically unlikely -- however there will be false positives/negatives.
@@ -142,7 +160,7 @@ export class ChatGenerateTransmitter implements IParticleTransmitter {
       cg: '_debugDispatchRequest',
       security: 'dev-env',
       dispatchRequest: {
-        url: url,
+        url: hideSensitiveData ? _redactUrlSecrets(url) : url,
         headers: hideSensitiveData ? '(hidden sensitive data)' : JSON.stringify(headers, null, 2),
         body: processedBody,
         bodySize: body ? objectEstimateJsonSize(body, 'aix.addDebugRequest') : 0,
@@ -390,6 +408,22 @@ export class ChatGenerateTransmitter implements IParticleTransmitter {
 
     // queue the issue
     this.endMessagePart();
+
+    // after a clean or truncated stop reason the response content is final: a later issue is a notice, never content -
+    // an error fragment would make the stored outcome 'failed' (a clean stop is stored as no stop reason, so the trailing
+    // error decides) and be replayed to the model on the next turn. After an error stop reason, the issue is its explanation.
+    if (this.tokenStopReason !== undefined && AixWire_Particles.gcStopReasonRow(this.tokenStopReason)?.class !== 'error') {
+      this.transmissionQueue.push({
+        p: 'vnt',
+        nt: 'late-issue',
+        issueId,
+        text: 'Issue after the response ended',
+        detail: issueText.trim(),
+        level: 'warn',
+      });
+      return;
+    }
+
     this.transmissionQueue.push({
       cg: 'issue',
       issueId,

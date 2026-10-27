@@ -6,11 +6,14 @@ import { Box, IconButton, Link, Typography } from '@mui/joy';
 
 import { llmsGetVendorIcon } from '~/modules/llms/components/LLMVendorIcon';
 
-import type { DMessage } from '~/common/stores/chat/chat.message';
+import type { DMessage, DMessageRole } from '~/common/stores/chat/chat.message';
 import type { Immutable } from '~/common/types/immutable.types';
+import type { FormRadioOption } from '~/common/components/forms/FormRadioControl';
+import { FormChipGroupControl } from '~/common/components/forms/FormChipGroupControl';
 import { GoodModal } from '~/common/components/modals/GoodModal';
 import { PhGearSixIcon } from '~/common/components/icons/phosphor/PhGearSixIcon';
 import { TooltipOutlined } from '~/common/components/TooltipOutlined';
+import { capitalizeFirstLetter } from '~/common/util/textUtils';
 import { optimaActions } from '~/common/layout/optima/useOptima';
 import { tooltipMetricsGridSx, prettyMessageMetrics, prettyShortChatModelName, prettyTokenStopReason } from '~/common/util/dMessageUtils';
 import { useLLMExists } from '~/common/stores/llms/llms.hooks';
@@ -30,6 +33,7 @@ const modelHeaderSx: SxProps = {
   minWidth: 0,
   borderRadius: 'sm',
   backgroundColor: 'background.level1',
+  boxShadow: 'inset 1px 1px 4px -2px rgba(0, 0, 0, 0.2)',
 };
 
 const timestampSx: SxProps = {
@@ -37,14 +41,21 @@ const timestampSx: SxProps = {
   color: 'text.tertiary',
 };
 
+// 'system' is not offered: AIX takes the system instruction from the first message only
+const _roleOptions: FormRadioOption<Exclude<DMessageRole, 'system'>>[] = [
+  { value: 'user', label: 'User' },
+  { value: 'assistant', label: 'Assistant' },
+];
+
 
 export function ChatMessageInfoPopup(props: {
   open: boolean,
   onClose: () => void,
   message: Immutable<DMessage>,
+  onRoleChange?: (role: DMessageRole) => void,
 }) {
 
-  const { message, onClose } = props;
+  const { message, onClose, onRoleChange } = props;
   const { generator, created, updated, role } = message;
 
   const isAix = generator?.mgt === 'aix';
@@ -65,7 +76,7 @@ export function ChatMessageInfoPopup(props: {
     <GoodModal
       open={props.open}
       onClose={onClose}
-      title='Message Info'
+      title={`${capitalizeFirstLetter(role)} Message Info`}
       hideBottomClose
       unfilterBackdrop
       sx={{ minWidth: { xs: 300, sm: 400 }, maxWidth: 480 }}
@@ -98,8 +109,20 @@ export function ChatMessageInfoPopup(props: {
 
         {/* Message metadata */}
         <Box sx={tooltipMetricsGridSx}>
-          <div>Role:</div>
-          <div>{role}</div>
+          {(onRoleChange && role !== 'system') ? <>
+            <Box sx={{ alignSelf: 'center' }}>Role:</Box>
+            <FormChipGroupControl
+              size='sm'
+              title=''
+              renderVariant='solid'
+              options={_roleOptions}
+              value={role}
+              onChange={value => value !== role && onRoleChange(value)}
+            />
+          </> : <>
+            <div>Role:</div>
+            <div>{role}</div>
+          </>}
           {/*{message.tokenCount > 0 && <>*/}
           {/*  <div>Tokens:</div>*/}
           {/*  <div>{message.tokenCount.toLocaleString()} (visible text ~approx)</div>*/}
