@@ -55,6 +55,11 @@ const OPENAI_COMPATIBLE_PROVIDERS: VerifiedProvider[] = [
   { id: 'unsloth', label: 'Unsloth', host: 'http://localhost:8888', hostMatch: 'localhost:8888', category: 'Local Servers', description: 'Local GGUF serving and fine-tuning (Studio / unsloth run)', docsUrl: 'https://unsloth.ai/docs/basics/api', icon: UnslothIcon },
 ];
 
+// Find a provider by its id (the docs reader's icon keys use these ids)
+export function findOpenAIAutoProviderById(id: string): VerifiedProvider | undefined {
+  return OPENAI_COMPATIBLE_PROVIDERS.find(p => p.id === id);
+}
+
 // Find matching provider based on current host value
 export function findMatchingOpenAIAutoProvider(host: string): VerifiedProvider | undefined {
   if (!host) return undefined;

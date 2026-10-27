@@ -11,6 +11,7 @@ import type { AixReattachMode } from '~/modules/aix/client/aix.client';
 import type { DiagramConfig } from '~/modules/aifn/digrams/DiagramsModal';
 import { ERCDiffContextProvider } from '~/modules/blocks/enhanced-code/ERCDiffContext';
 import { speakText, speakTextSurfaceFailure } from '~/modules/speex/speex.client';
+import { WhatsNewEmptyChatLine } from '~/modules/news/components/WhatsNewIndicators';
 
 import type { ConversationHandler } from '~/common/chat-overlay/ConversationHandler';
 import type { DLLMContextTokens } from '~/common/stores/llms/llms.types';
@@ -25,7 +26,7 @@ import { useChatOverlayStore } from '~/common/chat-overlay/store-perchat_vanilla
 import { useScrollToBottom } from '~/common/scroll-to-bottom/useScrollToBottom';
 
 import { DConversationId, excludeSystemMessages } from '~/common/stores/chat/chat.conversation';
-import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem } from '~/common/stores/chat/chat.message';
+import { createDMessageFromFragments, createDMessageTextContent, DMessage, DMessageGenerator, DMessageId, DMessageRole, DMessageUserFlag, DMetaReferenceItem } from '~/common/stores/chat/chat.message';
 import { createTextContentFragment, DMessageFragment, DMessageFragmentId } from '~/common/stores/chat/chat.fragments';
 import { orderedUserFragments } from '~/common/stores/chat/chat.fragment-order';
 import { useChatStore } from '~/common/stores/chat/store-chats';
@@ -51,6 +52,7 @@ export function ChatMessageList(props: {
   chatLLMContextTokens: DLLMContextTokens,
   chatLLMSupportsImages: boolean,
   fitScreen: boolean,
+  isFocused: boolean,
   isMobile: boolean,
   isMessageSelectionMode: boolean,
   onConversationBranch: (conversationId: DConversationId, messageId: string, addSplitPane: boolean) => void,
@@ -121,6 +123,9 @@ export function ChatMessageList(props: {
             await onConversationExecuteHistory(conversationId);
           }
         });
+        break;
+      case undefined:
+        // an example object without an action: nothing to run (string examples are handled above)
         break;
     }
   }, [conversationHandler, conversationId, onConversationExecuteHistory, props.chatLLMSupportsImages]);
@@ -271,6 +276,10 @@ export function ChatMessageList(props: {
     conversationHandler?.messageFragmentsReplace(messageId, fragments);
   }, [conversationHandler]);
 
+  const handleMessageSetRole = React.useCallback((messageId: DMessageId, role: DMessageRole) => {
+    conversationHandler?.messageEdit(messageId, { role }, false, true);
+  }, [conversationHandler]);
+
   const handleMessageToggleUserFlag = React.useCallback((messageId: DMessageId, userFlag: DMessageUserFlag, _maxPerConversation?: number) => {
     conversationHandler?.messageToggleUserFlag(messageId, userFlag, true /* touch */);
     // Note: we don't support 'maxPerConversation' yet, which is supposed to turn off the flag from the beginning if it's too numerous
@@ -322,9 +331,9 @@ export function ChatMessageList(props: {
 
   const { isMessageSelectionMode, setIsMessageSelectionMode } = props;
 
-  useGlobalShortcuts('ChatMessageList_Selection', React.useMemo(() => !isMessageSelectionMode ? [] : [
+  useGlobalShortcuts('ChatMessageList_Selection', React.useMemo(() => !props.isFocused || !isMessageSelectionMode ? [] : [
     { key: ShortcutKey.Esc, action: () => setIsMessageSelectionMode(false), description: 'Close Cleanup', level: 10 - 1 },
-  ], [isMessageSelectionMode, setIsMessageSelectionMode]));
+  ], [isMessageSelectionMode, props.isFocused, setIsMessageSelectionMode]));
 
 
   // text-diff functionality: only diff the last complete message, and they're similar in size
@@ -378,11 +387,13 @@ export function ChatMessageList(props: {
 
 
   if (!filteredMessages.length)
-    return (
-      <Box sx={{ ...props.sx }}>
+    return <>
+      <Box sx={props.sx}>
         <PersonaSelector conversationId={conversationId} isMobile={props.isMobile} runExample={handleRunExample} />
       </Box>
-    );
+      {/* next to the growing box, in the scroller's column: at the bottom, full width */}
+      <WhatsNewEmptyChatLine />
+    </>;
 
   return <ERCDiffContextProvider title='Compare Outputs' isMobile={props.isMobile} contentScaling={contentScaling}>
 
@@ -428,6 +439,7 @@ export function ChatMessageList(props: {
               upstreamResumeMode={resumeInFlight[message.id]}
               onMessageDelete={handleMessageDelete}
               onMessageFragmentsReplace={handleMessageReplaceFragments}
+              onMessageSetRole={handleMessageSetRole}
               onMessageToggleUserFlag={handleMessageToggleUserFlag}
               onMessageTruncate={handleMessageTruncate}
               onReattachAsFile={handleReattachAsFile}

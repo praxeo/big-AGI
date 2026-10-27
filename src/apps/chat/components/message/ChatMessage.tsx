@@ -15,7 +15,8 @@ import { ModelVendorAnthropic } from '~/modules/llms/vendors/anthropic/anthropic
 import { useERCDiffActions } from '~/modules/blocks/enhanced-code/ERCDiffContext';
 import { vertexLinksCountInFragments, vertexLinksResolveFragments } from '~/modules/google/vertexai.client';
 
-import { DMessage, DMessageGenerator, DMessageId, DMessageUserFlag, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, MESSAGE_FLAG_NOTIFY_COMPLETE, MESSAGE_FLAG_STARRED, MESSAGE_FLAG_VND_ANT_CACHE_AUTO, MESSAGE_FLAG_VND_ANT_CACHE_USER, messageFragmentsInFluxId, messageFragmentsReduceText, messageHasUserFlag, messageWasOutOfTokens } from '~/common/stores/chat/chat.message';
+import { DMessage, DMessageGenerator, DMessageId, DMessageRole, DMessageUserFlag, DMetaReferenceItem, MESSAGE_FLAG_AIX_SKIP, MESSAGE_FLAG_NOTIFY_COMPLETE, MESSAGE_FLAG_STARRED, MESSAGE_FLAG_VND_ANT_CACHE_AUTO, MESSAGE_FLAG_VND_ANT_CACHE_USER, messageFragmentsInFluxId, messageFragmentsReduceText, messageHasUserFlag } from '~/common/stores/chat/chat.message';
+import { messageOutcome, messageOutcomeColor } from '~/common/stores/chat/chat.message.outcome';
 import { Release } from '~/common/app.release';
 import { TooltipOutlined } from '~/common/components/TooltipOutlined';
 import { adjustContentScaling, themeScalingMap } from '~/common/app.theme';
@@ -338,6 +339,7 @@ export function ChatMessage(props: {
   upstreamResumeMode?: AixReattachMode, // set by parent while a resume is in flight on this message
   onMessageDelete?: (messageId: string) => void,
   onMessageFragmentsReplace?: (messageId: DMessageId, fragments: DMessageFragment[]) => void, // the one write, per edit or single operation; without it the message is read-only
+  onMessageSetRole?: (messageId: DMessageId, role: DMessageRole) => void,
   onMessageToggleUserFlag?: (messageId: string, flag: DMessageUserFlag, maxPerConversation?: number) => void,
   onMessageTruncate?: (messageId: string) => void,
   onReattachAsFile?: (file: File) => void,
@@ -394,7 +396,8 @@ export function ChatMessage(props: {
   const fromUser = messageRole === 'user';
   const userMarkdown = labsUserMarkdown !== userMarkdownFlipped;
   const messageHasBeenEdited = !!messageUpdated;
-  const msgGenOutOfTokens = messageWasOutOfTokens(messageGenerator);
+  const msgOutcome = messageOutcome(props.message);
+  const msgGenOutOfTokens = msgOutcome === 'truncated';
 
   const isUserMessageSkipped = messageHasUserFlag(props.message, MESSAGE_FLAG_AIX_SKIP);
   const isUserStarred = messageHasUserFlag(props.message, MESSAGE_FLAG_STARRED);
@@ -455,7 +458,7 @@ export function ChatMessage(props: {
   // const wordsDiff = useWordsDifference(textSubject, props.diffPreviousText, showDiff);
 
 
-  const { onMessageAssistantFrom, onMessageDelete, onMessageContinue, onMessageToggleUserFlag, onMessageUpstreamResume, onMessageUpstreamDetach, onMessageUpstreamDelete } = props;
+  const { onMessageAssistantFrom, onMessageDelete, onMessageContinue, onMessageSetRole, onMessageToggleUserFlag, onMessageUpstreamResume, onMessageUpstreamDetach, onMessageUpstreamDelete } = props;
 
   // '+ Text': a new empty block at the end, focused; while the last block is still empty, focus that one instead
   const handleFragmentNew = React.useCallback(() => {
@@ -518,6 +521,10 @@ export function ChatMessage(props: {
   const handleMessageDelete = React.useCallback(() => {
     onMessageDelete?.(messageId);
   }, [messageId, onMessageDelete]);
+
+  const handleMessageSetRole = React.useCallback((role: DMessageRole) => {
+    onMessageSetRole?.(messageId, role);
+  }, [messageId, onMessageSetRole]);
 
   const handleMessageUserFlagToggle = React.useCallback((flag: DMessageUserFlag, maxPerConversation?: number) => {
     onMessageToggleUserFlag?.(messageId, flag, maxPerConversation);
@@ -808,7 +815,8 @@ export function ChatMessage(props: {
 
 
   // style
-  const backgroundColor = messageBackground(messageRole, userCommandApprox, messageHasBeenEdited, false /*isAssistantError && !errorMessage*/, msgGenOutOfTokens);
+  const msgOutcomeColor = messageOutcomeColor(msgOutcome);
+  const backgroundColor = messageBackground(messageRole, userCommandApprox, messageHasBeenEdited, msgOutcomeColor === 'warning' ? 'warning' : undefined /* chat tints truncation only: errors render inline, a stop in chat is usually deliberate */);
 
   const listItemSx: SxProps = React.useMemo(() => ({
     // vars
@@ -1181,6 +1189,7 @@ export function ChatMessage(props: {
           open
           onClose={handleInfoClose}
           message={props.message}
+          onRoleChange={(!onMessageSetRole || messagePendingIncomplete) ? undefined : handleMessageSetRole}
         />
       )}
 

@@ -1010,9 +1010,6 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
         break;
     }
 
-    // Set the determined stop reason
-    pt.setTokenStopReason(tokenStopReason);
-
     // -> Output[]
     for (const oItem of response.output) {
 
@@ -1188,6 +1185,9 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
       }
 
     } // .output[]
+
+    // Set the determined stop reason - after the output, which can still fail to parse
+    pt.setTokenStopReason(tokenStopReason);
 
     // -> Status
     // .status: check for the status
@@ -1403,6 +1403,9 @@ function _imageGenerationMimeType(item: { output_format?: string, result?: strin
       return 'image/jpeg';
     case 'png':
       return 'image/png';
+    case undefined:
+      // no output_format: sniffed below
+      break;
   }
   const b64Head = item?.result?.slice(0, 5) ?? '';
   if (b64Head.startsWith('UklGR')) return 'image/webp'; // 'RIFF....WEBP'

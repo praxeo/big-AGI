@@ -189,6 +189,7 @@ export function AppChat() {
     // focused
     title: focusedChatTitle,
     isEmpty: isFocusedChatEmpty,
+    lastMessageRole: focusedLastMessageRole,
     conversationIdx: focusedChatNumber,
     // all
     hasConversations,
@@ -198,6 +199,8 @@ export function AppChat() {
     branchConversation,
     deleteConversations,
   } = useConversation(focusedPaneConversationId);
+
+  const canRegenerateFocusedChat = focusedLastMessageRole === 'user' || focusedLastMessageRole === 'assistant';
 
   // this will be used for the side panel
   // const focusedConversationWorkspaceId = workspaceForConversationIdentity(focusedPaneConversationId);
@@ -291,10 +294,10 @@ export function AppChat() {
     const cHandler = ConversationsManager.getHandler(focusedPaneConversationId);
     if (!cHandler.isValid()) return;
     const inputHistory = cHandler.historyViewHeadOrThrow('chat-regenerate-shortcut');
-    if (!inputHistory.length) return;
+    const lastMessage = inputHistory.at(-1);
+    if (!lastMessage || lastMessage.role === 'system') return;
 
     // remove the last message if assistant's
-    const lastMessage = inputHistory[inputHistory.length - 1];
     if (lastMessage.role === 'assistant')
       cHandler.historyTruncateTo(lastMessage.id, -1);
 
@@ -568,10 +571,10 @@ export function AppChat() {
   }, []);
 
   useGlobalShortcuts('AppChat', React.useMemo(() => [
-    // focused conversation (excluded when Beam is open so the keystroke passes through to the browser)
-    ...(beamOpenStoreInFocusedPane ? [] : [
-      { key: 'z', ctrl: true, shift: true, disabled: isFocusedChatEmpty, action: handleMessageRegenerateLastInFocusedPane, description: 'Retry' },
-      { key: 'b', ctrl: true, shift: true, disabled: isFocusedChatEmpty, action: handleMessageBeamLastInFocusedPane, description: 'Beam Edit' },
+    // focused conversation (excluded without a chat head or when Beam is open)
+    ...(beamOpenStoreInFocusedPane || !canRegenerateFocusedChat ? [] : [
+      { key: 'z', ctrl: true, shift: true, action: handleMessageRegenerateLastInFocusedPane, description: 'Retry' },
+      { key: 'b', ctrl: true, shift: true, action: handleMessageBeamLastInFocusedPane, description: 'Beam Edit' },
     ]),
     { key: 'o', ctrl: true, action: handleConversationsImportFormFilePicker },
     { key: 's', ctrl: true, action: () => handleFileSaveConversation(focusedPaneConversationId) },
@@ -592,7 +595,7 @@ export function AppChat() {
     { key: 'o', ctrl: true, shift: true, action: handleOpenChatLlmOptions },
     // fun modes (live svg)
     { key: 's', ctrl: true, shift: true, action: () => setLiveSvgModeActive(prev => !prev) },
-  ], [beamOpenStoreInFocusedPane, focusedPaneConversationId, handleConversationNewInFocusedPane, handleConversationReset, handleConversationsImportFormFilePicker, handleDeleteConversations, handleFileSaveConversation, handleMessageBeamLastInFocusedPane, handleMessageRegenerateLastInFocusedPane, handleMoveFocus, handleNavigateHistoryInFocusedPane, handleOpenChatLlmOptions, isFocusedChatEmpty]));
+  ], [beamOpenStoreInFocusedPane, canRegenerateFocusedChat, focusedPaneConversationId, handleConversationNewInFocusedPane, handleConversationReset, handleConversationsImportFormFilePicker, handleDeleteConversations, handleFileSaveConversation, handleMessageBeamLastInFocusedPane, handleMessageRegenerateLastInFocusedPane, handleMoveFocus, handleNavigateHistoryInFocusedPane, handleOpenChatLlmOptions, isFocusedChatEmpty]));
 
 
   return <>
@@ -713,6 +716,7 @@ export function AppChat() {
                   chatLLMContextTokens={getLLMContextTokens(chatLLM) ?? null}
                   chatLLMSupportsImages={chatLLM?.interfaces?.includes(LLM_IF_OAI_Vision) ?? false}
                   fitScreen={isMobile || isMultiPane}
+                  isFocused={_paneIsFocused}
                   isMobile={isMobile}
                   isMessageSelectionMode={isMessageSelectionMode}
                   setIsMessageSelectionMode={setIsMessageSelectionMode}
@@ -728,6 +732,7 @@ export function AppChat() {
               {_paneBeamIsOpen && (
                 <ChatBeamWrapper
                   beamStore={_paneBeamStoreApi}
+                  isFocused={_paneIsFocused}
                   isMobile={isMobile}
                   inlineSx={chatBeamWrapperSx}
                 />

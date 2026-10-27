@@ -24,7 +24,7 @@ export const Release = {
   // this is here to trigger revalidation of data, e.g. models refresh
   Monotonics: {
     Aix: 92,
-    NewsVersion: 210,
+    NewsVersion: 213,
   },
 
   // Frontend: pretty features
@@ -68,6 +68,5 @@ export const BaseProduct = {
   NewsSite: 'https://big-agi.com/changes',
   OpenSupportDiscord: 'https://discord.gg/MkH4qj2Jp9',
   OpenSourceRepo: 'https://github.com/enricoros/big-agi',
-  ReleaseNotes: '',
   SupportForm: (_userId?: string) => 'https://github.com/enricoros/big-AGI/issues/new?template=ai-triage.yml',
 } as const;

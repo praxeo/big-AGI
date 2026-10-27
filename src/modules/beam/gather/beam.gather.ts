@@ -9,6 +9,7 @@ import type { DMessageFragment } from '~/common/stores/chat/chat.fragments';
 import { agiUuid } from '~/common/util/idUtils';
 
 import { CUSTOM_FACTORY_ID, FFactoryId, findFusionFactory, FUSION_FACTORIES, FUSION_FACTORY_DEFAULT } from './instructions/beam.gather.factories';
+import type { BeamStatus } from '../beam.status';
 import { RootStoreSlice } from '../store-beam_vanilla';
 import { ScatterStoreSlice } from '../scatter/beam.scatter';
 import { beamMergeStreamedGuts, beamReattachStream } from '../beam.reattach';
@@ -21,12 +22,7 @@ import { updateBeamLastConfig } from '../store-module-beam';
 
 type BFusionId = string;
 
-type BFusionStage =
-  | 'idle'      // at the beginning, never go back here
-  | 'fusing'    // in progress (progressX is defined)
-  | 'success'   // completed successfully
-  | 'stopped'   // aborted by the user
-  | 'error';    // failed (fusionIssue is defined)
+type BFusionStage = BeamStatus; // shared with rays: idle | running | completed | truncated | failed (errorText may be set) | aborted (by the user)
 
 
 export interface BFusion {
@@ -87,11 +83,11 @@ export function fusionIsWaiting(fusion: BFusion | null): boolean {
 }
 
 export function fusionIsFusing(fusion: BFusion | null): boolean {
-  return fusion?.stage === 'fusing';
+  return fusion?.stage === 'running';
 }
 
 export function fusionIsStopped(fusion: BFusion | null): boolean {
-  return fusion?.stage === 'stopped';
+  return fusion?.stage === 'aborted';
 }
 
 export function fusionIsUsableOutput(fusion: BFusion | null): boolean {
@@ -99,7 +95,7 @@ export function fusionIsUsableOutput(fusion: BFusion | null): boolean {
 }
 
 export function fusionIsError(fusion: BFusion | null): boolean {
-  return fusion?.stage === 'error' || fusion?.errorText !== undefined;
+  return fusion?.stage === 'failed' || fusion?.errorText !== undefined;
 }
 
 
@@ -273,7 +269,7 @@ export const createGatherSlice: StateCreator<RootStoreSlice & ScatterStoreSlice 
     if (!fusion) return;
 
     // stop if fusing, or waiting to
-    if (fusion.stage === 'fusing' || fusion.inputsWait)
+    if (fusion.stage === 'running' || fusion.inputsWait)
       return gatherStopFusion(fusion);
 
     // start: update the model (NOTE: keep the same per-fusion)
@@ -309,7 +305,7 @@ export const createGatherSlice: StateCreator<RootStoreSlice & ScatterStoreSlice 
     _get().fusions.forEach(fusion => fusion.inputsWait?.cancel()),
 
   // Gemini Interactions (Deep Research) resume for a merge: re-stream (replay) or one-shot fetch (snapshot)
-  // the upstream-stored run into the fusion output. Enters 'fusing' so the header Stop aborts it (= detach,
+  // the upstream-stored run into the fusion output. Enters 'running' so the header Stop aborts it (= detach,
   // the background run survives) and the resume block hides. See kb/modules/LLM-gemini-interactions.md.
   fusionReattach: (fusionId: BFusionId, mode: AixReattachMode) => {
     const { fusions, _fusionUpdate } = _get();
@@ -326,7 +322,7 @@ export const createGatherSlice: StateCreator<RootStoreSlice & ScatterStoreSlice 
       abortSignal: abortController.signal,
       onMessageUpdate: (guts, completed) => _fusionUpdate(fusionId, (fusion) => fusion.outputDMessage ? ({ outputDMessage: beamMergeStreamedGuts(fusion.outputDMessage, guts, completed) }) : {}),
       onTerminal: (outcome) => _fusionUpdate(fusionId, (fusion) => ({
-        stage: (outcome === 'completed') ? 'success' : (outcome === 'failed') ? 'error' : 'stopped',
+        stage: outcome,
         fusingAbortController: undefined,
         outputDMessage: fusion.outputDMessage ? { ...fusion.outputDMessage, pendingIncomplete: undefined } : fusion.outputDMessage,
       })),
@@ -334,7 +330,7 @@ export const createGatherSlice: StateCreator<RootStoreSlice & ScatterStoreSlice 
 
     // optimistic: enter fusing (header shows Stop, resume block hides)
     _fusionUpdate(fusionId, (fusion) => ({
-      stage: 'fusing',
+      stage: 'running',
       errorText: undefined,
       fusingAbortController: abortController,
       outputDMessage: fusion.outputDMessage ? { ...fusion.outputDMessage, pendingIncomplete: true } : fusion.outputDMessage,
