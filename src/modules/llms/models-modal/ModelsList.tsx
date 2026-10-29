@@ -24,6 +24,8 @@ import { useUIPreferencesStore } from '~/common/stores/store-ui';
 import type { IModelVendor } from '../vendors/IModelVendor';
 import { findModelVendor } from '../vendors/vendors.registry';
 
+import { ENABLE_STARRING_ICON } from './LLMOptionsModal';
+
 
 // configuration
 const SHOW_LLM_INTERFACES = false;
@@ -42,6 +44,9 @@ const styles = {
       xs: 0.5,
       md: 1,
     } as const,
+
+    // StarIcons.tsx exported styles to color and resize the toggle stars
+    ...starredToggleStyle,
   } as const,
   modelText: {
     flex: 1,
@@ -97,7 +102,7 @@ export const ModelItem = React.memo(function ModelItem(props: {
 }) {
 
   // derived
-  const { llm, domains, onModelClicked, onModelSetHidden /*, onModelSetStarred*/ } = props;
+  const { llm, domains, onModelClicked, onModelSetHidden, onModelSetStarred } = props;
 
   const seemsFree = isLLMChatFree_cached(llm);
   const isHidden = isLLMHidden(llm);
@@ -129,10 +134,10 @@ export const ModelItem = React.memo(function ModelItem(props: {
     onModelSetHidden?.(llm.id, false);
   }, [llm.id, onModelSetHidden]);
 
-  // const handleLLMToggleStar = React.useCallback((event: React.MouseEvent) => {
-  //   event.stopPropagation();
-  //   onModelSetStarred(llm.id, !llm.userStarred);
-  // }, [llm.id, llm.userStarred, onModelSetStarred]);
+  const handleLLMToggleStar = React.useCallback((event: React.MouseEvent) => {
+    event.stopPropagation();
+    onModelSetStarred(llm.id, !llm.userStarred);
+  }, [llm.id, llm.userStarred, onModelSetStarred]);
 
 
   // label will be of the form "Model Name (Date)" - here we extract the date
@@ -206,18 +211,25 @@ export const ModelItem = React.memo(function ModelItem(props: {
         sx={styles.liButton}
       >
 
+        {/* Star Toggle */}
+        {(ENABLE_STARRING_ICON || llm.userStarred) && <IconButton size='sm' onClick={handleLLMToggleStar} sx={absorbListPadding}>
+          <StarredToggle isStarred={!!llm.userStarred} />
+        </IconButton>}
+
         {/* Model Name */}
         {SHOW_LLM_TOOLTIPS ? (
           <GoodTooltip title={tooltip}>
             <Box sx={isHidden ? styles.modelHiddenText : isCustomized ? styles.modelCustomizedText : styles.modelText} className='agi-ellipsize'>
-              {(/*props.isMobile &&*/ llm.userStarred) ? `${STAR_EMOJI} ${llmLabel}` : llmLabel}
+              {(llm.userStarred && !ENABLE_STARRING_ICON) ? `${STAR_EMOJI} ${llmLabel}` : llmLabel}
+              {/*{llm.label}*/}
               {/*{labelWithoutDate}{labelDate && <Box component='span' sx={{ typography: 'body-sm',color: isHidden ? 'neutral.plainDisabledColor' : undefined  }}> · ({labelDate})</Box>}*/}
               {/*{llm.interfaces.includes(LLM_IF_OAI_Reasoning) && <span style={styles.styleNameChip}>🧠</span>}*/}
             </Box>
           </GoodTooltip>
         ) : (
           <Box sx={isHidden ? styles.modelHiddenText : isCustomized ? styles.modelCustomizedText : styles.modelText} className='agi-ellipsize'>
-            {(/*props.isMobile &&*/ llm.userStarred) ? `${STAR_EMOJI} ${llmLabel}` : llmLabel}
+            {(llm.userStarred && !ENABLE_STARRING_ICON) ? `${STAR_EMOJI} ${llmLabel}` : llmLabel}
+            {/*{llm.label}*/}
             {/*{labelWithoutDate}{labelDate && <Box component='span' sx={{ typography: 'body-sm',color: isHidden ? 'neutral.plainDisabledColor' : undefined  }}> · ({labelDate})</Box>}*/}
             {/*{llm.interfaces.includes(LLM_IF_OAI_Reasoning) && <span style={styles.styleNameChip}>🧠</span>}*/}
           </Box>
@@ -234,9 +246,9 @@ export const ModelItem = React.memo(function ModelItem(props: {
             {chipsComponentsMemo}
           </Box>
         )) : <>
-          {/*{domains['primaryChat']?.resolvedModelId === llm.id && <Chip size='sm' variant={domains['primaryChat']?.resolvedModelIsAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Chat</Chip>}*/}
-          {domains['codeApply']?.resolvedModelId === llm.id && <Chip size='sm' variant={domains['codeApply']?.resolvedModelIsAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Code</Chip>}
-          {domains['fastUtil']?.resolvedModelId === llm.id && <Chip size='sm' variant={domains['fastUtil']?.resolvedModelIsAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Fast</Chip>}
+          {/*{domains['primaryChat']?.config?.modelId === llm.id && <Chip size='sm' variant={domains['primaryChat']?.isAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Chat</Chip>}*/}
+          {domains['codeApply']?.config?.modelId === llm.id && <Chip size='sm' variant={domains['codeApply']?.isAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Code</Chip>}
+          {domains['fastUtil']?.config?.modelId === llm.id && <Chip size='sm' variant={domains['fastUtil']?.isAuto ? undefined : 'solid'} sx={styles.chipPreferred}>Fast</Chip>}
         </>}
 
         {/* Features Chips - sync with `useLLMSelect.tsx` */}
@@ -260,18 +272,20 @@ export const ModelItem = React.memo(function ModelItem(props: {
           {/*  </IconButton>*/}
           {/*</GoodTooltip>}*/}
 
-          {!props.isMobile && !!onModelSetHidden && <GoodTooltip title={isHidden ? 'Hidden' : 'Shown in Chat'}>
+          {/*{!props.isMobile && !!onModelSetHidden && <GoodTooltip title={isHidden ? 'Hidden' : 'Shown in Chat'}>*/}
+          {!props.isMobile && (
             <IconButton aria-label={isHidden ? 'Unhide' : 'Hide in Chat'} size='sm' onClick={isHidden ? handleLLMUnhide : handleLLMHide} sx={absorbListPadding}>
               {isHidden ? <VisibilityOffOutlinedIcon sx={{ opacity: 0.5, fontSize: 'md' }} /> : <VisibilityOutlinedIcon />}
             </IconButton>
-          </GoodTooltip>}
+          )}
+          {/*</GoodTooltip>}*/}
 
           {/* mobile: the whole row opens the options, the gear would only repeat it */}
-          {!props.isMobile && <GoodTooltip title='Options'>
-            <IconButton aria-label='Configure LLM' size='sm' sx={absorbListPadding} onClick={handleLLMConfigure}>
-              <PhGearSixIcon />
-            </IconButton>
-          </GoodTooltip>}
+          {/*<GoodTooltip title='Options'>*/}
+          {!props.isMobile && <IconButton aria-label='Configure LLM' size='sm' onClick={handleLLMConfigure} sx={absorbListPadding}>
+            <PhGearSixIcon />
+          </IconButton>}
+          {/*</GoodTooltip>*/}
 
         </Box>
 
@@ -283,6 +297,7 @@ export const ModelItem = React.memo(function ModelItem(props: {
 export function ModelsList(props: {
   filterServiceId: DModelsServiceId | null,
   showHiddenModels: boolean,
+  starredOnTop: boolean,
   onOpenLLMOptions: (id: DLLMId) => void,
   sx?: SxProps,
 }) {
@@ -291,7 +306,7 @@ export function ModelsList(props: {
   const isMobile = useIsMobile();
   const showModelsFn = useUIPreferencesStore(state => state.showModelsFn);
   const domainAssignments = useModelDomains();
-  const llms = useLLMsByService(props.filterServiceId === null ? false : props.filterServiceId);
+  const llms = useLLMsByService(props.filterServiceId === null ? false : props.filterServiceId, props.starredOnTop);
 
   const { onOpenLLMOptions } = props;
 

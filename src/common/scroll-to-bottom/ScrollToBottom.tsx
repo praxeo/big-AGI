@@ -42,10 +42,9 @@ function DebugBorderBox(props: { heightPx: number, color: string }) {
   return (
     <Box sx={{
       position: 'absolute', bottom: 0, right: 0, left: 0,
-      height: `${props.heightPx}px`,
       border: `1px solid ${props.color}`,
       pointerEvents: 'none',
-    }} />
+    }} style={{ height: props.heightPx }} />
   );
 }
 
@@ -291,13 +290,17 @@ export function ScrollToBottom(props: {
   }, []);
 
 
+  // stable context value: consumers re-render on scroll state changes, not on every render of this component
+  const contextValue = React.useMemo(() => ({
+    ...state,
+    notifyBooting,
+    setStickToBottom,
+    skipNextAutoScroll,
+  }), [notifyBooting, setStickToBottom, skipNextAutoScroll, state]);
+
+
   return (
-    <UseScrollToBottomProvider value={{
-      ...state,
-      notifyBooting,
-      setStickToBottom,
-      skipNextAutoScroll,
-    }}>
+    <UseScrollToBottomProvider value={contextValue}>
       {/* Scrollable v-maxed */}
       <Box ref={scrollableElementRef} role={'scrollable' /* hardcoded, important */} sx={!props.sx ? scrollableBoxSx : ({
         ...scrollableBoxSx,

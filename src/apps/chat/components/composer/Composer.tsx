@@ -923,7 +923,7 @@ export function Composer(props: {
                     {micIsRunning && (
                       <ButtonMicContinuationMemo
                         isActive={micContinuation}
-                        variant={micContinuation ? 'soft' : 'soft'} color={micContinuation ? 'primary' : 'neutral'} sx={{ background: micContinuation ? undefined : 'none' }}
+                        variant='soft' color={micContinuation ? 'primary' : 'neutral'}
                         onClick={handleToggleMicContinuation}
                       />
                     )}

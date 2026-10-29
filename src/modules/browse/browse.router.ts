@@ -2,18 +2,19 @@ import * as z from 'zod/v4';
 import { TRPCError } from '@trpc/server';
 
 import puppeteer, { Browser, BrowserContext, ScreenshotOptions } from 'puppeteer-core';
-import { default as TurndownService } from 'turndown';
-import { load as cheerioLoad } from 'cheerio';
+import { createDocument } from '@mixmark-io/domino';
 
 import { createTRPCRouter, publicProcedure } from '~/server/trpc/trpc.server';
 import { env } from '~/server/env.server';
 
 import { workerPuppeteerDownloadFileOrThrow } from './browse.files';
+import { documentToMarkdown, replaceNode, toAbsoluteUrl } from './browse.markdown';
 
 
 // configuration
 const DISABLE_FILE_DOWNLOADS = true;
 const WORKER_TIMEOUT = 20 * 1000; // 20 seconds
+const NEAR_EMPTY_TEXT_CHARS = 200; // less visible text after navigation: a bot challenge or an unrendered app shell
 const SCREENSHOT_TIMEOUT = 8 * 1000; // 8 seconds - a thumbnail is never worth the full protocol ceiling (WORKER_TIMEOUT + 2s)
 const MAX_REQUESTS_PER_CALL = 4; // the client sends 1
 const SCREENSHOT_MIN_SIDE = 16;
@@ -190,6 +191,7 @@ async function workerPuppeteer(
   page.setDefaultNavigationTimeout(WORKER_TIMEOUT);
 
   // open url
+  const navigationStart = Date.now();
   try {
     const response = await page.goto(targetUrl, {
       waitUntil: 'networkidle0', // Wait until network is idle
@@ -236,6 +238,19 @@ async function workerPuppeteer(
     }
   }
 
+  // a near-empty page is a bot challenge or an unrendered app shell: wait for it to fill in (a challenge redirects to the real page),
+  // within what is left of the navigation budget, so the worker's worst case stays WORKER_TIMEOUT + SCREENSHOT_TIMEOUT
+  const budgetLeft = WORKER_TIMEOUT - (Date.now() - navigationStart);
+  if (result.stopReason !== 'error' && !result.file && budgetLeft > 0) {
+    const visibleTextLength = await page.evaluate(() => (document.body?.innerText || '').trim().length).catch(() => 0);
+    if (visibleTextLength < NEAR_EMPTY_TEXT_CHARS)
+      await page.waitForFunction(
+        (minChars: number) => (document.body?.innerText || '').trim().length >= minChars,
+        { timeout: budgetLeft, polling: 250 },
+        NEAR_EMPTY_TEXT_CHARS,
+      ).catch(() => { /* still empty: extract what is there */ });
+  }
+
   // Get the page title after successful navigation
   if (result.stopReason !== 'error' && !result.file) {
     try {
@@ -252,16 +267,15 @@ async function workerPuppeteer(
       for (const transform of transforms) {
         switch (transform) {
           case 'html':
-            result.content.html = cleanHtml(await page.content());
+            result.content.html = cleanHtml(await page.content(), page.url());
             break;
           case 'text':
             result.content.text = await page.evaluate(() => document.body.innerText || document.textContent || '');
             break;
           case 'markdown':
             const html = await page.content();
-            const cleanedHtml = cleanHtml(html);
-            const turndownService = new TurndownService({ headingStyle: 'atx' });
-            result.content.markdown = turndownService.turndown(cleanedHtml);
+            const cleanedHtml = cleanHtml(html, page.url());
+            result.content.markdown = documentToMarkdown(createDocument(cleanedHtml));
             break;
         }
       }
@@ -354,13 +368,15 @@ function _shortError(error: any): string {
 
 const CLEAN_HTML_MAX_CHARS = 5_000_000;
 
-function cleanHtml(html: string): string {
+function cleanHtml(html: string, pageUrl?: string): string {
   // bound parse/serialize cost on attacker-controlled pages
   if (html.length > CLEAN_HTML_MAX_CHARS)
     html = html.slice(0, CLEAN_HTML_MAX_CHARS);
 
   try {
-    const _C = cheerioLoad(html);
+    const doc = createDocument(html);
+    const all = (selector: string) => Array.from(doc.querySelectorAll(selector));
+    const toAbsolute = (url: string) => toAbsoluteUrl(url, pageUrl);
 
     // 1. --unwanted elements
     const unwantedSelectors = [
@@ -389,7 +405,7 @@ function cleanHtml(html: string): string {
       // meta elements except essential ones
       'meta:not([charset], [name="viewport"], [name="description"])',
     ].join(', ');
-    _C(unwantedSelectors).remove();
+    all(unwantedSelectors).forEach(el => el.remove());
 
     // 2. --unwanted attributes tag-specific
     const tagSpecificAttrs: Record<string, string[]> = {
@@ -409,10 +425,8 @@ function cleanHtml(html: string): string {
       figcaption: [],
     };
     const commonAttrs = ['id', 'lang'];
-    _C('*').each(function() {
-      const el = _C(this);
-      if (!('tagName' in this)) return;
-      const tagName = this.tagName?.toLowerCase() || '';
+    for (const el of all('*')) {
+      const tagName = el.localName.toLowerCase();
 
       // Get allowed attributes for this tag
       const allowedAttrs = new Set([
@@ -420,24 +434,31 @@ function cleanHtml(html: string): string {
         ...commonAttrs,
       ]);
 
+      // code blocks keep their language-* class, which names the markdown fence
+      const codeLanguage = (tagName === 'pre' || tagName === 'code') ? el.getAttribute('class')?.match(/\b(?:language|lang)-[\w+#-]+/)?.[0] : undefined;
+
       // -all non-allowed attributes
-      const attribs = Object.keys(this.attribs || {});
-      attribs.forEach(attr => {
+      for (const attr of el.getAttributeNames())
         if (!allowedAttrs.has(attr.toLowerCase()))
-          el.removeAttr(attr);
-      });
+          el.removeAttribute(attr);
+
+      if (codeLanguage)
+        el.setAttribute('class', codeLanguage);
+      const src = el.getAttribute('src');
+      if (src)
+        el.setAttribute('src', toAbsolute(src));
 
       // cleanup href attributes on anchors
       if (tagName === 'a') {
-        const href = el.attr('href');
+        const href = el.getAttribute('href');
         if (href) {
           // -javascript: links
           if (href.toLowerCase().startsWith('javascript:'))
-            el.removeAttr('href');
+            el.removeAttribute('href');
           // -tracking parameters
           else if (href.includes('?')) {
             try {
-              const url = new URL(href);
+              const url = new URL(toAbsolute(href));
               const cleanParams = new URLSearchParams();
               url.searchParams.forEach((value, key) => {
                 // keep only essential query parameters
@@ -447,66 +468,84 @@ function cleanHtml(html: string): string {
               const cleanHref = `${url.origin}${url.pathname}${
                 cleanParams.toString() ? '?' + cleanParams.toString() : ''
               }${url.hash}`;
-              el.attr('href', cleanHref);
+              el.setAttribute('href', cleanHref);
             } catch (e) {
               // If URL parsing fails, keep original href
             }
           }
+          else
+            el.setAttribute('href', toAbsolute(href));
         }
       }
-    });
+    }
 
     // 3. --comments
-    _C('*').contents().filter(function() {
-      return this.type === 'comment';
-    }).remove();
+    for (const el of all('*'))
+      for (const node of Array.from(el.childNodes))
+        if (node.nodeType === node.COMMENT_NODE)
+          node.remove();
 
     // 4. --empty element
     const preserveTags = new Set([
       'img', 'br', 'hr', 'input', 'source', 'meta', 'link',
       'area', 'base', 'col', 'embed', 'param', 'track', 'wbr',
     ]);
-    _C('*').each(function() {
-      const $el = _C(this);
-      if (!('tagName' in this)) return;
-      const tagName = this.tagName?.toLowerCase() || '';
+    for (const el of all('*')) {
+      const tagName = el.localName.toLowerCase();
       const hasContent =
-        $el.text().trim() ||
-        $el.find('img, video, audio, iframe, canvas, svg').length ||
+        el.textContent?.trim() ||
+        el.querySelector('img, video, audio, iframe, canvas, svg') ||
         preserveTags.has(tagName) ||
-        (tagName === 'a' && $el.attr('href'));
+        (tagName === 'a' && el.getAttribute('href'));
 
-      if (!hasContent && !$el.children().length)
-        $el.remove();
-    });
+      if (!hasContent && !el.children.length)
+        el.remove();
+    }
 
     // 5. simplify nested structure
-    _C('div > div:only-child, section > section:only-child').each(function() {
-      const $parent = _C(this).parent();
-      if ($parent.children().length === 1)
-        $parent.replaceWith(_C(this));
-    });
+    for (const el of all('div > div:only-child, section > section:only-child')) {
+      const parent = el.parentElement;
+      if (parent?.children.length === 1)
+        replaceNode(parent, [el]);
+    }
 
     // 6. div to paragraph conversion
-    _C('div').each(function() {
-      const $div = _C(this);
-      const hasBlockElements = $div.children('div, p, section, article, aside, header, footer, nav').length > 0;
-      if (!hasBlockElements && $div.text().trim())
-        $div.replaceWith(`<p>${$div.html()}</p>`);
-    });
+    const blockTags = new Set(['div', 'p', 'section', 'article', 'aside', 'header', 'footer', 'nav']);
+    for (const div of all('div')) {
+      const hasBlockElements = Array.from(div.children).some(child => blockTags.has(child.localName));
+      if (!hasBlockElements && div.textContent?.trim()) {
+        // re-parse as markup rather than moving nodes: the parser closes the <p> around block-level content
+        const template = doc.createElement('template');
+        template.innerHTML = `<p>${div.innerHTML}</p>`;
+        replaceNode(div, Array.from(template.content.childNodes));
+      }
+    }
 
     // 7. clean up whitespace (text nodes, outside preformatted content)
-    _C('*:not(pre, pre *, textarea)').contents().each(function() {
-      if (this.type === 'text')
-        this.data = this.data.replace(/\s+/g, ' ');
-    });
+    for (const el of all('*:not(pre, pre *, textarea)'))
+      for (const node of Array.from(el.childNodes))
+        if (node.nodeType === node.TEXT_NODE && node.nodeValue)
+          node.nodeValue = node.nodeValue.replace(/\s+/g, ' ');
+    // line breaks in code become newlines: turndown reads a code block's text, where a <br> leaves no trace
+    for (const br of all('pre br'))
+      replaceNode(br, [doc.createTextNode('\n')]);
 
-    // 8. format final output
-    return _C.html()
+    // 8. format final output: doctype, top-level comments, <html>
+    const serialized = Array.from(doc.childNodes, node =>
+      node === doc.doctype ? `<!DOCTYPE ${doc.doctype.name}>`
+        : node === doc.documentElement ? doc.documentElement.outerHTML
+          : node.nodeType === node.COMMENT_NODE ? `<!--${node.nodeValue}-->` : '',
+    ).join('');
+    // preformatted blocks sit out the whitespace pass behind tag-shaped placeholders, keeping code indentation
+    const preformatted: string[] = [];
+    return serialized
+      .replace(/<(pre|textarea)\b[^>]*>[\s\S]*?<\/\1>/g, block => `<\u0000${preformatted.push(block) - 1}\u0000>`)
       .replace(/>\s+</g, '>\n<')
       .replace(/\n\s+/g, '\n')
       .split('\n').map(line => line.trim()).join('\n')
       .replace(/\n{3,}/g, '\n\n')
+      // eslint-disable-next-line no-control-regex -- NUL never survives HTML parsing, so the placeholder cannot collide with page text
+      .replace(/<\u0000(\d+)\u0000>/g, (_, index: string) => preformatted[Number(index)])
       .trim();
 
   } catch (error) {

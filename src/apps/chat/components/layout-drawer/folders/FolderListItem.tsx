@@ -5,20 +5,31 @@ import { useSortable } from '@dnd-kit/sortable';
 import { dndDragCursorSx } from '~/common/components/dnd/dnd.config';
 
 import { FormLabel, IconButton, ListItem, ListItemButton, ListItemContent, ListItemDecorator, MenuItem, Radio, RadioGroup, Sheet } from '@mui/joy';
-import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
-import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import Done from '@mui/icons-material/Done';
 import EditRoundedIcon from '@mui/icons-material/EditRounded';
 import FolderIcon from '@mui/icons-material/Folder';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
 
 import { CloseablePopup } from '~/common/components/CloseablePopup';
+import { ConfirmMenuItem } from '~/common/components/ConfirmMenuItem';
 import { InlineTextarea } from '~/common/components/InlineTextarea';
 import { chatFoldersActions, DFolder, FOLDERS_COLOR_PALETTE } from '~/common/stores/folders/store-chat-folders';
 import { themeZIndexOverMobileDrawer } from '~/common/app.theme';
 
 
 const _styles = {
+
+  item: {
+    userSelect: 'none',
+
+    // we had this before, but it wasn't working properly, so we reduced to a handle (folder icon) on mobile
+    // touchAction: 'none', // DnD prevent scrolling on mobile
+
+    // shows the menu icon on hover
+    '&:hover .menu-icon': {
+      visibility: 'visible',
+    },
+  } as const,
 
   menuButton: {
     visibility: 'hidden',
@@ -49,7 +60,6 @@ export function FolderListItem(props: {
   const { id: folderId, color: folderColor, title: folderTitle } = props.folder;
 
   // state
-  const [deleteArmed, setDeleteArmed] = React.useState(false);
   const [isEditing, setIsEditing] = React.useState(false);
   const [menuAnchorEl, setMenuAnchorEl] = React.useState<null | HTMLAnchorElement>(null);
 
@@ -76,7 +86,6 @@ export function FolderListItem(props: {
   const handleMenuToggle = React.useCallback((event: React.MouseEvent<HTMLAnchorElement>) => {
     event.preventDefault(); // added for the Right mouse click (to prevent the menu)
     event.stopPropagation(); // keep the focus on the menu that's opening
-    setDeleteArmed(false); // Reset delete armed state
     setMenuAnchorEl(anchor => anchor ? null : event.currentTarget);
   }, []);
 
@@ -105,24 +114,10 @@ export function FolderListItem(props: {
 
   // Deletion
 
-  const handleDeleteButtonShow = React.useCallback((event: React.MouseEvent) => {
-    event.stopPropagation();
-    setDeleteArmed(true);
-  }, []);
-
-  const handleDeleteConfirmed = React.useCallback((event: React.MouseEvent) => {
-    if (!deleteArmed) return;
-    setDeleteArmed(false);
-    event.stopPropagation();
+  const handleDeleteConfirmed = React.useCallback(() => {
     chatFoldersActions().deleteFolder(folderId);
     handleMenuClose();
-  }, [deleteArmed, folderId, handleMenuClose]);
-
-  const handleDeleteCanceled = React.useCallback((event: React.MouseEvent) => {
-    if (!deleteArmed) return;
-    setDeleteArmed(false);
-    event.stopPropagation();
-  }, [deleteArmed]);
+  }, [folderId, handleMenuClose]);
 
 
   // Color
@@ -136,20 +131,13 @@ export function FolderListItem(props: {
   return (
     <ListItem
       ref={setNodeRef}
-      sx={{
+      // drag geometry changes every frame: inline style, not sx (each sx value mints a CSS rule)
+      style={{
         transform: CSS.Translate.toString(transform),
         transition: transition,
-        userSelect: 'none',
         zIndex: isDragging ? 1 : undefined,
-
-        // we had this before, but it wasn't working properly, so we reduced to a handle (folder icon) on mobile
-        // touchAction: 'none', // DnD prevent scrolling on mobile
-
-        // shows the menu icon on hover
-        '&:hover .menu-icon': {
-          visibility: 'visible',
-        },
       }}
+      sx={_styles.item}
       endAction={!isEditing &&
         <IconButton
           size='sm'
@@ -212,29 +200,7 @@ export function FolderListItem(props: {
               Edit
             </MenuItem>
 
-            {!deleteArmed ? (
-              <MenuItem onClick={handleDeleteButtonShow}>
-                <ListItemDecorator>
-                  <DeleteOutlineIcon />
-                </ListItemDecorator>
-                Delete
-              </MenuItem>
-            ) : (
-              <>
-                <MenuItem onClick={handleDeleteCanceled}>
-                  <ListItemDecorator>
-                    <CloseRoundedIcon />
-                  </ListItemDecorator>
-                  Cancel
-                </MenuItem>
-                <MenuItem onClick={handleDeleteConfirmed} color='danger' sx={{ color: 'danger' }}>
-                  <ListItemDecorator>
-                    <DeleteOutlineIcon />
-                  </ListItemDecorator>
-                  Confirm Deletion
-                </MenuItem>
-              </>
-            )}
+            <ConfirmMenuItem label='Delete' confirmLabel='Confirm Deletion' onConfirm={handleDeleteConfirmed} />
 
             <MenuItem
               sx={{
