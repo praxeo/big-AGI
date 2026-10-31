@@ -564,6 +564,17 @@ export const DModelParameterRegistry = {
   }),
 
 
+  // Strata-specific
+
+  llmVndStrataMcp: _enumDef({
+    label: 'MCP Tools',
+    type: 'enum',
+    description: 'Let the local model call the tools of the MCP servers configured in Strata (they run on the Strata machine).',
+    values: ['auto'],
+    // undefined means off - `strata_mcp` is not sent
+  }),
+
+
   // xAI-specific parameters
 
   llmVndXaiCodeExecution: _enumDef({

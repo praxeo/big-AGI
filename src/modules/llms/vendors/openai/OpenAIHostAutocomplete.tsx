@@ -53,6 +53,7 @@ const OPENAI_COMPATIBLE_PROVIDERS: VerifiedProvider[] = [
   { id: 'cloudflare', label: 'Cloudflare AI Gateway', host: 'https://gateway.ai.cloudflare.com/v1/{account}/{gateway}/openai', hostMatch: 'gateway.ai.cloudflare.com', category: 'Example Proxies', description: 'Caching and analytics gateway', docsUrl: 'https://developers.cloudflare.com/ai-gateway/', icon: CloudflareIcon },
   // Local Servers
   { id: 'unsloth', label: 'Unsloth', host: 'http://localhost:8888', hostMatch: 'localhost:8888', category: 'Local Servers', description: 'Local GGUF serving and fine-tuning (Studio / unsloth run)', docsUrl: 'https://unsloth.ai/docs/basics/api', icon: UnslothIcon },
+  { id: 'strata', label: 'Strata', host: 'http://127.0.0.1:8080', hostMatch: '127.0.0.1:8080', category: 'Local Servers', description: 'Local Qwen3.8-Flash-Next and DeepSeek-V4.1-Flash (strata launch)', docsUrl: 'https://github.com/Niko1221/Strata/blob/main/docs/DETAILS.md#connecting-apps' }, // [praxeo fork]
 ];
 
 // Find a provider by its id (the docs reader's icon keys use these ids)
