@@ -536,6 +536,10 @@ export namespace OpenAIWire_API_Chat_Completions {
     enabled_tools: z.array(z.string()).optional(),
     permission_mode: z.enum(['ask', 'auto', 'off']).optional(),
 
+    // [Strata, 2026-10-31] server-side MCP tool loop on the local server: the tools of the MCP servers in Strata's
+    // config are offered and run there, each step streamed back under a `strata_mcp` field on an empty-delta chunk
+    strata_mcp: z.boolean().optional(),
+
     seed: z.number().int().optional(),
     stop: z.array(z.string()).optional(), // Up to 4 sequences where the API will stop generating further tokens.
     user: z.string().optional(),

@@ -64,6 +64,7 @@ import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.mod
 import { zaiCuratedModelDescriptions, zaiDiscoverModels, zaiModelSort } from './openai/models/zai.models';
 
 import { unslothAttachServerStatus, unslothHeuristic, unslothModelsToModelDescriptions, unslothStatusFrom } from './openai/models/unsloth.models'; // [praxeo fork]
+import { strataHeuristic, strataModelsToModelDescriptions } from './openai/models/strata.models'; // [praxeo fork]
 
 
 // -- Dispatch types --
@@ -561,6 +562,10 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               // [praxeo fork] [Unsloth] local Studio/CLI server - detected by the owned_by marker stamped on every model entry
               if (unslothHeuristic(maybeModels))
                 return unslothModelsToModelDescriptions(maybeModels, unslothStatusFrom(openAIWireModelsResponse));
+
+              // [praxeo fork] [Strata] local engine - detected by the shape of its model entries (status, meta.n_ctx, architecture)
+              if (strataHeuristic(maybeModels))
+                return strataModelsToModelDescriptions(maybeModels);
 
               // [FastChat] make the best of the little info
               if (fastAPIHeuristic(maybeModels))

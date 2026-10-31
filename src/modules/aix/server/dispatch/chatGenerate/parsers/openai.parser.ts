@@ -11,6 +11,7 @@ import { convert_Base64_To_UInt8Array, convert_UInt8Array_To_Base64 } from '~/co
 import { OpenAIWire_API_Chat_Completions } from '../../wiretypes/openai.wiretypes';
 import { calculateDurationMs, createWAVFromPCM } from './gemini.audioutils';
 import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
+import { createStrataMcpEventsHandler } from './openai.parser.strata'; // [praxeo fork]
 
 import { OperationRetrySignal } from '../chatGenerate.operation-retry';
 
@@ -54,6 +55,7 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
   // [Unsloth] open server-side tool operation, so its status frames render as one card
   let unslothOpId: string | null = null;
   let unslothOpCount = 0;
+  const strataMcpEvents = createStrataMcpEventsHandler(); // [praxeo fork] Strata server-side MCP tool activity
 
   // Supporting structure to accumulate the assistant message
   const accumulator: {
@@ -124,6 +126,9 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
       if (['heartbeat', 'tool_start', 'tool_end', 'tool_output', 'tool_args', 'metadata', 'reasoning_summary'].includes(unslothEventType))
         return;
     }
+
+    // [praxeo fork] [Strata] tool activity rides an empty-delta chunk, which then parses as usual; a tool that ran must not be re-run by a retry
+    if (strataMcpEvents(pt, chunkData)) hasStreamedOutput = true;
 
     // [OpenAI] Obfuscation message with no data -> skip
     if (!chunkData?.['choices'] && chunkData?.['obfuscation']) {

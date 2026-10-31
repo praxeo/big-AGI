@@ -38,6 +38,7 @@ import { createClientAnthropicFileInlineTransform } from './aix.client.transform
 import { withDecimator } from './withDecimator';
 
 import { unslothToAixModel } from '~/modules/llms/vendors/openai/openai.unsloth'; // [praxeo fork]
+import { strataToAixModel } from '~/modules/llms/vendors/openai/openai.strata'; // [praxeo fork]
 
 
 // configuration
@@ -189,6 +190,7 @@ export function aixCreateModelFromLLMOptions(
 
     // [praxeo fork] Unsloth (local server)
     ...unslothToAixModel({ ...llmOptions, ...llmOptionOverrides }),
+    ...strataToAixModel({ ...llmOptions, ...llmOptionOverrides }), // [praxeo fork] Strata (local server)
 
     // xAI
     ...(llmVndXaiCodeExecution === 'auto' ? { vndXaiCodeExecution: llmVndXaiCodeExecution } : {}),

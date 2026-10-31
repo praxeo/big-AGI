@@ -8,6 +8,7 @@ import { OpenAIWire_API_Chat_Completions, OpenAIWire_ContentParts, OpenAIWire_Me
 import { AIX_MISSING_TOOL_RESULT_TEXT, aixFnv1aHex, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
 
 import { unslothApplyChatCompletionsPayload } from './openai.chatCompletions.unsloth'; // [praxeo fork]
+import { strataApplyChatCompletionsPayload } from './openai.chatCompletions.strata'; // [praxeo fork]
 
 
 //
@@ -238,6 +239,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
 
   // [praxeo fork] Unsloth (local server): thinking gate and server-side web search
   unslothApplyChatCompletionsPayload(model, payload);
+  strataApplyChatCompletionsPayload(model, payload); // [praxeo fork] Strata (local server): server-side MCP tools
 
   // [OpenAI, 2026-02-04] Verbosity control - official OpenAI parameter (low/medium/high, default: medium)
   if (model.vndOaiVerbosity) {
