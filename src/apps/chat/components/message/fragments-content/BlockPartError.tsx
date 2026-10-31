@@ -23,13 +23,11 @@ export function BlockPartError(props: {
     case 'aix-net-disconnected':
       // determine the 'kinds' of disconnection errors in aix.client.ts
       // - 'network error' (browser) -> client side
-      // - 'connection terminated' (tRPC 'Stream closed' wrapper) -> server/edge side (CSF recovery)
-      // - 'upstream dropped' (undici TypeError 'terminated') -> upstream provider socket drop (CSF recovery applies)
+      // - 'connection terminated' (the tRPC stream ended early: platform limit, function exit) -> server/edge side (CSF recovery)
       const kind =
         props.errorText.includes('**network error**') ? 'net-client-closed'
           : props.errorText.includes('**connection terminated**') ? 'net-server-closed'
-            : props.errorText.includes('**upstream dropped**') ? 'net-server-closed'
-              : 'net-unknown-closed';
+            : 'net-unknown-closed';
 
       // For client-side error, we don't show the _NetDisconnected component
       if (kind === 'net-client-closed')
@@ -45,7 +43,7 @@ export function BlockPartError(props: {
       break;
   }
 
-  // Check if the errorText starts with '**' and has a closing '**' following Markdown rules
+  // Bold markers: render as markdown, or (with structure) as plain text with the leading label unbolded
   let textToRender = props.errorText;
   let renderAsMarkdown = false;
 
@@ -55,15 +53,17 @@ export function BlockPartError(props: {
   if (containsBold && !containsStructure)
     renderAsMarkdown = true;
 
-  // if there's structure, still (potentially) remove the starting and ending '**' from the first occurrence
-  if (!renderAsMarkdown && containsBold && textToRender.startsWith('**')) {
-    const closingBoldIndex = textToRender.indexOf('**', 2);
-    if (closingBoldIndex > 2) {
-      // Remove the starting and ending '**' from the first occurrence
+  // if there's structure, still unbold the leading label: the first '**...**' pair ahead of the structure (issue texts may
+  // start with a space or a symbol, e.g. ' **[Parsing Issue] D**: ... {' and ' ❌ **[D Issue]:** ... {')
+  if (!renderAsMarkdown && containsBold) {
+    textToRender = textToRender.trimStart();
+    const openBoldIndex = textToRender.indexOf('**');
+    const closingBoldIndex = textToRender.indexOf('**', openBoldIndex + 2);
+    if (openBoldIndex !== -1 && closingBoldIndex > openBoldIndex + 2 && closingBoldIndex < textToRender.indexOf('{'))
       textToRender =
-        textToRender.substring(2, closingBoldIndex) +
+        textToRender.substring(0, openBoldIndex) +
+        textToRender.substring(openBoldIndex + 2, closingBoldIndex) +
         textToRender.substring(closingBoldIndex + 2);
-    }
   }
 
   // NOTE: in the future we can also append:

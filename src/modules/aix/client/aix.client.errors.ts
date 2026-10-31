@@ -1,5 +1,6 @@
 import { TRPCClientError } from '@trpc/client';
 
+import { isBrowserOffline, isTRPCNetworkError, isTRPCStreamClosedEarly } from '~/common/util/fetchFailures';
 import { presentErrorToHumans } from '~/common/util/errorUtils';
 
 
@@ -49,35 +50,27 @@ export function aixClassifyStreamingError(error: any, isUserAbort: boolean, hasF
   if (AIX_CLIENT_DEV_ASSERTS) console.error('[DEV] Aix streaming Error:', { error });
 
 
-  // Browser-level network connection drops (TypeError, happens below tRPC error wrapping layer), such as terminating the `npm run dev` process while streaming
-  // Network errors - when the client is disconnected (Vercel 5min timeout, Mobile timeout / disconnect, etc) - they show up as TypeErrors
+  // Browser-level connection failures (engine-specific TypeError texts - see isBrowserNetworkError): offline, Wi-Fi/mobile drops,
+  // DNS, a reset connection, the `npm run dev` process killed while streaming. Reads of the stream throw them bare; failures before
+  // the result envelope arrives come wrapped in a TRPCClientError (on `.cause`) - e.g. requests still queued by the browser
+  // (> 6 connections) when the Wi-Fi goes off. isTRPCNetworkError matches both.
   // IMPORTANT: we will differentiate between the 2 'net-disconnected' cases in the UI, checking for the errorMessage '**network error**' vs '**connection terminated**'
-  if (error instanceof TypeError && error.message === 'network error')
-    return { errorType: 'net-disconnected', errorMessage: 'An unexpected issue occurred: **network error**.' /* DO NOT CHANGE '**network error**' - usually client-side broken */ };
+  if (isTRPCNetworkError(error))
+    return { errorType: 'net-disconnected', errorMessage: 'An unexpected issue occurred: **network error**.' + (isBrowserOffline() ? ' You appear to be offline.' : '') /* DO NOT CHANGE '**network error**' - usually client-side broken */ };
 
-  // Mid-stream remote termination (e.g. Vercel Edge function timeout = graceful HTTP EOF deep inside the
+  // Remote termination of the tRPC stream (e.g. the Vercel 300s function limit = a graceful HTTP EOF inside the
   // httpBatchStreamLink async-iterable). tRPC has thrown a DIFFERENT shape for this SAME event in each era (upstream #6989):
   //   <= 11.5.1:    Error('Stream closed')
-  //   11.6 - 11.7:  bare `undefined`                  (the #6989 regression, PR #6960 - avoided: we ship >= 11.18)
-  //   11.14-11.19.0: TypeError from destructuring the `done` read (PR #7233 restored a real Error; message is engine/bundle-dependent):
-  //                   V8 '... is not iterable', SpiderMonkey "can't access property Symbol.iterator, ... is undefined",
-  //                   JSC "undefined is not an object (evaluating '...')" (the quoted expression varies by Safari version)
-  //   > 11.19.0:    Error('Stream closed unexpectedly')  (PR #7604 checks `done`; drop the TypeError match once we ship it)
+  //   11.6 - 11.13: bare `undefined`                  (the #6989 regression, PR #6960)
+  //   11.14-11.19.0: TypeError from destructuring the `done` read (PR #7233; engine-dependent text, V8 '... is not iterable')
+  //   >= 11.20:     Error('Stream closed unexpectedly')  (PR #7604 checks `done`; first on npm as 11.22.1)
+  // The Error-typed texts of every era are matched by isTRPCStreamClosedEarly (common/util/fetchFailures.ts).
   // tRPC transport only: CSF has no JSONL layer, and its executor turns read failures into in-band '[Streaming Issue]' errors.
-  // We match the Error-typed shapes structurally. We deliberately do NOT match the bare `undefined` case: it is too broad
-  // a signal (an undefined can originate anywhere) and 11.18+ no longer throws it. Re-enable the commented line below
-  // only if a future tRPC version regresses to throwing `undefined` for a mid-stream cut.
-  const isMidStreamTeardown =
-    // (hasFragments && error === undefined) ||  // intentionally disabled - too broad; see note above (#6989)
-    (error instanceof Error && (error.message === 'Stream closed' || error.message === 'Stream closed unexpectedly'))
-    || (error instanceof TypeError && /is not iterable|can't access property Symbol\.iterator|is not an object \(evaluating/i.test(error.message));
-  if (isMidStreamTeardown)
+  // We deliberately do NOT match the bare `undefined` case: it is too broad a signal (an undefined can originate anywhere)
+  // and 11.18+ no longer throws it. Re-enable the commented condition below only if a future tRPC version regresses to it.
+  if (isTRPCStreamClosedEarly(error) /* || (hasFragments && error === undefined) - intentionally disabled, too broad (#6989) */)
     return { errorType: 'net-disconnected', errorMessage: 'An unexpected issue occurred: **connection terminated**.' /* DO NOT CHANGE '**connection terminated**' - usually server (Vercel) side broken */ };
 
-  // Undici (Node/Edge/Electron fetch) mid-stream TLS or socket drop - surfaces on any node-backed path (CSF, Electron, SSR).
-  // Distinct from 'Stream closed' (tRPC wrapper): this one typically means the upstream LLM provider closed the TLS socket mid-stream, not the Vercel edge.
-  if (error instanceof TypeError && error.message === 'terminated')
-    return { errorType: 'net-disconnected', errorMessage: 'The AI provider interrupted mid-stream: **upstream dropped**.' /* DO NOT CHANGE '**upstream dropped**' - matched in BlockPartError */ };
 
 
   // Engine-independent transport signals tagged by the streaming fetch wrapper (trpc.client.ts streamingTransportFetch),
@@ -101,14 +94,9 @@ export function aixClassifyStreamingError(error: any, isUserAbort: boolean, hasF
     if (error.data?.httpStatus === 413)
       return { errorType: 'request-exceeded', errorMessage: MSG_REQUEST_EXCEEDED };
 
+    // MAGIC CONSTANTS - V8's JSON.parse texts (Chromium only; older V8 and other engines word them differently), thrown by tRPC's
+    // JSONL head parse on a non-JSON body. Fallback only: streamingTransportFetch tags 413 and text/html responses before the parser runs.
     switch (error.cause?.message) {
-      /**
-       * When network is disconnected while a request hasn't started (is queued by the browser).
-       * - repro: queue up > 6 connections, then turn WiFi off (no CSF).
-       */
-      case 'Failed to Fetch':
-        return { errorType: 'net-disconnected', errorMessage: 'An issue occurred: **network error**' };
-
       /**
        * The body of the response was "Request Entity Too Large" (Vercel edge limit ~4.5MB).
        * - this caused trpc, in ...stream/jsonl.ts, function createConsumerStream, to throw an error due to parsing the line as JSON
@@ -122,7 +110,7 @@ export function aixClassifyStreamingError(error: any, isUserAbort: boolean, hasF
        * This happened many times in the past with captive portals and alike. Jet's just improve the messaging here.
        */
       case `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`:
-        return { errorType: 'response-captive', errorMessage: '**Network issue**: The network returned an HTML page instead of expected data. This can be a Wi‑Fi sign‑in page, a proxy or browser extension, or a temporary gateway error. Please **refresh and try again**, or check your connection and disable blockers. Additional details may be available in the browser console.' };
+        return { errorType: 'response-captive', errorMessage: MSG_RESPONSE_CAPTIVE };
 
       case undefined:
         // no cause message: the generic presentation below

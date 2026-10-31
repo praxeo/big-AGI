@@ -256,6 +256,13 @@ export class ContentReassembler {
     if (DEBUG_PARTICLES)
       console.log('-> aix.p: issue:', errorAsText);
 
+    // the dialect already ended with a clean or truncated stop reason: the content is final, so a transport error after it
+    // (e.g. the connection dropping before tRPC's closing chunk) is only logged - same rule as the server's late issue (ChatGenerateTransmitter._addIssue)
+    if (this.S.terminationReason === 'done-dialect' && this.S.dialectStopReason !== undefined && AixWire_Particles.gcStopReasonRow(this.S.dialectStopReason)?.class !== 'error') {
+      console.warn(`⚠️ [ContentReassembler] setClientExcepted: transport error after the response ended ('${this.S.dialectStopReason}'), keeping it: ${errorAsText}`);
+      return;
+    }
+
     // add the error fragment with the given message
     this._appendErrorFragment(errorAsText, errorHint);
 
@@ -1162,7 +1169,7 @@ export class ContentReassembler {
       case 'done-dispatch-aborted':
         // BROKEN - Infrastructure abort (not user-initiated) - dispatch connection severed
         console.warn(`⚠️ [ContentReassembler] done-dispatch-aborted - connection lost, not user-initiated.`);
-        return { tsr: 'issue', errorMessage: 'Response interrupted - the AI provider connection was lost.' };
+        return { tsr: 'issue', errorMessage: 'Response interrupted - the server cancelled the request.' };
 
       case 'issue-dialect':
       case 'issue-dispatch-rpc':
