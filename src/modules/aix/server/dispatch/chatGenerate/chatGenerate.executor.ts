@@ -13,7 +13,7 @@ import { AixWire_Particles } from '../../api/aix.wiretypes';
 import { AixDebugObject } from './chatGenerate.debug';
 import { AixDemuxers } from '../stream.demuxers';
 import { ChatGenerateDispatch, ChatGenerateDispatchRequest, ChatGenerateParseContext, ChatGenerateParseFunction } from './chatGenerate.dispatch';
-import { ChatGenerateTransmitter } from './ChatGenerateTransmitter';
+import { ChatGenerateTransmitter, trpcFetcherError_to_IssueCause } from './ChatGenerateTransmitter';
 import { DispatchContinuationSignal } from './chatGenerate.continuation';
 import { OperationRetrySignal } from './chatGenerate.operation-retry';
 import { heartbeatsWhileAwaiting } from '../heartbeatsWhileAwaiting';
@@ -78,45 +78,73 @@ export async function* executeChatGenerateDispatch(
   if (_d.requestBodyOverride && 'body' in dispatch.request)
     dispatch.request.body = { ...dispatch.request.body, ..._d.requestBodyOverride };
 
-  // Connect to the dispatch (yields debug echo particles directly, bypasses particle transforms)
-  const dispatchResponse = yield* _connectToDispatch(dispatch.request, dispatch.customConnect, intakeAbortSignal, chatGenerateTx, _d);
-  if (!dispatchResponse)
-    return; // exit: error already handled
+  // Companions: attachments that live for this dispatch - lifecycle hooks and 1:1 particle mappers, in order (see ChatGenerateDispatchCompanion)
+  const companions = dispatch.companions ?? [];
+  try {
 
-  // Inner stream
-  const innerStream = (async function* () {
-
-    // Consume dispatch response
-    if (dispatch.demuxerFormat === null /* NS */)
-      yield* _consumeDispatchUnified(dispatchResponse, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
-    else
-      yield* _consumeDispatchStream(dispatchResponse, dispatch.bodyTransform ?? null, dispatch.demuxerFormat, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
-
-    // Tack profiling particles if generated
-    if (_d.profiler) {
-      chatGenerateTx.addDebugProfilerData(_d.profiler.getResultsData());
-      // performanceProfilerLog('AIX Router Performance', profiler?.getResultsData()); // uncomment to log to server console
-      _d.profiler.clearMeasurements();
+    for (const companion of companions) {
+      try {
+        companion.onStart?.(intakeAbortSignal);
+      } catch (error: any) {
+        console.warn(`[AIX] ${_d.prettyDialect}: companion '${companion.name}' threw on start`, { error: error?.message || error });
+      }
     }
 
-    // Flush everything that's left; if we're here we have encountered a clean end condition,
-    // or an error that has already been queued up for this last flush
-    yield* chatGenerateTx.flushParticles();
+    // Connect to the dispatch (yields debug echo particles directly, bypasses the companions)
+    const dispatchResponse = yield* _connectToDispatch(dispatch.request, dispatch.customConnect, intakeAbortSignal, chatGenerateTx, _d);
+    if (!dispatchResponse)
+      return; // exit: error already handled
 
-  })();
+    // Inner stream
+    const innerStream = (async function* () {
 
-  // Transform (optional): pipe the stream through a 1:1 async particle transformer (see anthropic.transform-fileInline.ts)
-  const transform = dispatch.particleTransform;
-  if (!transform) {
-    yield* innerStream; // no transform, passthrough
-    return;
-  }
-  for await (const particle of innerStream) {
-    try {
-      yield await transform(particle);
-    } catch (error: any) {
-      console.warn(`[AIX] ${_d.prettyDialect}: particle transform '${transform.name}' threw, passing original particle through`, { error: error?.message || error });
-      yield particle;
+      // Consume dispatch response
+      if (dispatch.demuxerFormat === null /* NS */)
+        yield* _consumeDispatchUnified(dispatchResponse, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
+      else
+        yield* _consumeDispatchStream(dispatchResponse, dispatch.bodyTransform ?? null, dispatch.demuxerFormat, dispatch.chatGenerateParse, chatGenerateTx, _d, parseContext);
+
+      // Tack profiling particles if generated
+      if (_d.profiler) {
+        chatGenerateTx.addDebugProfilerData(_d.profiler.getResultsData());
+        // performanceProfilerLog('AIX Router Performance', profiler?.getResultsData()); // uncomment to log to server console
+        _d.profiler.clearMeasurements();
+      }
+
+      // Flush everything that's left; if we're here we have encountered a clean end condition,
+      // or an error that has already been queued up for this last flush
+      yield* chatGenerateTx.flushParticles();
+
+    })();
+
+    // Particle mappers (optional): every particle passes through each companion's onParticle in order. The loop awaits only
+    // when a mapper returns a promise, and yields outside any try, so a consumer's throw at the yield is never swallowed.
+    const mappers = companions.flatMap(({ name, onParticle }) => onParticle ? [{ name, onParticle }] : []);
+    if (!mappers.length) {
+      yield* innerStream; // passthrough
+      return;
+    }
+    for await (const particle of innerStream) {
+      let mapped = particle;
+      for (const mapper of mappers) {
+        try {
+          const result = mapper.onParticle(mapped);
+          mapped = result instanceof Promise ? await result : result;
+        } catch (error: any) {
+          console.warn(`[AIX] ${_d.prettyDialect}: companion '${mapper.name}' threw on a particle, passing it through`, { error: error?.message || error });
+        }
+      }
+      yield mapped;
+    }
+
+  } finally {
+    // every exit: normal end, early return, a thrown retry or continuation signal, a consumer closing the generator
+    for (let i = companions.length - 1; i >= 0; i--) {
+      try {
+        companions[i].onEnd?.();
+      } catch (error: any) {
+        console.warn(`[AIX] ${_d.prettyDialect}: companion '${companions[i].name}' threw on end`, { error: error?.message || error });
+      }
     }
   }
 }
@@ -210,7 +238,7 @@ async function* _connectToDispatch(
     const isUpstreamUserError = error?.name === 'TRPCFetcherError' && error.category === 'http' && demoteToLog.includes(error.httpStatus);
     const serverLogLevel = _d.consoleLogErrors === 'srv-warn' && isUpstreamUserError ? 'srv-log' : _d.consoleLogErrors;
 
-    chatGenerateTx.setDispatchRpcTerminatingIssue('dispatch-fetch', `**[Service Issue] ${_d.prettyDialect}**: ${dispatchFetchError}${extraDevMessage}`, serverLogLevel);
+    chatGenerateTx.setDispatchRpcTerminatingIssue('dispatch-fetch', `**[Service Issue] ${_d.prettyDialect}**: ${dispatchFetchError}${extraDevMessage}`, serverLogLevel, trpcFetcherError_to_IssueCause(error));
     yield* chatGenerateTx.flushParticles();
     return null; // signal caller to exit
   }
@@ -254,7 +282,10 @@ async function* _consumeDispatchUnified(
 
   } catch (error: any) {
     // NS pass-through dispatch signals - thrown by parsers to request operation retry or continuation
-    if (error instanceof DispatchContinuationSignal) throw error;
+    if (error instanceof DispatchContinuationSignal) {
+      yield* chatGenerateTx.flushParticles(); // the paused segment's content and metrics: the parser queued them all before it threw
+      throw error;
+    }
     if (error instanceof OperationRetrySignal) throw error;
 
     if (dispatchBody === undefined)

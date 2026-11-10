@@ -18,6 +18,15 @@ const RETRY_AFTER_BUDGET_MS = 120_000;
  * in tens of seconds, a rate limit when its per-minute window rolls. Fewer, longer waits on rate limits: failed
  * requests can count against the limit. Both retriers heartbeat through the wait. `label` is what the user reads.
  */
+type RetryProfile = {
+  label: string;        // what the user reads in the retry status
+  baseDelayMs: number;
+  maxDelayMs: number;
+  jitterFactor: number;
+  maxAttempts: number;
+  calm?: true;          // the condition is expected, not a fault: the client renders the status without alarm
+};
+
 const RETRY_PROFILES = {
   // network/DNS failures (never connected) -> fast retry
   network: {
@@ -51,16 +60,26 @@ const RETRY_PROFILES = {
     jitterFactor: 0.25,   // N Beam rays hit the same limit at once: spread them
     maxAttempts: 6,      // 6 attempts total: immediate, then retry at ~2s, ~4s, ~8s, ~16s, ~20s (~50s budget)
   },
-} as const;
-
-type RetryProfile = typeof RETRY_PROFILES[keyof typeof RETRY_PROFILES];
+  // [OpenAI] flex tier (service_tier 'flex') out of capacity, body code 'resource_unavailable' (#1211): a best-effort tier
+  // being busy is expected, not a fault - a few spaced retries catch a gap, then the vendor text names the way out (standard tier)
+  flexBusy: {
+    label: 'Flex tier busy',
+    baseDelayMs: 2000,
+    maxDelayMs: 10000,
+    jitterFactor: 0.25,   // N Beam rays hit the shortage at once: spread them
+    maxAttempts: 4,      // 4 attempts total: immediate, then retry at ~2s, ~4s, ~8s (~14s budget)
+    calm: true,
+  },
+} as const satisfies Record<string, RetryProfile>;
 
 /**
- * Class of a retryable failure from its HTTP(-equivalent) status. Used by the connect retrier (real
- * status) and by the in-band operation retrier (status the parser assigned to a mid-stream error).
+ * Class of a retryable failure from its HTTP(-equivalent) status, or from the upstream body code when one names a
+ * condition with a profile of its own. Used by the connect retrier (real status and body code) and by the in-band
+ * operation retrier (status the parser assigned to a mid-stream error, and its code).
  * The in-band callers already established the error is transient, hence the fallback.
  */
-export function upstreamRetryProfile(httpStatus?: number): RetryProfile {
+export function upstreamRetryProfile(httpStatus?: number, upstreamCode?: string): RetryProfile {
+  if (upstreamCode === 'resource_unavailable') return RETRY_PROFILES.flexBusy;
   return httpStatus === 429 ? RETRY_PROFILES.rateLimited
     : httpStatus === 529 ? RETRY_PROFILES.overloaded
       : RETRY_PROFILES.transient;
@@ -89,7 +108,7 @@ const _429_RETRY_DENYLIST: { test: string | RegExp; label: string }[] = [
   // [OpenAI] Request too large for model's TPM limit - e.g. "Request too large for o3 ... Limit 30000, Requested 56108"
   { test: /request too large|limit \d+, requested \d+/i, label: 'request-too-large' },
   // [Anthropic research preview] Zero rate limit - org doesn't have access to the model
-  { test: 'rate limit of 0 input tokens per minute', label: 'zero-rate-limit (no model access)' },
+  { test: /rate limit of 0 (?:fast mode )?input tokens per minute/, label: 'zero-rate-limit (no model access)' },
   // [Z.ai] Insufficient balance - prepaid credits exhausted
   { test: 'Insufficient balance or no resource package', label: 'insufficient-balance (Z.ai)' },
   // [Sakana.ai / OpenAI-compat] Prepaid credit balance exhausted - user must add credits.
@@ -142,7 +161,8 @@ function selectRetryProfile(error: TRPCFetcherError | unknown): RetryProfile | n
           console.log(`[fetchers.retrier] 429 not retryable: ${denyMatch.label}`);
         return null;
       }
-      return RETRY_PROFILES.rateLimited; // Retry temporary rate limits
+      // temporary rate limit, or a condition of its own named by the body code (flex tier busy, #1211)
+      return upstreamRetryProfile(error.httpStatus, error.httpErrorCode);
     }
 
     // 529 Overloaded (Anthropic)
@@ -176,6 +196,7 @@ export type RetryAttempt = {
   delayMs: number;
   causeHttp?: number;
   causeConn?: string;
+  calm?: true; // from the retry profile: an expected condition, rendered without alarm
 };
 
 
@@ -239,7 +260,7 @@ export async function fetchWithAbortableConnectionRetry<T>(operationFn: () => Pr
           console.warn(`[fetchers.retrier] ⚠️ All ${rp.maxAttempts - 1} retry attempts exhausted ${errorInfo}`);
         }
         // gave up after `attemptNumber` total attempts (incl. the original); the `-1` is a magic constant to signal end of retries
-        onRetry?.({ reason: rp.label, attempt: attemptNumber, maxAttempts: attemptNumber, causeHttp: error instanceof TRPCFetcherError ? error.httpStatus : undefined, causeConn: 'ERR', delayMs: -1 });
+        onRetry?.({ reason: rp.label, attempt: attemptNumber, maxAttempts: attemptNumber, causeHttp: error instanceof TRPCFetcherError ? error.httpStatus : undefined, causeConn: 'ERR', delayMs: -1, ...(rp.calm && { calm: true }) });
         throw error;
       }
 
@@ -278,6 +299,7 @@ export async function fetchWithAbortableConnectionRetry<T>(operationFn: () => Pr
         delayMs,
         causeHttp: error instanceof TRPCFetcherError ? error.httpStatus : undefined,
         causeConn: error instanceof TRPCFetcherError ? error.category : undefined,
+        ...(rp.calm && { calm: true }),
       });
 
       // abortable wait

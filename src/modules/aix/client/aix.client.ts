@@ -1,11 +1,11 @@
 import { findServiceAccessOrThrow } from '~/modules/llms/vendors/vendor.helpers';
 import { ortWebToolsToAixModel } from '~/modules/llms/vendors/openrouter/openrouter.webtools';
 
-import { vertexLinksAutoResolveFragments } from '~/modules/google/vertexai.client';
+import { vertexLinksResolveFragments } from '~/modules/google/vertexai.client';
 
 import type { Immutable } from '~/common/types/immutable.types';
 import type { MaybePromise } from '~/common/types/useful.types';
-import { AIVndAntInlineFilesPolicy, getVndAntInlineFiles } from '~/common/stores/store-ai';
+import { AIVndAntInlineFilesPolicy, getVndAntInlineFiles, getVndGeminiVertexLinks } from '~/common/stores/store-ai';
 import { AudioPlayer } from '~/common/util/audio/AudioPlayer';
 import { DLLM, DLLMId, LLM_IF_GEM_Interactions, LLM_IF_HOTFIX_NoTemperature, LLM_IF_OAI_Responses, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image, LLM_IF_Outputs_NoText } from '~/common/stores/llms/llms.types';
 import { DMessage, DMessageGenerator, createGeneratorAIX_AutoLabel } from '~/common/stores/chat/chat.message';
@@ -717,12 +717,12 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   if (metrics) dMessage.generator = { ...dMessage.generator, metrics };
   dMessage.pendingIncomplete = false;
 
-  // [#1114] resolve Gemini/Vertex AI grounding redirect links before the final 'done' update, so every
-  // caller (chat, Beam scatter/fusion, reattach) gets resolved links atomically with completion.
-  // Policy-gated (no-op unless 'resolve') and timeout-capped; failures keep the originals.
-  if ((outcome === 'completed' || outcome === 'truncated') && dMessage.fragments.length) { // truncated: the partial content is shown, so its links resolve too
-    const resolvedFragments = await vertexLinksAutoResolveFragments(dMessage.fragments);
-    if (resolvedFragments) dMessage.fragments = resolvedFragments;
+  // [#1114] resolve Gemini/Vertex AI grounding redirect links before the final update, so every caller (chat, Beam, reattach)
+  // gets them with completion, whatever the outcome: failed and truncated replies show their partial content too. After a user
+  // stop the aborted signal skips the server: only links already resolved in the session are rewritten, the rest stay for the chip
+  if (getVndGeminiVertexLinks() === 'resolve') {
+    const { rewritten } = await vertexLinksResolveFragments(dMessage.fragments, clientOptions.abortSignal);
+    if (rewritten.length) dMessage.fragments = dMessage.fragments.map(fragment => rewritten.find(({ fId }) => fId === fragment.fId) ?? fragment);
   }
 
   // final update

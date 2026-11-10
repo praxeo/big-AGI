@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 
 import type { DVoidPlaceholderMOp } from '~/common/stores/chat/chat.fragments';
 import { useAIPreferencesStore } from '~/common/stores/store-ai';
@@ -23,18 +23,19 @@ export function useVertexLinksForDisplay(op: DVoidPlaceholderMOp): DVoidPlacehol
     return Array.from(urls).sort();
   }, [enabled, op.text, op.iTexts, op.oTexts]);
 
-  const { data: resolvedMap } = useQuery({
+  const { data: destinations } = useQuery({
     queryKey: ['vertex-links-display', redirectUrls],
     enabled: redirectUrls.length > 0,
-    queryFn: () => vertexLinksResolveUrls(redirectUrls),
+    queryFn: async ({ signal }) => (await vertexLinksResolveUrls(redirectUrls, signal)).destinations, // all rounds: the answer is kept for good
+    placeholderData: keepPreviousData, // earlier destinations stay shown while a grown status loads
     staleTime: Infinity,
     gcTime: 5 * 60 * 1000,
     retry: false,
     refetchOnWindowFocus: false,
   });
 
-  if (!enabled || !resolvedMap?.size) return op;
-  const resolveText = (text: string) => text.replace(VERTEX_GROUNDING_REDIRECT_REGEX, url => resolvedMap.get(url) || url);
+  if (!enabled || !destinations?.size) return op;
+  const resolveText = (text: string) => text.replace(VERTEX_GROUNDING_REDIRECT_REGEX, url => destinations.get(url) || url);
   return {
     ...op,
     text: resolveText(op.text),

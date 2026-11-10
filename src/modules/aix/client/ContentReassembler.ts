@@ -44,6 +44,11 @@ const _isClosedReasoningFragment = (f: Parameters<typeof isVoidFragment>[0]): bo
 /** The status chip of a server retry, see onAixRetryReset */
 const _isRetryStatus = (f: Parameters<typeof isVoidPlaceholderFragment>[0]) => isVoidPlaceholderFragment(f) && f.part.aixControl?.ctl === 'ec-retry';
 const _RETRY_COUNTDOWN = 'Retrying in ';
+/** Output of the attempt a retry status announced, once connected: heartbeats, connect failures and the end are not */
+const _isAttemptOutput = (op: AixWire_Particles.ChatGenerateOp): boolean => !('cg' in op) ? !('p' in op && op.p === '❤')
+  : op.cg === 'issue' ? op.issueId !== 'dispatch-prepare' && op.issueId !== 'dispatch-fetch'
+    : op.cg !== 'end' && op.cg !== 'aix-retry-reset' && op.cg !== '_debugDispatchRequest' && op.cg !== '_debugProfiler';
+const _STREAM_ENDED_EARLY = 'The stream ended before a final response status was received. The answer may be incomplete.';
 
 // Future: Reassembly Policies
 // type ReassemblyPolicyVoidPlaceholder =
@@ -108,6 +113,7 @@ export class ContentReassembler {
   // settable per-iteration callback
   private onStreamingUpdate?: (accumulator: AixChatGenerateContent_LL, hasContent: boolean) => MaybePromise<void>;
   private updateContentStarted = false; // true (forever) after the first update with content, even if we have resets/continuations in the future
+  private retrySettlesOnOutput = false; // the retry status counts down to a non-final attempt: removed at that attempt's first output
 
 
   constructor(
@@ -372,6 +378,14 @@ export class ContentReassembler {
           console.log('[ContentReassembler] client particle transform failed, using original particle', { error: error?.message || error });
         }
       }
+
+    // the retried attempt produces output: the retry went through, and a failure from here on is not a give-up - the last
+    // attempt keeps its countdown, as its failure can be the same condition, which finalizeReassembly reports as a give-up
+    if (this.retrySettlesOnOutput && _isAttemptOutput(op)) {
+      this.retrySettlesOnOutput = false;
+      const idx = this.S.fragments.findLastIndex(_isRetryStatus);
+      if (idx >= 0) this._spliceFragment(idx);
+    }
 
     switch (true) {
 
@@ -1117,6 +1131,11 @@ export class ContentReassembler {
     // Vendor-composed stop error, surfaced as a complementary error fragment alongside the generic classification message
     if (tokenStopError)
       this._appendErrorFragment(tokenStopError);
+    // STOPGAP #1288 - REVERT with the typed errors (AIX-TODO-errors.md, "Stream mechanics"): this guesses "an error the vendor reported,
+    // on a stream that then closed without its final event" from three fields of the end. Two facts, neither implies the other;
+    // done properly the error is an issue of its own and the end only says how the read ended
+    if (tokenStopError && tokenStopReason === 'cg-issue' && terminationReason === 'done-dispatch-closed')
+      this._appendErrorFragment(_STREAM_ENDED_EARLY);
   }
 
   /**
@@ -1139,6 +1158,12 @@ export class ContentReassembler {
     if (dialectTokenStopReason) {
       // one row per wire reason, shared with the edge: gcStopReasonRow in aix.wiretypes
       const stopRow = AixWire_Particles.gcStopReasonRow(dialectTokenStopReason);
+      // TODO: port to the new typed errors system, otherwise replace with the following code: the row's message becomes a fallback,
+      //       skipped when the stop arrived with its own text (today a Gemini filter stop, and an Anthropic refusal with details,
+      //       store two error fragments: the vendor's text and this generic one)
+      //   - ReassemblyState, false at init:  dialectStopExplained: boolean;
+      //   - onCGEnd, where dialectStopReason is set:  this.S.dialectStopExplained = !!tokenStopError || terminationReason === 'issue-dialect';
+      //   - here:  return { tsr: stopRow.stored, ...(stopRow.message && !this.S.dialectStopExplained && { errorMessage: stopRow.message }) };
       if (stopRow)
         return { tsr: stopRow.stored, ...(stopRow.message && { errorMessage: stopRow.message }) };
       console.warn(`[ContentReassembler] Unmapped dialectStopReason: ${dialectTokenStopReason}. Falling back to terminationReason.`);
@@ -1164,7 +1189,7 @@ export class ContentReassembler {
       case 'done-dispatch-closed': // (!) VERY COMMON
         // BROKEN - Stream EOF before the dialect sent a termination signal - provider closed the connection early
         console.warn(`⚠️ [ContentReassembler] done-dispatch-closed without dialectStopReason - possible truncation`);
-        return { tsr: 'issue', errorMessage: 'Response may be incomplete - the stream ended before completion.' };
+        return { tsr: 'issue', errorMessage: _STREAM_ENDED_EARLY };
 
       case 'done-dispatch-aborted':
         // BROKEN - Infrastructure abort (not user-initiated) - dispatch connection severed
@@ -1214,7 +1239,7 @@ export class ContentReassembler {
     }));
   }
 
-  private onAixRetryReset({ rScope, rClearStrategy, attempt, maxAttempts, delayMs, reason, causeHttp, causeConn }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'aix-retry-reset' }>): void {
+  private onAixRetryReset({ rScope, rClearStrategy, attempt, maxAttempts, delayMs, reason, causeHttp, causeConn, calm }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'aix-retry-reset' }>): void {
     const _prevFragments = DEBUG_FLOW ? this.S.fragments.length : 0;
     switch (rClearStrategy) {
       case 'none':
@@ -1223,9 +1248,8 @@ export class ContentReassembler {
         break;
 
       case 'since-checkpoint':
-        // atomic restore to checkpoint (fall back to initial state if no checkpoint)
-        if (!this.checkpointState)
-          console.warn('[ContentReassembler] since-checkpoint restore with no checkpoint - falling back to full clear');
+        // atomic restore: to the last continuation checkpoint ('flow-cont'), keeping the turns before the failed one; with no
+        // checkpoint this is the first turn, and restarting the answer from the initial state is the intended reset
         Object.assign(this.S, structuredClone(this.checkpointState ?? this.initialState));
         this.wireParticlesBacklog.length = 0; // should have been drained/completed already
         if (DEBUG_FLOW) console.log(`[DEV] [flow] retry-reset ${rScope}: since-checkpoint (${_prevFragments} -> ${this.S.fragments.length} fragments) - ${reason}`);
@@ -1259,7 +1283,9 @@ export class ContentReassembler {
       rAttempt: attempt,
       ...(causeHttp ? { rCauseHttp: causeHttp } : undefined),
       ...(causeConn ? { rCauseConn: causeConn } : undefined),
+      ...(calm && { rCalm: true }),
     }));
+    this.retrySettlesOnOutput = delayMs > 0 && attempt < maxAttempts;
   }
 
   private onMetrics({ metrics }: Extract<AixWire_Particles.ChatGenerateOp, { cg: 'set-metrics' }>): void {

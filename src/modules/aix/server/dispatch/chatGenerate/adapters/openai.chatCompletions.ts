@@ -5,7 +5,7 @@ import type { OpenAIDialects } from '~/modules/llms/server/openai/openai.access'
 import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixMessages_SystemMessage, AixParts_DocPart, AixParts_InlineAudioPart, AixParts_MetaInReferenceToPart, AixTools_ToolDefinition, AixTools_ToolsPolicy } from '../../../api/aix.wiretypes';
 import { OpenAIWire_API_Chat_Completions, OpenAIWire_ContentParts, OpenAIWire_Messages } from '../../wiretypes/openai.wiretypes';
 
-import { AIX_MISSING_TOOL_RESULT_TEXT, aixFnv1aHex, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
+import { AIX_FORCED_TOOLS_HINT_TEXT, AIX_MISSING_TOOL_RESULT_TEXT, aixFnv1aHex, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
 
 import { unslothApplyChatCompletionsPayload } from './openai.chatCompletions.unsloth'; // [praxeo fork]
 
@@ -83,15 +83,27 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
   if (openAIDialect === 'openrouter')
     _capTrailingCacheBreakpoints(chatMessages, 4);
 
-  // [OpenRouter -> Anthropic, 2026-09-01] Fable/Mythos 5.x reject forced tool use upstream: _toOpenAIToolChoice degrades
-  // 'required' to 'auto', and this steering hint keeps the call rate at forced level (mirrors the native adapter's downgrade)
-  if (openAIDialect === 'openrouter' && chatGenerate.toolsPolicy?.type === 'any' && chatGenerate.tools?.length && _isOrtForcedToolRejectingAnt(model.id)) {
-    const mustUseHint = 'IMPORTANT: You MUST respond by calling one of the provided tools. Do not respond with text.';
+  // Forced tool use ('any') -> tool_choice 'auto' + a steering hint in the system message, where the vendor rejects or mishandles
+  // the forced choice; the hint keeps the call rate of the single-tool callers at forced level (mirrors the native Anthropic adapter).
+  // This one condition drives both the hint and _toOpenAIToolChoice.
+  // [OpenRouter] every model: whether a forced call is accepted depends on the upstream provider, and OR relays its 400
+  //   (Anthropic Fable/Mythos 5.x, Opus 5.5, Sonnet 5.5: 'tool_choice: type "tool" and "any" are not supported for this model.';
+  //   the Muse models served by Meta: 'only "auto" is supported')
+  // [Moonshot, 2026-08-17] 'required' 400s while thinking is on (k2.5/k2.6/k2.7-code, probed); K3 and thinking-off requests accept it
+  // [Mistral, 2026-11-09, hypothesis: forcing constrains the call, not the content before it] 'required' and 'any' are accepted, but
+  //   Small 4 writes the answer as text before the forced call, at times a runaway that hits the token cap before any call;
+  //   'auto' + the hint returns the bare call (forced calls on Ministral 8B and Large 3 are clean)
+  const hotFixForcedToolsAsAuto = chatGenerate.toolsPolicy?.type === 'any' && (
+    openAIDialect === 'openrouter'
+    || openAIDialect === 'mistral'
+    || (openAIDialect === 'moonshot' && model.reasoningEffort !== 'none' && !(model.id === 'k3' || model.id.startsWith('kimi-k3')))
+  );
+  if (hotFixForcedToolsAsAuto && chatGenerate.tools?.length) {
     const firstMessage = chatMessages[0];
     if (firstMessage?.role === 'system' && typeof firstMessage.content === 'string')
-      firstMessage.content += '\n\n' + mustUseHint;
+      firstMessage.content += '\n\n' + AIX_FORCED_TOOLS_HINT_TEXT;
     else
-      chatMessages.unshift({ role: 'system', content: mustUseHint });
+      chatMessages.unshift({ role: 'system', content: AIX_FORCED_TOOLS_HINT_TEXT });
   }
 
   // [DeepSeek, 2026-04-24] When tools are present and thinking isn't disabled, V4 demands reasoning_content on EVERY assistant message in history
@@ -111,7 +123,7 @@ export function aixToOpenAIChatCompletions(openAIDialect: OpenAIDialects, model:
     model: model.id,
     messages: chatMessages,
     tools: chatGenerate.tools && _toOpenAITools(chatGenerate.tools, strictToolInvocations),
-    tool_choice: chatGenerate.toolsPolicy && _toOpenAIToolChoice(openAIDialect, chatGenerate.toolsPolicy, model),
+    tool_choice: chatGenerate.toolsPolicy && _toOpenAIToolChoice(chatGenerate.toolsPolicy, hotFixForcedToolsAsAuto),
     parallel_tool_calls: undefined,
     max_tokens: model.maxTokens !== undefined ? model.maxTokens : undefined,
     ...(model.temperature !== null ? { temperature: model.temperature !== undefined ? model.temperature : undefined } : {}),
@@ -975,48 +987,21 @@ function _toOpenAITools(itds: AixTools_ToolDefinition[], strictToolInvocations: 
   });
 }
 
-function _toOpenAIToolChoice(openAIDialect: OpenAIDialects, itp: AixTools_ToolsPolicy, model: AixAPI_Model): NonNullable<TRequest['tool_choice']> {
-  // [Mistral] - supports 'auto', 'none', 'any'
-  if (openAIDialect === 'mistral' && itp.type !== 'auto') {
-    // Note: we tried adding the 'any' model, but don't feel comfortable with altering our good parsers
-    // to allow for Mistral's deviation from the de-facto norm set by the OpenAI protocol.
-    throw new Error('We only support automatic tool selection for Mistral models');
-  }
-
+function _toOpenAIToolChoice(itp: AixTools_ToolsPolicy, forcedAsAuto: boolean): NonNullable<TRequest['tool_choice']> {
   // NOTE: OpenAI has an additional policy 'none', which we don't have as it behaves like passing no tools at all.
   //       Passing no tools is mandated instead of 'none'.
   switch (itp.type) {
     case 'auto':
       return 'auto';
     case 'any':
-      // [Moonshot, 2026-08-17] 'required' 400s while thinking is on (k2.5/k2.6/k2.7-code, probed); K3
-      // and thinking-off requests accept it. Degrade to 'auto' rather than hard-fail.
-      if (openAIDialect === 'moonshot' && model.reasoningEffort !== 'none'
-        && !(model.id === 'k3' || model.id.startsWith('kimi-k3')))
-        return 'auto';
-      // [OpenRouter -> Anthropic, 2026-09-01] Fable/Mythos 5.x reject forced tool use and OR relays the 400 ('tool_choice: type "tool"
-      // and "any" are not supported for this model.', probed on claude-fable-5.1; Fable 5 400s with the older wording). Degrade to
-      // 'auto' - the steering hint injected into the system message above keeps our single-tool callers calling the tool.
-      if (openAIDialect === 'openrouter' && _isOrtForcedToolRejectingAnt(model.id))
-        return 'auto';
-      return 'required';
+      // 'auto' where the vendor rejects or mishandles a forced call; the system message then carries the steering hint (hotFixForcedToolsAsAuto)
+      return forcedAsAuto ? 'auto' : 'required';
     // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema. [Moonshot] probe-verified: named tool_choice
     // 400s ("tool_choice 'specified' is incompatible with thinking enabled") on all thinking-mode Kimi requests -
     // always, on the K2.7-code/K3 always-thinking models (re-probed 2026-08-17).
     // case 'function_call':
     //   return { type: 'function' as const, function: { name: itp.function_call.name } };
   }
-}
-
-
-/**
- * OpenRouter ids of Anthropic models that reject forced tool_choice upstream: Fable/Mythos 5 and 5.x, Opus 5.5, Sonnet 5.5, and the '~' router
- * aliases resolving to them. '~anthropic/claude-opus-latest' (-> Opus 5.5 since 2026-09-22) silently falls back to Opus 5 on a forced
- * call (probed), so it's degraded too, to stay on the aliased model. '~anthropic/claude-sonnet-latest' still resolves to Sonnet 5 (2026-09-28,
- * forced call 200), so it's not listed.
- */
-function _isOrtForcedToolRejectingAnt(modelId: string): boolean {
-  return /^~?anthropic\/claude-((fable|mythos)-(5|latest)|opus-(5\.5|latest)|sonnet-5\.5)/.test(modelId);
 }
 
 

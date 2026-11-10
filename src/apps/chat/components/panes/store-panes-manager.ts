@@ -6,6 +6,7 @@ import { useShallow } from 'zustand/react/shallow';
 import { DConversationId } from '~/common/stores/chat/chat.conversation';
 import { agiUuid } from '~/common/util/idUtils';
 import { useChatStore } from '~/common/stores/chat/store-chats';
+import { useMemoShallowStable } from '~/common/util/hooks/useShallowObject';
 
 
 // change this to increase/decrease the number history steps per pane
@@ -416,12 +417,17 @@ function _duplicateChatPane(pane: ChatPane): ChatPane {
 
 // Instant getters
 
-export function panesManagerActions(): AppChatPanesActions {
+export function chatPanesActions(): AppChatPanesActions {
   return useAppChatPanesStore.getState();
 }
 
 export function getInstantAppChatPanesCount() {
   return useAppChatPanesStore.getState().chatPanes.length;
+}
+
+export function getFocusedPaneConversationId(): DConversationId | null {
+  const { chatPanes, chatPaneFocusIndex } = useAppChatPanesStore.getState();
+  return chatPaneFocusIndex !== null ? chatPanes[chatPaneFocusIndex]?.conversationId ?? null : null;
 }
 
 /** Chats shown in panes other than the focused one. Never recycle these, or two panes end up on the same chat. */
@@ -446,20 +452,33 @@ export function subscribeAppChatPanes(listener: () => void): () => void {
 
 // Reactive hooks
 
+/** What AppChat lays out per pane: no history, no view state. */
+export type ChatPaneLayout = Readonly<Pick<ChatPane, 'paneId' | 'conversationId'>>;
+
+/** Returns `prev` while every pane keeps its id and chat, so view flags and history do not reach layout readers. */
+function _stablePanesLayout(chatPanes: readonly ChatPane[], prev: readonly ChatPaneLayout[]): readonly ChatPaneLayout[] {
+  if (chatPanes.length === prev.length && chatPanes.every((pane, idx) => pane.paneId === prev[idx].paneId && pane.conversationId === prev[idx].conversationId))
+    return prev;
+  return chatPanes.map(({ paneId, conversationId }) => ({ paneId, conversationId }));
+}
+
 export function usePanesManager() {
-  // use Panes - Note: before we had { _onConversationsChanged, ...panesFunctions } = ... but we don't need the internal function anymore
-  const panesData = useAppChatPanesStore(useShallow(state => ({
-    // state
-    chatPanes: state.chatPanes as Readonly<ChatPane[]>,
-    focusedPaneIndex: state.chatPaneFocusIndex,
-    focusedPaneConversationId: state.chatPaneFocusIndex !== null ? state.chatPanes[state.chatPaneFocusIndex]?.conversationId ?? null : null,
-    // methods
-    openConversationInFocusedPane: state.openConversationInFocusedPane,
-    openConversationInSplitPane: state.openConversationInSplitPane,
-    navigateHistoryInFocusedPane: state.navigateHistoryInFocusedPane,
-    removePane: state.removePane,
-    setFocusedPaneIndex: state.setFocusedPaneIndex,
-  })));
+  // the layout is stabilized inside the selector: a render-time memo would run after the re-render it is meant to skip
+  const layoutRef = React.useRef<readonly ChatPaneLayout[]>([]);
+
+  // use Panes
+  const { chatPanes, focusedPaneConversationId, focusedPaneIndex } = useAppChatPanesStore(useShallow((state) => {
+    layoutRef.current = _stablePanesLayout(state.chatPanes, layoutRef.current);
+    return ({
+      chatPanes: layoutRef.current,
+      focusedPaneIndex: state.chatPaneFocusIndex,
+      focusedPaneConversationId: state.chatPaneFocusIndex !== null ? state.chatPanes[state.chatPaneFocusIndex]?.conversationId ?? null : null,
+    });
+  }));
+
+  // memo IDs
+  const chatPaneIds = useMemoShallowStable(() => chatPanes.map(pane => pane.conversationId || null), [chatPanes]);
+  const chatPaneUniqueIds = useMemoShallowStable(() => Array.from(new Set(chatPaneIds.filter(id => !!id))) as DConversationId[], [chatPaneIds]);
 
   // use changes in Conversation IDs[] to trigger the existence check
   const conversationIDs: DConversationId[] = useChatStore(useShallow(state =>
@@ -468,10 +487,16 @@ export function usePanesManager() {
 
   // [Effect] Ensure all Panes have a valid Conversation ID
   React.useEffect(() => {
-    panesManagerActions()._onConversationsChanged(conversationIDs);
+    chatPanesActions()._onConversationsChanged(conversationIDs);
   }, [conversationIDs]);
 
-  return panesData;
+  return {
+    chatPanes,
+    chatPaneIds,
+    chatPaneUniqueIds,
+    focusedPaneConversationId,
+    focusedPaneIndex,
+  };
 }
 
 export function usePaneDuplicateOrClose() {
