@@ -21,7 +21,8 @@ const DEV_DEBUG_MISSING_IDS = Release.IsNodeDevBuild; // not in staging to reduc
 /**
  * Gemini Completions -  Messages Architecture
  *
- * Will send a single candidate (the API does not support more than 1), which will contain the content parts.
+ * Sends a single candidate (candidateCount is 1), which contains the content parts - except on TOO_MANY_TOOL_CALLS with
+ * hosted tools, where the aborted step's toolResponse parts arrive as extra candidates (see the candidates block, #1286).
  * There is just a single Part per Candidate, unless the chunk contains parallel function calls, in which case they're in parts.
  *
  * Beginning and End are implicit and follow the natural switching of parts in a progressive order; Gemini may for instance
@@ -42,8 +43,10 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
   let timeToFirstEvent: number;
   let collapsedTextPartForReasoning = false;
   let skipComputingTotalsOnce = isStreaming;
-  let groundingIndexNumber = 0;
+  const groundingRefNumbers = new Map<string, number>(); // citation number per URI, first appearance
   let nCodeExec = 0;
+  let nSearchQueries = 0, nFetchUrls = 0; // [Gemini 3+] queries and URLs of the hosted search and URL context calls, when tool circulation puts them on the wire
+  let nFetchUrlsListed = 0; // without those calls (2.x): URL context metadata entries
 
   // this can throw, it's caught by the caller
   return function(pt: IParticleTransmitter, rawEventData: string): void {
@@ -54,6 +57,15 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
 
     // Throws on malformed event data
     const eventData = JSON.parse(rawEventData);
+
+    // In-band error after HTTP 200, Google's error object (https://google.aip.dev/193): {"error":{"code":503,"message":"...","status":"UNAVAILABLE","details":[...]}}
+    // `details` is a list of typed entries (reason, retry delay, quota): shown as JSON after the message until typed errors carry them. None was seen in-stream yet
+    // [Gemini, 2026-11-09, hypothesis] a bare-string error was never observed: it is surfaced as the message rather than dropped
+    if (eventData?.error) {
+      const { code, message, status, details } = typeof eventData.error === 'object' ? eventData.error : { code: undefined, message: `${eventData.error}`, status: undefined };
+      const detailsText = Array.isArray(details) && details.length ? ` Details: ${JSON.stringify(details)}` : '';
+      return pt.setDialectTerminatingIssue(`${status || 'Error'}${code ? ` (${code})` : ''}: ${message || 'Upstream error.'}${detailsText}`, IssueSymbols.Generic, 'srv-warn');
+    }
 
     // [Gemini, 2025-10-22] Early detection of proxy errors - being sent as an assistant message
     if (eventData?.candidates?.length === 1) {
@@ -147,17 +159,25 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
     }
 
     // candidates may be an optional field (started happening on 2024-09-27)
-    if (generationChunk.candidates) {
+    if (generationChunk.candidates?.length) {
 
-      // expect: single completion
-      if (generationChunk.candidates.length !== 1)
-        throw new Error(`expected 1 completion, got ${generationChunk.candidates?.length}`);
-      const candidate0 = generationChunk.candidates[0];
+      // We request one completion (candidateCount is 1): candidates[0].
+      const [candidate0, ...extraCandidates] = generationChunk.candidates;
       if (candidate0.index !== undefined && candidate0.index !== 0)
         throw new Error(`expected completion index 0, got ${candidate0.index}`);
 
-      // -> Candidates[0] -> Content
-      for (const mPart of (candidate0.content?.parts || [])) {
+
+      // [Gemini, 2026-11] On TOO_MANY_TOOL_CALLS with hosted tools, the aborted step's toolResponse parts arrive as extra index-less candidates,
+      // one per pending toolCall in candidates[0]: flushed server-side state, not alternative completions (#1286).
+      // Their parts are folded in wire order; anything else on an extra candidate is a shape we have not seen (strict in dev, warns in prod).
+      for (const extra of extraCandidates)
+        if (extra.finishReason || extra.groundingMetadata || extra.urlContextMetadata || extra.citationMetadata ||
+          extra.content?.parts?.some(part => !('toolCall' in part) && !('toolResponse' in part) && !('codeExecutionResult' in part))
+        ) // code execution: the pending executableCode's result
+          aixResilientUnknownValue('Gemini', 'extraCandidate', extra);
+
+      // -> Candidates -> Content: the completion's parts, then the extra candidates' parts
+      for (const mPart of generationChunk.candidates.flatMap(candidate => candidate.content?.parts || [])) {
 
         // [Gemini 3, 2025-11-18] Extract thoughtSignature once (can appear on any part type)
         // https://ai.google.dev/gemini-api/docs/gemini-3?thinking=high#thought_signatures
@@ -185,6 +205,7 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
 
           // <- InlineDataPart
           case 'inlineData' in mPart:
+            if (!mPart.inlineData.data) break; // 0-byte code-execution file: no bytes to deliver
             // [Gemini, 2025-03-14] Experimental Image generation: Response
             if (mPart.inlineData.mimeType.startsWith('image/')) {
               pt.appendImageInline(
@@ -221,6 +242,7 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
                 kind: 'inline-download',
                 mimeType: mPart.inlineData.mimeType,
                 b64: mPart.inlineData.data,
+                ...(mPart.inlineData.displayName ? { filename: mPart.inlineData.displayName } : {}),
               });
             }
             break;
@@ -277,6 +299,18 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
           // <- ToolCallPart (server-side hosted tool invocation, e.g. Google Search, URL Context)
           case 'toolCall' in mPart: {
             const tc = mPart.toolCall;
+            // the calls say what ran: every query (a repeated query is a new search) and every URL.
+            // [Gemini, 2026-11-05, hypothesis] counted in queries because the pricing page bills each executed query on Gemini 3+;
+            // that is not verifiable, and Google's own limit message counts calls, of which one can carry several queries.
+            // The candidate metadata is not a count: grounding lists only the queries whose results were used and is absent when
+            // the turn ends on a function call, URL context drops entries (failed retrievals, later steps)
+            if (tc.toolType === 'GOOGLE_SEARCH_WEB') {
+              nSearchQueries += _geminiStrArray(_geminiAsObj(tc.args)?.queries)?.length ?? 0;
+              if (nSearchQueries) pt.updateMetrics({ nWebSearch: nSearchQueries });
+            } else if (tc.toolType === 'URL_CONTEXT') {
+              nFetchUrls += _geminiStrArray(_geminiAsObj(tc.args)?.urls)?.length ?? 0;
+              if (nFetchUrls) pt.updateMetrics({ nWebFetch: nFetchUrls }); // counted, not per-call billed (#1283)
+            }
             if (!tc.id) {
               if (DEV_DEBUG_MISSING_IDS) console.log('[DEV] Gemini toolCall missing id for:', tc.toolType);
               break;
@@ -327,8 +361,8 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
         }
       }
 
-      // -> Candidates[0] -> Grounding Metadata: executed queries bill per query
-      if (candidate0.groundingMetadata?.webSearchQueries?.length)
+      // -> Candidates[0] -> Grounding Metadata: the queries used, counted when the search calls are not on the wire (no tool circulation: 2.x, image models)
+      if (!nSearchQueries && candidate0.groundingMetadata?.webSearchQueries?.length)
         pt.updateMetrics({ nWebSearch: candidate0.groundingMetadata.webSearchQueries.length });
       if (candidate0.groundingMetadata?.groundingChunks?.length) {
         /**
@@ -339,15 +373,17 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
          * - follow up Google Search queries (.webSearchQueries) for suggested refinements
          */
         for (const { web } of candidate0.groundingMetadata.groundingChunks)
-          pt.appendUrlCitation(web.title, web.uri, ++groundingIndexNumber, undefined, undefined, undefined, undefined);
+          pt.appendUrlCitation(web.title, web.uri, _citationRefNumber(groundingRefNumbers, web.uri), undefined, undefined, undefined, undefined);
       }
 
       // -> Candidates[0] -> URL Context Metadata
       if (candidate0.urlContextMetadata?.urlMetadata?.length) {
+        if (!nFetchUrls) // fetches without the URL context calls on the wire (2.x): this list, which then comes once per fetch step
+          pt.updateMetrics({ nWebFetch: nFetchUrlsListed += candidate0.urlContextMetadata.urlMetadata.length });
         for (const urlMeta of candidate0.urlContextMetadata.urlMetadata) {
           // Only add URLs that were successfully retrieved
           if (urlMeta.urlRetrievalStatus === 'URL_RETRIEVAL_STATUS_SUCCESS')
-            pt.appendUrlCitation('', urlMeta.retrievedUrl, ++groundingIndexNumber, undefined, undefined, undefined, undefined);
+            pt.appendUrlCitation('', urlMeta.retrievedUrl, _citationRefNumber(groundingRefNumbers, urlMeta.retrievedUrl), undefined, undefined, undefined, undefined);
           else if (urlMeta.urlRetrievalStatus !== 'URL_RETRIEVAL_STATUS_UNSPECIFIED')
             console.warn(`[Gemini] URL retrieval ${urlMeta.urlRetrievalStatus}: ${urlMeta.retrievedUrl}`); // log for debugging
         }
@@ -373,6 +409,7 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
             break;
 
           case 'MAX_TOKENS':
+          case 'CONTINUATION': // Per-request token limit reached before the end; we do not resume with continuationToken, so the output is cut
             pt.setTokenStopReason('out-of-tokens');
             // NOTE: we call setDialectEnded instead of setDialectTerminatingIssue, because we don't want an extra message appended,
             // as we know that 'out-of-tokens' will likely append a brick wall (simple/universal enough).
@@ -396,6 +433,9 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
           case 'UNEXPECTED_TOOL_CALL': // Model generated a tool call but no tools were enabled in the request
           case 'TOO_MANY_TOOL_CALLS': // Model called too many tools consecutively, execution limit exceeded
           case 'MISSING_THOUGHT_SIGNATURE': // [Gemini 3] Thinking model validation failed - thoughtSignature missing
+          case 'MALFORMED_RESPONSE': // Finished due to malformed response
+          case 'ESCALATION': // Request was filtered by an escalation rule
+          case 'PUP_LIMITED_DISABLED': // User account limited or disabled for Prohibited Use Policy (PUP) violations
           case 'FINISH_REASON_UNSPECIFIED':
             const reasonMap: Record<typeof candidate0.finishReason, [AixWire_Particles.GCTokenStopReason, string, string | null]> = {
               'SAFETY': ['filter-content', `Generation stopped due to SAFETY: ${_explainGeminiSafetyIssues(candidate0.safetyRatings)}`, null],
@@ -414,6 +454,9 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
               'UNEXPECTED_TOOL_CALL': ['cg-issue', 'Generation stopped: tool call made but no tools enabled', null],
               'TOO_MANY_TOOL_CALLS': ['cg-issue', 'Generation stopped: too many consecutive tool calls', null],
               'MISSING_THOUGHT_SIGNATURE': ['cg-issue', 'Generation stopped: request has at least one Gemini thought signature missing', null],
+              'MALFORMED_RESPONSE': ['cg-issue', 'Generation stopped: malformed response', null],
+              'ESCALATION': ['filter-content', 'Generation stopped: request filtered by an escalation rule', null],
+              'PUP_LIMITED_DISABLED': ['cg-issue', 'Generation stopped: account limited or disabled for Prohibited Use Policy (PUP) violations', null],
               'FINISH_REASON_UNSPECIFIED': ['cg-issue', 'Generation stopped and no reason was given', null],
             } as const;
             const reason = reasonMap[candidate0.finishReason] || ['cg-issue', `Generation stopped due to unknown reason: ${candidate0.finishReason || 'reason unknown'}`, null];
@@ -427,10 +470,10 @@ export function createGeminiGenerateContentResponseParser(requestedModelName: st
             const _exhaustiveCheck: never = candidate0.finishReason as Exclude<typeof candidate0.finishReason, string>;
             aixResilientUnknownValue('Gemini', 'finishReason', candidate0.finishReason);
             pt.setTokenStopReason('cg-issue');
-            return pt.setDialectTerminatingIssue(`unexpected Gemini finish reason: ${candidate0?.finishReason})`, null, 'srv-warn');
+            return pt.setDialectTerminatingIssue(`unexpected Gemini finish reason: ${candidate0?.finishReason}`, null, 'srv-warn');
         }
       }
-    } /* end of .candidates (single candidate is ensured) */
+    } /* end of .candidates */
 
   };
 }
@@ -580,4 +623,17 @@ function _gemPriceMultiplier(serviceTier: string | null | undefined): number | u
     default:
       return undefined;
   }
+}
+
+
+/**
+ * Citation numbers follow first appearance, one per URI: grounding chunks repeat across stream events (and a page across
+ * chunks), the client coalesces citations by URL, so a running counter left gaps and a top number above the count (#1270).
+ */
+function _citationRefNumber(refNumbers: Map<string, number>, uri: string): number {
+  const existing = refNumbers.get(uri);
+  if (existing !== undefined) return existing;
+  const refNumber = refNumbers.size + 1;
+  refNumbers.set(uri, refNumber);
+  return refNumber;
 }

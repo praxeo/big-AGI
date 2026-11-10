@@ -298,6 +298,7 @@ type DVoidModelAnnotationsPart = {
 export type DVoidWebCitation = {
   type: 'citation',
   url: string,
+  vndGemVertexUrl?: string, // the Gemini grounding redirect that url replaced once resolved, kept for a faithful replay
   title: string,
   refNumber?: number,
   pubTs?: number, // publication timestamp
@@ -355,6 +356,7 @@ type DVoidPlaceholderAixControlRetry = {
   rStrat?: 'cli-ll-reconnect' | 'cli-ll-resume',  // strategy for cli-ll scope (reconnect: new request, resume: continue from handle)
   rCauseHttp?: number,  // HTTP status code if available (e.g., 429, 503, 502)
   rCauseConn?: string,  // connection error type if available (e.g., 'net-disconnected', 'timeout')
+  rCalm?: true,  // the retry profile marks the condition as expected (e.g. a busy best-effort tier): render without alarm
 };
 
 

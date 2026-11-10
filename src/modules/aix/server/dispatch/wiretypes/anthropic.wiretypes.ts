@@ -13,6 +13,15 @@ const hotFixAntShipNoEmptyTextBlocks = true; // Replace empty text blocks with a
  *
  * ## Updates
  *
+ * ### 2026-11-09 - API Sync: Claude Fable 5.2 / Mythos 5.2 (launch-verified live)
+ * - Models: claude-fable-5-2 - Fable 5.1's surface at $8/$40: thinking 'disabled' / 'enabled' / 'between_tools' 400, forced tool_choice 400,
+ *   temperature != 1 / top_p / top_k / prefill 400. Same tokenizer (count_tokens equal to Fable 5.1 and Opus 5.5). No wire changes.
+ * - Request.speed: 'fast' accepted on Fable 5.2 with or without the beta header (`usage.speed: 'fast'`); Fable 5.1 400s it.
+ * - Preserved thinking (probed): the prefix check now 400s on every account when `block_binding` is unset ('The block is bound to a different
+ *   conversation'); with 'drop_block' the request succeeds and lists the drops. Fable 5.2 blocks sent to Opus 5.5 or Fable 5.1 are dropped
+ *   with 'model_binding_mismatch'; Opus 5.5 and Fable 5.1 blocks replay on Fable 5.2.
+ * - Models API: `capabilities.thinking.types.between_tools` (2026-10-15), `lifecycle`, `deprecated_at`, `retires_at` - present, not parsed.
+ *
  * ### 2026-10-07 - API Sync: Claude Haiku 5.5 (launch-verified live)
  * - Models: claude-haiku-5-5 - Opus 5's thinking shape: adaptive on by default, 'disabled' at effort <= 'high' only (xhigh/max 400);
  *   'enabled' (budget_tokens) and 'between_tools' 400; 'block_binding' 400 alongside 'disabled'. Forced tool_choice works (200, no
@@ -348,17 +357,38 @@ export namespace AnthropicWire_Blocks {
       ]),
       z.string(), // forward-compatibility parsing
     ]),
-    input: z.union([
-      z.object({ query: z.string() }), // web_search
-      z.object({ url: z.string(), use_cache: z.boolean().optional() }), // web_fetch (use_cache: the model's per-call cache bypass, seen 2026-09-24 on the _20260318 tool)
-      z.object({ code: z.string() }), // code_execution
-      z.object({ command: z.string() }), // bash_code_execution
-      z.object({ command: z.string(), path: z.string() }), // text_editor_code_execution (+ file_text, old_str, new_str, view_range, etc.)
-      z.object({ pattern: z.string() }), // tool_search_tool_regex
-      z.object({ query: z.string() }), // tool_search_tool_bm25
-    ]).or(z.any()), // see the comment on ToolUseBlock_schema.input
+    /**
+     * Kept as received, like ToolUseBlock_schema.input: an object schema drops the keys it does not list, and a non-streaming
+     * response then loses them (the editor's path and file_text, the search tools' limit, web_fetch's use_cache).
+     * Readers go through ServerToolUseInput_schemas, below.
+     */
+    input: z.any(),
     caller: _ToolUseCaller_schema.optional(),
   });
+
+  /**
+   * The inputs of the known server tools, for the code that reads them: the block's `input` stays as received (above).
+   * Each lists the fields we show; a field that is missing or of another type reads as undefined, never as a parse failure.
+   * Also on the wire, not read: `limit` (the search tools' result cap, 1-10000, default 5), `use_cache` (web_fetch, the model's per-call cache bypass).
+   */
+  const _inputText_schema = z.string().optional().catch(undefined);
+  export const ServerToolUseInput_schemas = {
+    web_search: z.object({ query: _inputText_schema }),
+    web_fetch: z.object({ url: _inputText_schema }),
+    code_execution: z.object({ code: _inputText_schema }),
+    bash_code_execution: z.object({ command: _inputText_schema }),
+    text_editor_code_execution: z.object({
+      command: _inputText_schema, // 'create' | 'view' | 'str_replace' | 'insert' | 'undo_edit'
+      path: _inputText_schema,
+      file_text: _inputText_schema, // create
+      old_str: _inputText_schema, // str_replace
+      new_str: _inputText_schema, // str_replace
+      insert_text: _inputText_schema, // insert
+      view_range: z.unknown().optional(), // view
+    }),
+    tool_search_tool_regex: z.object({ pattern: _inputText_schema }),
+    tool_search_tool_bm25: z.object({ query: _inputText_schema }),
+  } as const;
 
   export const WebSearchToolResultBlock_schema = _CommonBlock_schema.extend({
     type: z.literal('web_search_tool_result'),
@@ -1141,9 +1171,10 @@ export namespace AnthropicWire_API_Message_Create {
     top_p: z.number().optional(),
 
     /**
-     * [Anthropic, fast-mode-2026-02-01] Accelerated inference mode (research preview, waitlist; up to 2.5x OTPS at 2x price).
-     * Only supported on Claude Opus 5 and Opus 4.8 (2026-07-24: Opus 4.7 returns 400; Opus 4.6 silently runs standard,
-     * see `usage.speed`). Not available on Fable 5 / Sonnet 5, Batch API, Priority Tier, or partner clouds.
+     * [Anthropic, fast-mode-2026-02-01] Accelerated inference mode (up to 2.5x OTPS at 2x price). Available on Claude Fable 5.2 and Opus 5.5;
+     * research preview (beta header, waitlist) on Opus 5 and Opus 4.8 (2026-07-24: Opus 4.7 returns 400; Opus 4.6 silently runs standard,
+     * see `usage.speed`). Not available on Fable 5.1 / 5, Sonnet, Batch API, Priority Tier, or partner clouds, except Fable 5.2 and
+     * Opus 5.5 on Google Cloud and Microsoft Foundry.
      * Note: switching speeds invalidates the prompt cache - requests at different speeds do not share cached prefixes.
      */
     speed: z.enum(['fast']).optional(),
@@ -1195,7 +1226,8 @@ export namespace AnthropicWire_API_Message_Create {
     /**
      * [Anthropic, 2026-09-01] Thinking blocks dropped from the request, only with the `thinking-binding-controls-2026-08-01` header.
      * reason: 'model_binding_mismatch' (an older model can't read a newer block) | 'prefix_binding_mismatch' (history edited, with
-     * block_binding 'drop_block'). Streaming: on the message_start message. Loosely typed for forward-compat.
+     * block_binding 'drop_block') | 'organization_binding_mismatch' (a block from another organization: Anthropic org, AWS account
+     * or GCP project). Streaming: on the message_start message. Loosely typed for forward-compat.
      */
     input_transformations: z.array(z.object({
       type: z.string(), // 'thinking_dropped'
@@ -1226,8 +1258,8 @@ export namespace AnthropicWire_API_Message_Create {
         tool_search_requests: z.number().optional(), // [Anthropic, 2025-11-24] Tool Search Tool usage
       }).nullish(),
       service_tier: z.enum(['standard', 'priority', 'batch']).nullish(),
-      // [Anthropic, fast-mode-2026-02-01] actual speed used - present ONLY when the request included `speed`
-      // (probe-verified 2026-07-24: absent on standard requests; Opus 4.6 reports 'standard' on its silent fast->standard fallback)
+      // [Anthropic, fast-mode-2026-02-01] actual speed used - on every first-party response, 'standard' when the request had no `speed`
+      // (Opus 4.6 reports 'standard' on its silent fast->standard fallback); absent on Bedrock, which never takes `speed`
       speed: z.enum(['fast', 'standard']).nullish(),
       inference_geo: z.string().nullish(),
     }),

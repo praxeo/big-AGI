@@ -13,10 +13,11 @@ When adding a customization: put the logic in a new file, and call it from upstr
 
 | Feature | Fork-owned files (never conflict) | Hooks in upstream files |
 |---|---|---|
-| Clinical personas (MDM Helper v2/v3, HPI Helper, Wound Care Note, Clinical Assistant) | - | `src/data.ts` (persona set replaced); with the Developer and YouTube Transcriber personas gone, their references are deleted in `AppChat.tsx`, `Composer.tsx`, `PersonaSelector.tsx`, `store-chats.ts` |
+| Clinical personas (MDM Helper v2/v3, HPI Helper, Wound Care Note, Clinical Assistant) | - | `src/data.ts` (persona set replaced); with the Developer and YouTube Transcriber personas gone, their references are deleted in `Composer.tsx`, `PersonaSelector.tsx`, `store-chats.ts` |
 | Voice input (ElevenLabs `scribe_v2` default, Cloudflare, realtime STT) | `app/api/stt/*`, `speechrecognition/CloudflareSTTEngine.ts`, `speechrecognition/RealtimeSTTEngine.ts` | `speechrecognition/AudioRecorderEngine.ts`, `speechrecognition/useSpeechRecognition.ts` |
 | Code blocks: plain text while streaming (no HTML/SVG/PlantUML render, no Prism) | `blocks/code/code-renderers/RenderCodeStreamingPlain.tsx` | `blocks/code/RenderCode.tsx`: 5 lines |
 | Unsloth local server (listing, Thinking, Web Search) | `llms/server/openai/models/unsloth.models.ts`, `llms/models-modal/UnslothParametersConfig.tsx`, `llms/vendors/openai/openai.unsloth.ts`, `aix/.../adapters/openai.chatCompletions.unsloth.ts`, `icons/vendors/UnslothIcon.tsx` | 1-2 lines each in `listModels.dispatch.ts`, `LLMParametersEditor.tsx`, `aix.client.ts`, `openai.chatCompletions.ts`; small additive blocks in `aix.wiretypes.ts`, `openai.wiretypes.ts`, `openai.parser.ts`, `llms.parameters.ts`, `llm.server.types.ts`, `models.mappings.ts`, `llms.defs.manifest.ts`, `OpenAIHostAutocomplete.tsx` |
+| HTTP Basic Auth for the Vercel `big-agi` deploy (build command: `mv middleware_BASIC_AUTH.ts middleware.ts && next build`) | `middleware_BASIC_AUTH.ts` (upstream deleted it in `96c23c5`; the fork keeps it) | - |
 | Docs | `FORK.md` | top of `README.md`, one line in `CLAUDE.md` |
 
 Find the hooks: `git grep -n "praxeo fork"` (marked hook lines) and `git grep -il unsloth` (Unsloth additions).

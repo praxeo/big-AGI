@@ -10,7 +10,7 @@ import { convert_Base64_To_UInt8Array, convert_UInt8Array_To_Base64 } from '~/co
 
 import { OpenAIWire_API_Chat_Completions } from '../../wiretypes/openai.wiretypes';
 import { calculateDurationMs, createWAVFromPCM } from './gemini.audioutils';
-import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
+import { openAITransientErrorToHttpStatus, openAIUpstreamErrorLogLevel } from './openai.error-severity';
 
 import { OperationRetrySignal } from '../chatGenerate.operation-retry';
 
@@ -36,7 +36,7 @@ import { OperationRetrySignal } from '../chatGenerate.operation-retry';
  *    - the temporal order of the chunks implies the beginning/end of a tool call.
  * - There's no explicit end in this data protocol, but it's handled in the caller with a sse:[DONE] event.
  */
-export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunction {
+export function createOpenAIChatCompletionsChunkParser(ortFetchCountable = false): ChatGenerateParseFunction {
   const parserCreationTimestamp = Date.now();
   let hasBegun = false;
   let hasWarned = false;
@@ -166,9 +166,10 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
       pt.setModelName(json.model);
     }
 
-    // [OpenAI] an upstream error will be handled gracefully and transmitted as text (throw to transmit as 'error')
+    // [OpenAI] an upstream error without a `message` (the ones with it were forwarded above): retry if transient, else transmit as text
     if (json.error) {
       // FIXME: potential point for throwing OperationRetrySignal
+      // return _transmitOrRetryUpstreamError(json.error, safeErrorString(json.error) || 'unknown.', pt, hasStreamedOutput ? undefined : context);
       return pt.setDialectTerminatingIssue(safeErrorString(json.error) || 'unknown.', IssueSymbols.Generic, openAIUpstreamErrorLogLevel(json.error));
     }
 
@@ -185,7 +186,7 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
 
     // -> Stats (the usage chunk is the streaming terminal signal; timing survives even without token counts)
     if (json.usage) {
-      pt.updateMetrics(_fromOpenAIMetrics(json.usage, parserCreationTimestamp, timeToFirstEvent));
+      pt.updateMetrics(_fromOpenAIMetrics(json.usage, parserCreationTimestamp, timeToFirstEvent, ortFetchCountable));
       // [OpenAI] Expected correct case: the last object has usage, but an empty choices array
       if (!json.choices.length)
         return;
@@ -480,7 +481,7 @@ export function createOpenAIChatCompletionsChunkParser(): ChatGenerateParseFunct
 
 /// OpenAI non-streaming ChatCompletions
 
-export function createOpenAIChatCompletionsParserNS(): ChatGenerateParseFunction {
+export function createOpenAIChatCompletionsParserNS(ortFetchCountable = false): ChatGenerateParseFunction {
   const parserCreationTimestamp = Date.now();
   let progressiveCitationNumber = 1;
 
@@ -518,7 +519,7 @@ export function createOpenAIChatCompletionsParserNS(): ChatGenerateParseFunction
       pt.setModelName(json.model);
 
     // -> Metrics: timing always, tokens only when the usage block carries them (#1149)
-    pt.updateMetrics(_fromOpenAIMetrics(json.usage, parserCreationTimestamp, undefined));
+    pt.updateMetrics(_fromOpenAIMetrics(json.usage, parserCreationTimestamp, undefined, ortFetchCountable));
 
     // Assumption/validate: expect 1 completion, or stop
     if (json.choices.length !== 1)
@@ -728,7 +729,7 @@ function _fromOpenAIFinishReason(finish_reason: string | null | undefined) {
   return null;
 }
 
-function _fromOpenAIMetrics(usage: OpenAIWire_API_Chat_Completions.Response['usage'], parserCreationTimestamp: number, timeToFirstEvent: number | undefined): AixWire_Particles.CGSelectMetrics {
+function _fromOpenAIMetrics(usage: OpenAIWire_API_Chat_Completions.Response['usage'], parserCreationTimestamp: number, timeToFirstEvent: number | undefined, ortFetchCountable: boolean): AixWire_Particles.CGSelectMetrics {
 
   // Time Metrics - measured locally (parser-creation -> now), independent of the upstream `usage` block.
   // Emitted UNCONDITIONALLY so the run duration (`dtAll`) survives even when a provider omits usage or its
@@ -811,27 +812,42 @@ function _fromOpenAIMetrics(usage: OpenAIWire_API_Chat_Completions.Response['usa
   }
 
   // [OpenRouter, 2026-09-08] server tools: searches run by OpenRouter (or by the provider on the 'native' engine),
-  // also reported for the legacy 'web' plugin. Fetches have no counter of their own (tool_calls_executed only).
+  // also reported for the legacy 'web' plugin. [OpenRouter, 2026-11-06, hypothesis: derived, the counter is undocumented] Fetches have no counter of their own: tool_calls_executed counts every server tool
+  // call OpenRouter runs, so fetches (failed ones included) are what remains after the searches only when the request carried no
+  // other server tool - the dispatch says so. Fetches a provider runs natively (Anthropic, Claude 5.x) are on no counter (#1283)
   const ortWebSearches = usage.server_tool_use_details?.web_search_requests;
   if (ortWebSearches)
     metricsUpdate.nWebSearch = ortWebSearches;
+  const ortWebFetches = !ortFetchCountable ? 0 : (usage.server_tool_use_details?.tool_calls_executed ?? 0) - (ortWebSearches ?? 0);
+  if (ortWebFetches > 0)
+    metricsUpdate.nWebFetch = ortWebFetches;
 
   return metricsUpdate;
 }
 
 /**
- * HTTP-equivalent status of a transient in-band error worth an operation retry, or undefined.
+ * In-band upstream error: unwind to the operation retrier when transient and attempts remain, else transmit it as text
+ * (throw to transmit as 'error' instead).
+ *
+ * Transient, by HTTP-equivalent status:
  * [OpenRouter] after the 200, errors arrive as a chunk with a top-level `error` whose numeric `code` mirrors the HTTP status:
  * 429 rate limited (platform or upstream provider), 502 model down or invalid upstream response. A provider dropping
  * mid-stream carries code 'server_error'.
  * Not retried: 503 is "no provider meets your routing requirements" (an outcome of the request, not a blip), 408 timed out
  * (a retry repeats the wait), and the 4xx family (credits, moderation, bad request).
  * https://openrouter.ai/docs/api-reference/errors - https://openrouter.ai/docs/api-reference/streaming
+ * [OpenAI and compatible] the named codes ('server_error', 'rate_limit_exceeded', 'resource_unavailable', ...) are the
+ * shared table, with the reasoning on each row and on the retry loops around this parser: openAITransientErrorToHttpStatus.
+ *
+ * @param retryContext only when a whole-operation retry is harmless: nothing has been streamed to the user yet
  */
-function _transientOpenRouterErrorToHttpStatus(code: unknown): 429 | 500 | 502 | undefined {
-  if (code === 'server_error') return 500;
-  const status = typeof code === 'number' ? code : typeof code === 'string' ? Number(code) : NaN;
-  return status === 429 ? 429 : status === 502 ? 502 : undefined;
+function _transmitOrRetryUpstreamError(error: { type?: string | null, code?: string | number | null, message?: string | null }, errorText: string, pt: IParticleTransmitter, retryContext: ChatGenerateParseContext | undefined): void {
+  const status = typeof error.code === 'number' ? error.code : typeof error.code === 'string' ? Number(error.code) : NaN;
+  const retryHttpStatus: 429 | 500 | 502 | 529 | undefined = status === 429 ? 429 : status === 502 ? 502 : openAITransientErrorToHttpStatus(error);
+  const retryUpstreamCode = typeof error.code === 'string' ? error.code : undefined;
+  if (retryHttpStatus && retryContext?.hasRetriesForHttpStatus(retryHttpStatus, retryUpstreamCode))
+    throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: retryUpstreamCode });
+  pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
 }
 
 /**
@@ -853,13 +869,8 @@ function _forwardOpenRouterDataError(parsedData: any, pt: IParticleTransmitter, 
   // prepare the text message - safeErrorString unwraps the [OpenRouter] 'metadata' upstream cause
   const errorMessage = safeErrorString(error) || 'unknown.';
 
-  // Transient and retries left: unwind to the operation retrier
-  const retryHttpStatus = _transientOpenRouterErrorToHttpStatus(error.code);
-  if (retryHttpStatus && retryContext?.hasRetriesForHttpStatus(retryHttpStatus))
-    throw new OperationRetrySignal(errorMessage, { causeHttp: retryHttpStatus, causeConn: typeof error.code === 'string' ? error.code : undefined });
-
-  // Transmit the error as text - note: throw if you want to transmit as 'error'
-  pt.setDialectTerminatingIssue(errorMessage, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
+  // Transient and retries left: unwind to the operation retrier, else transmit the error as text
+  _transmitOrRetryUpstreamError(error, errorMessage, pt, retryContext);
   return true;
 }
 

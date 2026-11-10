@@ -468,10 +468,10 @@ export namespace AixWire_Tooling {
    * - function_call: MUST use a specific Function Tool [DISABLED 2026-07-17 - see below]
    * - none: same as not giving the model any tool [REMOVED - just give no tools]
    *
-   * @deprecated forced tool use is a thing of the past - 2026-06-09: Claude Fable/Mythos 5 (and 5.1) reject it
-   * with a 400 ('tool_choice ... not supported for this model'); the Anthropic and OpenRouter adapters
-   * coerce to 'auto' + a system steering hint. New code should use 'auto' (or no policy)
-   * and instruct the model to call the tool in the prompt instead.
+   * @deprecated forced tool use is a thing of the past: Claude Fable/Mythos 5.x reject it with a 400 ('tool_choice ...
+   * not supported for this model'), and so do Meta AI and thinking-mode Kimi. Adapters send 'auto' + a system steering hint
+   * where the vendor rejects or mishandles it: Anthropic (per model), OpenRouter, Mistral, Moonshot (thinking on, except K3)
+   * and Meta AI. New code should use 'auto' (or no policy) and instruct the model to call the tool in the prompt instead.
    *
    * 2026-07-17: 'function_call' (forced NAMED tool) commented out AIX-wide: Moonshot also 400s it on
    * all thinking-mode requests ("tool_choice 'specified' is incompatible with thinking enabled" - K3
@@ -766,9 +766,9 @@ export namespace AixWire_Particles {
   export type ChatControlOp =
   // | { cg: 'start' } // not really used for now
     | { cg: 'end', terminationReason: CGEndReason /* we know why we're sending 'end' */, tokenStopReason?: GCTokenStopReason /* we may or not have gotten a logical token stop reason from the dispatch */, tokenStopError?: string /* optional vendor-composed human-readable detail paired with tokenStopReason */ }
-    | { cg: 'issue', issueId: CGIssueId, issueText: string }
+    | { cg: 'issue', issueId: CGIssueId, issueText: string, issueCause?: CGIssueCause }
     | { cg: 'aix-info', ait: 'flow-cont' /* important: establishes a checkpoint */, text: string }
-    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string }
+    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string, calm?: true /* the retry profile marks the condition as expected (e.g. a busy best-effort tier): rendered without alarm */ }
     | { cg: 'set-metrics', metrics: CGSelectMetrics }
     | { cg: 'set-model', name: string }
     | { cg: 'set-provider-infra', label: string }
@@ -789,6 +789,13 @@ export namespace AixWire_Particles {
     | 'dispatch-fetch'          // [2] "
     | 'dispatch-read'           // [2] "
     | 'dispatch-parse';         // [2] "
+
+  export type CGIssueCause = _CGIssueCause_DispatchFetch;
+  type _CGIssueCause_DispatchFetch = {
+    causeConn?: string;         // [dispatch-fetch] system error name of a failed connection
+    causeHttpStatus?: number;   // [dispatch-fetch] upstream HTTP status
+    causeVendorCode?: string;   // [dispatch-fetch] vendor error code from the HTTP body
+  }
 
 
   // Token stop reasons, grouped by class. The class is the one grouping shared by the edge (analytics) and the

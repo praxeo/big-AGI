@@ -18,15 +18,16 @@ import { aixToGeminiGenerateContent } from './adapters/gemini.generateContent';
 import { aixToGeminiInteractionsCreate } from './adapters/gemini.interactionsCreate';
 import { aixToOpenAIChatCompletions } from './adapters/openai.chatCompletions';
 import { aixToOpenAIResponses, openAIDialectToRspVendor } from './adapters/openai.responsesCreate';
+import { OpenAIContainerKeepAlive } from './adapters/openai.companion-containerKeepAlive';
 import { aixToXAIResponses } from './adapters/xai.responsesCreate';
 
 import type { IParticleTransmitter } from './parsers/IParticleTransmitter';
-import { createAnthropicFileInlineTransform } from './parsers/anthropic.transform-fileInline';
+import { createAnthropicFileInlineCompanion } from './parsers/anthropic.companion-fileInline';
 import { anthropicThinkingOrigins, createAnthropicMessageParser, createAnthropicMessageParserNS } from './parsers/anthropic.parser';
 import { createBedrockConverseParserNS, createBedrockConverseStreamParser } from './parsers/bedrock-converse.parser';
 import { createGeminiGenerateContentResponseParser } from './parsers/gemini.parser';
 import { createGeminiInteractionsParserNS, createGeminiInteractionsParserSSE } from './parsers/gemini.interactions.parser';
-import { createGeminiInteractionsUsageBackfillTransform } from './parsers/gemini.interactions.transform-usageBackfill';
+import { createGeminiInteractionsUsageBackfillCompanion } from './parsers/gemini.interactions.companion-usageBackfill';
 import { createOpenAIChatCompletionsChunkParser, createOpenAIChatCompletionsParserNS } from './parsers/openai.parser';
 import { createOpenAIResponseParserNS, createOpenAIResponsesEventParser } from './parsers/openai.responses.parser';
 
@@ -49,7 +50,8 @@ export type ChatGenerateDispatch = {
   /** Source of truth for the consumer mode: null = NS */
   demuxerFormat: null | AixDemuxers.StreamDemuxerFormat;
   chatGenerateParse: ChatGenerateParseFunction;
-  particleTransform?: ChatGenerateParticleTransformFunction;
+  /** attachments living for this dispatch: lifecycle hooks and 1:1 particle mappers, in order (see ChatGenerateDispatchCompanion) */
+  companions?: ChatGenerateDispatchCompanion[];
 };
 
 export type ChatGenerateDispatchRequest =
@@ -57,22 +59,29 @@ export type ChatGenerateDispatchRequest =
   | { url: string, headers: HeadersInit, method: 'GET' };
 
 export type ChatGenerateParseContext = {
-  // whether the operation retrier has attempts left for an error of this HTTP(-equivalent) class - parsers throw OperationRetrySignal only if true
-  hasRetriesForHttpStatus: (httpStatus?: number) => boolean;
+  // whether the operation retrier has attempts left for an error of this class: the HTTP(-equivalent) status, or the upstream code when
+  // one has a profile of its own (upstreamRetryProfile) - parsers throw OperationRetrySignal only if true, carrying the same status and code
+  hasRetriesForHttpStatus: (httpStatus?: number, upstreamCode?: string) => boolean;
 };
 
 export type ChatGenerateParseFunction = (partTransmitter: IParticleTransmitter, eventData: string, eventName?: string, context?: ChatGenerateParseContext) => void;
 
 /**
- * 1->1 particle transform applied by the executor to every emitted particle.
- * Return the input for pass-through, or a new particle to replace it.
- * Thrown errors are caught by the executor and fall back to the original particle.
+ * A dispatch companion: an attachment that lives for one dispatch. In array order, the executor runs `onStart` before
+ * connecting, maps every emitted particle 1:1 through `onParticle` (return the input to pass it through), and runs `onEnd`
+ * in `finally` on every exit: normal end, a thrown retry or continuation signal, a consumer closing the generator. Hooks are
+ * best effort: a throw is logged and never ends the dispatch; a throwing `onParticle` passes its particle through unchanged.
  *
- * Set `csfUnsafe` to true if the transform cannot be performed by CSF (e.g. relies on
- * relies on server-side fetch. The CSF entry point strips these transforms and delegates to the
- * ContentReassembler's transforms instead (which shall operate on the same particles).
+ * `csfUnsafe` marks a companion the browser cannot run (e.g. it fetches vendor files that block CORS): the CSF entry strips it
+ * and the ContentReassembler's client transforms take over on the same particles.
  */
-export type ChatGenerateParticleTransformFunction = ((particle: AixWire_Particles.ChatGenerateOp) => Promise<AixWire_Particles.ChatGenerateOp>) & { csfUnsafe?: true };
+export type ChatGenerateDispatchCompanion = {
+  name: string;
+  csfUnsafe?: true;
+  onStart?: (intakeAbortSignal: AbortSignal) => void;
+  onParticle?: (particle: AixWire_Particles.ChatGenerateOp) => AixWire_Particles.ChatGenerateOp | Promise<AixWire_Particles.ChatGenerateOp>;
+  onEnd?: () => void;
+};
 
 
 // -- Specialized Implementations -- Core of Server-side AI Vendors abstraction --
@@ -103,10 +112,10 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
         },
         demuxerFormat: streaming ? 'fast-sse' : null,
         chatGenerateParse: (streaming ? createAnthropicMessageParser : createAnthropicMessageParserNS)(() => anthropicThinkingOrigins(chatGenerate.chatSequence, anthropicBody.messages)),
-        particleTransform: !model.vndAntTransformInlineFiles ? undefined : createAnthropicFileInlineTransform(
+        companions: !model.vndAntTransformInlineFiles ? undefined : [createAnthropicFileInlineCompanion(
           anthropicAccess(access, ANTHROPIC_API_PATHS.files, hostedFeatures),
           model.vndAntTransformInlineFiles,
-        ),
+        )],
       };
     }
 
@@ -227,7 +236,7 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
           // [2026-06-26, Interactions BUG] Interations Deep Research only: the live `interaction.completed` event omits `usage`,
           // so backfill token counts via a one-shot GET of the stored interaction. POST path ONLY - reattach/resume/recover
           // read the stored resource directly (usage already present), so they need no backfill.
-          particleTransform: createGeminiInteractionsUsageBackfillTransform(access),
+          companions: [createGeminiInteractionsUsageBackfillCompanion(access)],
         };
       }
 
@@ -293,23 +302,23 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
       if (isResponsesAPI) {
         // parser namespace for the reasoning continuity blobs (vendor-private keys + server-side ids), see the note below
         const responsesVendor = openAIDialectToRspVendor(dialect);
+        /**
+         * xAI uses its own Responses API adapter.
+         *
+         * Key differences from OpenAI Responses API:
+         * - No 'instructions' field - system content prepended to first user message
+         * - xAI-native tools: web_search, x_search, code_execution
+         * - Tool calls come in single chunks
+         *
+         * Note: Response format is compatible with OpenAI parser.
+         */
+        const openAIResponsesBody = dialect !== 'xai' ? aixToOpenAIResponses(dialect, model, chatGenerate, streaming, enableResumability) : null;
+        const responsesBody = openAIResponsesBody ?? aixToXAIResponses(model, chatGenerate, streaming, enableResumability); // xAI has its own Responses adapter
         return {
           request: {
             ...openAIAccess(access, model.id, OPENAI_API_PATHS.responses),
             method: 'POST',
-            /**
-             * xAI uses its own Responses API adapter.
-             *
-             * Key differences from OpenAI Responses API:
-             * - No 'instructions' field - system content prepended to first user message
-             * - xAI-native tools: web_search, x_search, code_execution
-             * - Tool calls come in single chunks
-             *
-             * Note: Response format is compatible with OpenAI parser.
-             */
-            body: dialect === 'xai' // xAI has its own Responses adapter
-              ? aixToXAIResponses(model, chatGenerate, streaming, enableResumability)
-              : aixToOpenAIResponses(dialect, model, chatGenerate, streaming, enableResumability),
+            body: responsesBody,
           },
           demuxerFormat: streaming ? 'fast-sse' : null,
           // IMPORTANT: tag the parser with the actual vendor so reasoning continuity blobs
@@ -318,6 +327,8 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
           chatGenerateParse: streaming
             ? createOpenAIResponsesEventParser(responsesVendor)
             : createOpenAIResponseParserNS(responsesVendor),
+          // [OpenAI] a pro-mode run with the sandbox declared outlives its containers' 20 minute idle expiry: keep them alive (#1211) - native dialect only, the others serve no containers API
+          ...(dialect === 'openai' && openAIResponsesBody && OpenAIContainerKeepAlive.applies(openAIResponsesBody) ? { companions: [OpenAIContainerKeepAlive.companion(access)] } : {}),
         };
       }
 
@@ -328,6 +339,11 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
       if (dialect === 'openrouter' && access.orRequireParameters)
         chatCompletionsBody.provider = { ...chatCompletionsBody.provider, require_parameters: true };
 
+      // [OpenRouter] its counter of executed server tool calls covers every tool: fetches can be told apart only when
+      // the fetch tool is requested and web search is the only other server tool
+      const ortFetchCountable = dialect === 'openrouter' && !!chatCompletionsBody.tools?.some(tool => tool.type === 'openrouter:web_fetch')
+        && chatCompletionsBody.tools.every(tool => !tool.type.startsWith('openrouter:') || tool.type === 'openrouter:web_search' || tool.type === 'openrouter:web_fetch');
+
       return {
         request: {
           ...openAIAccess(access, model.id, OPENAI_API_PATHS.chatCompletions),
@@ -335,7 +351,7 @@ export async function createChatGenerateDispatch(access: AixAPI_Access, model: A
           body: chatCompletionsBody,
         },
         demuxerFormat: streaming ? 'fast-sse' : null,
-        chatGenerateParse: streaming ? createOpenAIChatCompletionsChunkParser() : createOpenAIChatCompletionsParserNS(),
+        chatGenerateParse: streaming ? createOpenAIChatCompletionsChunkParser(ortFetchCountable) : createOpenAIChatCompletionsParserNS(ortFetchCountable),
       };
 
   }

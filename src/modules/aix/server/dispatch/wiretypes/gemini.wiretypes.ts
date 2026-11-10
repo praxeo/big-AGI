@@ -90,7 +90,8 @@ export namespace GeminiWire_ContentParts {
   const InlineDataPart_schema = z.object({
     inlineData: z.object({
       mimeType: z.union([z.string(), ianaStandardMimeType_schema]),
-      data: z.string(), // base64-encoded string
+      data: z.string().default(''), // base64-encoded string; absent for a 0-byte code-execution file
+      displayName: z.string().optional(), // code-execution output files: the sandbox path, e.g. 'out/report.xlsx'
     }),
   });
 
@@ -738,13 +739,13 @@ export namespace GeminiWire_API_Generate_Content {
     systemInstruction: GeminiWire_Messages.SystemInstruction_schema.optional(),
     generationConfig: GenerationConfig_schema.optional(),
     cachedContent: z.string().optional(),
-    /** (Not useful to us) Configures the logging behavior for a given request. */
+    /** Logs the request to AI Studio Logs (true) or not (false); unset follows the project setting, on by default for paid projects created on or after 2026-10-26. */
     store: z.boolean().optional(),
   });
 
   // Response
 
-  /** Last synced from https://ai.google.dev/api/generate-content#candidate on 2025-10-13 */
+  /** Last synced from https://ai.google.dev/api/generate-content#candidate on 2026-11-05 */
   const FinishReason_enum = z.enum([
     'FINISH_REASON_UNSPECIFIED',  // unused
     'STOP',                       // Natural stop point of the model or provided stop sequence.
@@ -765,6 +766,10 @@ export namespace GeminiWire_API_Generate_Content {
     'UNEXPECTED_TOOL_CALL',       // Model generated a tool call but no tools were enabled in the request.
     'TOO_MANY_TOOL_CALLS',        // Model called too many tools consecutively, thus the system exited execution.
     'MISSING_THOUGHT_SIGNATURE',  // [Gemini 3, 2025-11] Thinking model validation failed - thoughtSignature missing or invalid.
+    'MALFORMED_RESPONSE',         // Finished due to malformed response.
+    'ESCALATION',                 // Request was filtered by an escalation rule.
+    'PUP_LIMITED_DISABLED',       // Token generation stopped because the user account is limited or disabled due to Prohibited Use Policy (PUP) violations.
+    'CONTINUATION',               // Per-request token limit reached, generation not complete; resumable with Candidate.continuationToken (not used).
   ]);
 
   /** A citation to a source for a portion of a specific response. **/
@@ -858,7 +863,7 @@ export namespace GeminiWire_API_Generate_Content {
      * NOTE: see GenerationConfig_schema.candidateCount, which can only be set to 1, so index is supposed to be 0.
      */
     index: z.number()
-      .optional(), // for `1.5-002` models, on Sept 24, 2024, this became optional
+      .optional(), // absent on the extra toolResponse candidates of a TOO_MANY_TOOL_CALLS response (#1286, folded by the parser)
     /**
      * This seems to be equal to 'STOP' on all streaming chunks.
      * In theory: if empty, the model has not stopped generating the tokens.
