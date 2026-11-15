@@ -577,7 +577,7 @@ export function prettyShortChatModelName(model: string | undefined): string {
     return model
       .replace(/^cohere[/-]/, '')                // strip aggregator prefix (e.g. openrouter 'cohere/...')
       .replace(/-\d{2}-20\d{2}$/, '')            // strip -MM-YYYY snapshot date (e.g. -05-2026)
-      .replace('north-mini-code-1-0', 'North Mini Code')
+      .replace(/north-mini-code-1[.-]0/, 'North Mini Code')
       .replace('c4ai-', '')                      // Aya research prefix
       .replace('command-r-plus', 'Command R+')
       .replace('command-r7b', 'Command R7B')
@@ -647,6 +647,8 @@ function _prettyGeminiModelName(cutModel: string): string {
     .replace('max', 'Max')
     .replace('lite', 'Lite')
     .replace('argon', 'Argon') // Gemini 4 tier name
+    .replace('carbon', 'Carbon')
+    .replace('hydrogen', 'Hydrogen')
     .replace(/(\d)b\b/g, '$1B') // size token: '31b' -> '31B' (e.g. Gemma 4 31B)
     // feature variants
     .replace('robotics er', 'Robotics')

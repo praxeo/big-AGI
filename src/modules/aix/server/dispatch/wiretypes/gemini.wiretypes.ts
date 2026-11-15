@@ -90,7 +90,8 @@ export namespace GeminiWire_ContentParts {
   const InlineDataPart_schema = z.object({
     inlineData: z.object({
       mimeType: z.union([z.string(), ianaStandardMimeType_schema]),
-      data: z.string(), // base64-encoded string
+      data: z.string().default(''), // base64-encoded string; absent for a 0-byte code-execution file
+      displayName: z.string().optional(), // code-execution output files: the sandbox path, e.g. 'out/report.xlsx'
     }),
   });
 
@@ -679,11 +680,8 @@ export namespace GeminiWire_API_Generate_Content {
     topP: z.number().optional(),
     topK: z.number().int().optional(),
 
-    // [Gemini, 2025-01-23] CoT support - undocumented yet
     thinkingConfig: z.object({
-      /**
-       * [2025-04-17] Used to work with v1alpha API, now it seems to not work in any model/api version combo.
-       */
+      /** Return thought summaries alongside the answer. */
       includeThoughts: z.boolean().optional(),
       /**
        * [Gemini, 2025-04-17] Introduced in Flash-2.5-Preview to set the thinking budget.
@@ -692,15 +690,10 @@ export namespace GeminiWire_API_Generate_Content {
        */
       thinkingBudget: z.int().optional(),
       /**
-       * [Gemini 3, 2025-11-18] Replaces thinkingBudget for Gemini 3 models.
-       * - 'high': Maximum reasoning depth
-       * - 'medium': Balanced reasoning (from Gemini 3 Flash)
-       * - 'low': Minimizes latency and cost
-       * - 'minimal': Quickest responses with minimal reasoning (from Gemini 3 Flash)
-       * - undefined: Dynamic (model decides)
-       * CRITICAL: Cannot use both thinkingLevel and thinkingBudget (400 error)
+       * Gemini 3+ uses levels instead of budgets; supported levels and defaults are model-specific.
+       * Hydrogen adds 'xhigh' and defaults to 'high'. Cannot combine with thinkingBudget (400).
        */
-      thinkingLevel: z.enum(['high', 'medium', 'low', 'minimal']).optional(),
+      thinkingLevel: z.enum(['xhigh', 'high', 'medium', 'low', 'minimal']).optional(),
     }).optional(),
 
     // Image generation configuration
@@ -738,13 +731,13 @@ export namespace GeminiWire_API_Generate_Content {
     systemInstruction: GeminiWire_Messages.SystemInstruction_schema.optional(),
     generationConfig: GenerationConfig_schema.optional(),
     cachedContent: z.string().optional(),
-    /** (Not useful to us) Configures the logging behavior for a given request. */
+    /** Logs the request to AI Studio Logs (true) or not (false); unset follows the project setting, on by default for paid projects created on or after 2026-10-26. */
     store: z.boolean().optional(),
   });
 
   // Response
 
-  /** Last synced from https://ai.google.dev/api/generate-content#candidate on 2025-10-13 */
+  /** Last synced from https://ai.google.dev/api/generate-content#candidate on 2026-11-05 */
   const FinishReason_enum = z.enum([
     'FINISH_REASON_UNSPECIFIED',  // unused
     'STOP',                       // Natural stop point of the model or provided stop sequence.
@@ -765,6 +758,10 @@ export namespace GeminiWire_API_Generate_Content {
     'UNEXPECTED_TOOL_CALL',       // Model generated a tool call but no tools were enabled in the request.
     'TOO_MANY_TOOL_CALLS',        // Model called too many tools consecutively, thus the system exited execution.
     'MISSING_THOUGHT_SIGNATURE',  // [Gemini 3, 2025-11] Thinking model validation failed - thoughtSignature missing or invalid.
+    'MALFORMED_RESPONSE',         // Finished due to malformed response.
+    'ESCALATION',                 // Request was filtered by an escalation rule.
+    'PUP_LIMITED_DISABLED',       // Token generation stopped because the user account is limited or disabled due to Prohibited Use Policy (PUP) violations.
+    'CONTINUATION',               // Per-request token limit reached, generation not complete; resumable with Candidate.continuationToken (not used).
   ]);
 
   /** A citation to a source for a portion of a specific response. **/
@@ -858,7 +855,7 @@ export namespace GeminiWire_API_Generate_Content {
      * NOTE: see GenerationConfig_schema.candidateCount, which can only be set to 1, so index is supposed to be 0.
      */
     index: z.number()
-      .optional(), // for `1.5-002` models, on Sept 24, 2024, this became optional
+      .optional(), // absent on the extra toolResponse candidates of a TOO_MANY_TOOL_CALLS response (#1286, folded by the parser)
     /**
      * This seems to be equal to 'STOP' on all streaming chunks.
      * In theory: if empty, the model has not stopped generating the tokens.
@@ -932,7 +929,8 @@ export namespace GeminiWire_API_Generate_Content {
 
   const UsageMetadata_schema = z.object({
     // effective prompt size, including tokens in the cached content
-    promptTokenCount: z.number(),
+    promptTokenCount: z.number()
+      .optional(), // [Gemini, 2026-10-30] a prompt blocked before generation comes with `usageMetadata: {}`
 
     // (usually there: missing on first packets, or 'RECITATION' answers) total tokens across all the generated candidates
     candidatesTokenCount: z.number().optional(),

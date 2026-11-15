@@ -3,7 +3,7 @@ import type { PostHog, Properties } from 'posthog-js';
 
 import { isAbortErrorLike } from '~/common/util/abortUtils';
 import { isBenignDomMutationError } from '~/common/util/errorUtils';
-import { isBrowser } from '~/common/util/pwaUtils';
+import { Is, isBrowser } from '~/common/util/pwaUtils';
 import { Release } from '~/common/app.release';
 
 
@@ -33,6 +33,9 @@ const SUPPRESSED_EXCEPTION_SUBSTRINGS = [
   'Script error.',
   // browser extensions reaching into React internals across origins
   '__reactFiber',
+  // globals read by scripts that crypto wallets and Firefox-based iOS browsers (Firefox, Brave) inject; the app never uses them
+  'window.ethereum',
+  '__firefox__',
 ];
 
 /**
@@ -149,7 +152,7 @@ export function OptionalPostHogAnalytics() {
   // [effect] PostHog > Initialize (if on) - the effect avoids hydration issues
   React.useEffect(() => {
 
-    if (!hasPostHogAnalytics || !isBrowser || _posthog !== undefined) return;
+    if (!hasPostHogAnalytics || !isBrowser || Is.Automated || _posthog !== undefined) return;
     _posthog = null;
 
     // do not proceed with user opt-out
@@ -175,6 +178,7 @@ export function OptionalPostHogAnalytics() {
           // capture_pageview: false, // we used to handle this manually, but changed to the 'defaults' option which captures pageviews automatically
           // capture_pageleave: true, // we used to track goodbyes, now included in 'defaults'
           person_profiles: 'identified_only',
+          session_recording: { maskAllInputs: true, maskTextSelector: '*' }, // replay is gated server-side (sampled first sessions); a recording holds structure, clicks and navigation only: every text node and input is masked before it leaves the browser
           remote_config_refresh_interval_ms: 0, // no background refreshes. Flags only update on page load or manual `reloadFeatureFlags()` calls.
           disable_surveys: true, // disable surveys
           debug: Release.IsNodeDevBuild, // enable debug mode in development (was: `loaded: (ph) => if (Release.IsNodeDevBuild) ph.debug();`)

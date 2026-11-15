@@ -4,7 +4,7 @@ import { useShallow } from 'zustand/react/shallow';
 
 import type { SiteDocSlug } from '~/common/gen/com.site.docs.slug';
 import { BaseProduct, Release } from '~/common/app.release';
-import { runWhenIdle } from '~/common/util/pwaUtils';
+import { Is, runWhenIdle } from '~/common/util/pwaUtils';
 
 import type { NewsAnnouncement } from './news.feed';
 import { NewsConfig } from './news.config';
@@ -62,8 +62,9 @@ export function newsInterceptDocsLinks(): () => void {
   const handleClick = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
     if (useNewsModalsStore.getState().docsTarget) return;
+    // closest('a') also matches <a> inside SVG (diagrams), whose href is not a string
     const anchor = event.target instanceof Element ? event.target.closest('a') : null;
-    const target = anchor ? newsDocsLinkTarget(anchor.href) : null;
+    const target = anchor instanceof HTMLAnchorElement ? newsDocsLinkTarget(anchor.href) : null;
     if (!target) return;
     event.preventDefault();
     useNewsModalsStore.setState({ docsTarget: target });
@@ -120,7 +121,7 @@ export function useNews(immediate: boolean) {
   // external state
   const { off, tier, channel } = useNewsAudience();
   const bootGateOpen = useNewsBootGate();
-  const { items, isError, hasMore, loadMore, isLoadingMore } = useNewsFeed(!off && (immediate || bootGateOpen), tier, channel);
+  const { items, isError, hasMore, loadMore, isLoadingMore } = useNewsFeed(!off && (immediate || (bootGateOpen && !Is.Automated)), tier, channel);
   const { changelogMark, announcementsSince, announcementIds } = useNewsSeenStore(useShallow(state => ({
     changelogMark: state.changelog,
     announcementsSince: state.announcementsSince,

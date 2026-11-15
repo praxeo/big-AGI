@@ -9,6 +9,7 @@ import { useAgiFixupCode } from '~/modules/aifn/agicodefixup/useAgiFixupCode';
 
 import { frontendSideFetch } from '~/common/util/clientFetchers';
 import { renderSVGToPNGBlob } from '~/common/util/imageUtils';
+import { sanitizeSvgMarkup } from '~/common/util/svgSanitizeUtils';
 
 import { encodeWithCompressionStream } from './plantuml.utils';
 import type { IRenderHandle } from './IRenderHandle';
@@ -190,8 +191,11 @@ async function fetchPlantUmlSvg(plantUmlCode: string): Promise<{ svg: string | n
     };
   }
 
-  // success case
-  return { svg, errorText: null, errorCause: null };
+  // success case - the server output is untrusted, sanitize before DOM injection
+  const safeSvg = sanitizeSvgMarkup(svg, { allowExternalLinks: true });
+  if (!safeSvg)
+    return { svg: null, errorText: 'Could not convert the PlantUML to SVG', errorCause: null };
+  return { svg: safeSvg, errorText: null, errorCause: null };
 }
 
 
@@ -213,7 +217,8 @@ export const RenderCodePlantUML = React.forwardRef(function RenderCodePlantUML(p
     queryFn: () => fetchPlantUmlSvg(props.plantUMLCode),
     staleTime: 24 * 60 * 60 * 1000, // 1 day
   });
-  const patchedSvgCode = useFittedSvgString(conversion?.svg ?? null, props.fitContainer);
+  const svgCode = conversion?.svg ?? null;
+  const patchedSvgCode = useFittedSvgString(svgCode, props.fitContainer);
 
   // AI Fixup function - pass full error context (errorCause) for better AI analysis
   const tryFixError = conversion?.errorCause || conversion?.errorText || serverError?.message || null;
@@ -243,11 +248,11 @@ export const RenderCodePlantUML = React.forwardRef(function RenderCodePlantUML(p
   // Expose control methods
   React.useImperativeHandle(ref, () => ({
     renderAsPNGBlob: async (transparentBackground: boolean) => {
-      if (!patchedSvgCode) return null;
-      const blob = await renderSVGToPNGBlob(patchedSvgCode, transparentBackground, 2);
+      if (!svgCode) return null;
+      const blob = await renderSVGToPNGBlob(svgCode, transparentBackground, 2);
       return !blob ? null : { blob, prefix: 'uml' };
     },
-  }), [patchedSvgCode]);
+  }), [svgCode]);
 
 
   // Loading state

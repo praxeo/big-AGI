@@ -10,6 +10,9 @@ Architecture and system documentation is available in the `/kb/` knowledge base,
 
 ### Modules Documentation
 
+#### Blocks - Fenced code pre-pass
+- **[BLOCKS-fence-parser.md](modules/BLOCKS-fence-parser.md)** - the opener rule and why it is a loop predicate (WebKit lookbehind cost), the corpus and its promotion rule, measured alternatives, open rows (#983 close side, CRLF, containers)
+
 #### Chat - Message rendering
 - **[CHAT-render-tree.md](modules/CHAT-render-tree.md)** - the render tree behind ChatMessage: rules in force (citation hoist, fused runs, tool pairing, edit mode shape, key continuity, layout), open work (attachments editor, edit session, block reordering, citation-split text), known limits
 
@@ -21,6 +24,7 @@ Architecture and system documentation is available in the `/kb/` knowledge base,
 
 #### AIX - AI Communication Framework
 - **[AIX.md](modules/AIX.md)** - AIX streaming architecture documentation
+- **[aix/AIX-TODO-*.md](modules/aix/)** - planned AIX work, one input file per topic; [AIX-TODO-openai-context-compaction.md](modules/aix/AIX-TODO-openai-context-compaction.md): hosted-tool loops that outgrow the context window (#1211)
 - **[AIX-ingestion.md](modules/AIX-ingestion.md)** - lossless parse/reassembly rule, checklist of open conflicts
 - **[AIX-callers-analysis.md](modules/AIX-callers-analysis.md)** - Analysis of AIX entry points, call chains, common and different rendering, error handling, etc.
 - **[AIX-outcome.md](modules/AIX-outcome.md)** - how a generation ended: the four outcomes (completed, truncated, failed, aborted), one derivation from the stored message, the wire stop-reason table, colors, Beam status, what is not done

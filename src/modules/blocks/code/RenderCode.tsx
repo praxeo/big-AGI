@@ -23,6 +23,8 @@ import ZoomOutMapIcon from '@mui/icons-material/ZoomOutMap';
 
 import { copyBlobPromiseToClipboard, copyToClipboard } from '~/common/util/clipboardUtils';
 import { downloadBlob } from '~/common/util/downloadUtils';
+import { isChunkLoadError } from '~/common/util/errorUtils';
+import { posthogCaptureException } from '~/common/components/3rdparty/PostHogAnalytics';
 import { prettyTimestampForFilenames } from '~/common/util/timeUtils';
 import { useFullscreenElement } from '~/common/components/useFullscreenElement';
 import { useUIPreferencesStore } from '~/common/stores/store-ui';
@@ -84,36 +86,52 @@ interface RenderCodeBaseProps {
 
 function RenderCode(props: RenderCodeBaseProps) {
   return (
-    <React.Suspense
-      fallback={
-        // Mimic the structure of the RenderCodeImpl - to mitigate race conditions that could cause problematic rendering
-        // of code (where two components were missing from the structure)
-        <Box sx={_styles.renderCodecontainer}>
-          <Box component='code' className='language-unknown' aria-label='Displaying Code...' sx={{ p: 1.5, display: 'block', ...props.sx }}>
-            <Box component='span' sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-              <Box component='span' className='code-container' aria-label='Code block'>
-                {/* Just wait until the correct implementation renders */}
-              </Box>
-            </Box>
-          </Box>
-        </Box>
-      }
-    >
+    <React.Suspense fallback={<RenderCodeLite code={null} sx={props.sx} />}>
       <_DynamicPrism {...props} />
     </React.Suspense>
+  );
+}
+
+/**
+ * The code box without the highlighter: empty while it loads (null code), unhighlighted code in its place when it cannot load.
+ * Mimics the structure of RenderCodeImpl, to mitigate race conditions that could cause problematic rendering of code.
+ */
+function RenderCodeLite(props: { code: string | null, sx?: SxProps }) {
+  return (
+    <Box sx={_styles.renderCodecontainer}>
+      <Box component='code' className='language-unknown' sx={{ p: 1.5, display: 'block', overflowX: 'auto', whiteSpace: 'pre', ...props.sx }}>
+        <Box component='span' sx={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+          <Box component='span' className='code-container' aria-label='Code block'>
+            {props.code}
+          </Box>
+        </Box>
+      </Box>
+    </Box>
   );
 }
 
 
 // Lazy loader of the heavy prism functions
 const _DynamicPrism = React.lazy(async () => {
+  try {
+    // On load Prism re-highlights every code[class*="language-"] in the page, overwriting the renderers inside our <code>
+    // elements (a diagram stays at 'Loading Diagram...'); we only call Prism.highlight, so opt out before it evaluates
+    (window as { Prism?: { manual?: boolean } }).Prism ??= { manual: true };
 
-  // Dynamically import the code highlight functions
-  const { highlightCode, inferCodeLanguage } = await import('~/modules/blocks/code/code-highlight/codePrism');
+    // Dynamically import the code highlight functions
+    const { highlightCode, inferCodeLanguage } = await import('~/modules/blocks/code/code-highlight/codePrism');
 
-  return {
-    default: (props: RenderCodeBaseProps) => <RenderCodeImpl highlightCode={props.isPartial ? streamingNoHighlight : highlightCode} inferCodeLanguage={props.isPartial ? streamingNoLanguage : inferCodeLanguage} {...props} />, // [praxeo fork] streaming: plain
-  };
+    return {
+      default: (props: RenderCodeBaseProps) => <RenderCodeImpl highlightCode={props.isPartial ? streamingNoHighlight : highlightCode} inferCodeLanguage={props.isPartial ? streamingNoLanguage : inferCodeLanguage} {...props} />, // [praxeo fork] streaming: plain
+    };
+  } catch (error) {
+    // the chunk did not arrive (network, timeout): plain code until the page reloads, in place of the boundary's forced reload;
+    // a module that threw stays an error
+    if (!isChunkLoadError(error)) throw error;
+    console.warn('[RenderCode] highlighter did not load, rendering plain code:', error);
+    posthogCaptureException(error, { agi_domain: 'client-chunk-fallback', agi_runtime: 'browser', component: 'RenderCode' });
+    return { default: (props: RenderCodeBaseProps) => <RenderCodeLite code={props.code} sx={props.sx} /> };
+  }
 });
 
 
@@ -442,7 +460,15 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
     // lots more style, incl font, background, embossing, radius, etc.
     ...props.sx,
 
-  }), [isBorderless, isFullscreen, isRenderingDiagram, props.sx, showSoftWrap]);
+    // Markdown preview uses prose styling while keeping the fullscreen element stable.
+    ...renderMarkdown && {
+      fontFamily: 'body',
+      fontWeight: 'normal',
+      fontVariantLigatures: 'normal',
+      whiteSpace: 'normal',
+    },
+
+  }), [isBorderless, isFullscreen, isRenderingDiagram, props.sx, renderMarkdown, showSoftWrap]);
 
 
   // Keep the overlay stable across streamed code updates. Copy reads the latest code through codeRef.
@@ -643,6 +669,7 @@ function RenderCodeImpl(props: RenderCodeBaseProps & {
         ref={fullScreenElementRef}
         component='code'
         className={`language-${inferredCodeLanguage || 'unknown'}${(renderLineNumbers && !blockIsPartial /* [praxeo fork] */) ? ' line-numbers' : ''}`}
+        data-render-markdown={renderMarkdown || undefined}
         sx={codeSx}
       >
 
