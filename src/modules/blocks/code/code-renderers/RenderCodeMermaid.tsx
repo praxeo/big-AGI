@@ -9,6 +9,7 @@ import { useAgiFixupCode } from '~/modules/aifn/agicodefixup/useAgiFixupCode';
 
 import { isBrowser } from '~/common/util/pwaUtils';
 import { renderSVGToPNGBlob } from '~/common/util/imageUtils';
+import { sanitizeSvgMarkup } from '~/common/util/svgSanitizeUtils';
 import { themeCodeFontFamilyCss, themeFontFamilyCss } from '~/common/app.theme';
 
 import type { IRenderHandle } from './IRenderHandle';
@@ -23,9 +24,13 @@ import { useFittedSvgString } from './RenderCodeSVG';
  * and would slow down development for everyone.
  *
  * If you update this file, also make sure the interfaces/type definitions and initialization
- * options are updated accordingly.
+ * options are updated accordingly. Update the version and the integrity together.
+ *
+ * Mermaid 12 is not adopted: it declares Safari 17.4+ (above our floor), restyles every diagram (ELK layout, 'neo' look)
+ * and adds ~600 KB gzipped to this script.
  */
-const MERMAID_CDN_FILE: string = 'https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.min.js';
+const MERMAID_CDN_FILE: string = 'https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.min.js';
+const MERMAID_CDN_INTEGRITY: string = 'sha384-EOXBFmc3gx5mb+vn0vPvvGqACToJD24hhacX5Yx+8NUUQrHIle/Qi5Bg9o3zKwW2';
 
 interface MermaidAPI {
   initialize: (config: any) => void;
@@ -61,6 +66,8 @@ function _loadMermaidFromCDN() {
     loadingStarted = true;
     const script = document.createElement('script');
     script.src = MERMAID_CDN_FILE;
+    script.integrity = MERMAID_CDN_INTEGRITY;
+    script.crossOrigin = 'anonymous';
     script.defer = true;
     script.onload = () => {
       useMermaidStore.setState({
@@ -94,8 +101,12 @@ function _initializeMermaid(mermaidAPI: MermaidAPI): MermaidAPI {
 
     // style configuration
     htmlLabels: false,
-    securityLevel: 'loose',
+    securityLevel: 'strict', // diagrams come from models and shared chats: sanitizes labels, drops javascript: links
+    // Mermaid's defaults plus htmlLabels: a diagram turning HTML labels back on gets foreignObject labels, which the sanitizer drops
+    secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'suppressErrorRendering', 'maxEdges', 'htmlLabels'],
     theme: 'forest',
+    // 11.x leaves the label of [ ] ( ) (( )) {{ }} mindmap nodes at x=0 when htmlLabels is false; fixed in Mermaid 12.2
+    themeCSS: '.mindmap-node .label[transform^="translate(0,"] text { text-anchor: middle; }',
 
     // per-chart configuration
     mindmap: { useMaxWidth: false },
@@ -121,45 +132,6 @@ function useMermaidLoader() {
   }, [mermaidAPI]);
 
   return { mermaidAPI, isSuccess: !!mermaidAPI, hasStartedLoading: loadingStarted, error: loadingError };
-}
-
-function _cleanMermaidSVG(svgCode: string): string {
-
-  // parse the SVG string
-  const parser = new DOMParser();
-  const doc = parser.parseFromString(svgCode, 'image/svg+xml');
-
-  // find foreignObject
-  // noinspection CssInvalidHtmlTagReference
-  const foreignObjects = doc.querySelectorAll('foreignObject');
-
-  // Replace each foreignObject with a text element
-  foreignObjects.forEach(fo => {
-    // get the text content
-    const div = fo?.querySelector('div');
-    const text = div?.textContent?.trim() || '';
-
-    // create new text element
-    const textElement = doc.createElementNS('http://www.w3.org/2000/svg', 'text');
-
-    // copy relevant attributes from parent g element
-    const parentG = fo?.parentElement;
-    const transform = parentG?.getAttribute('transform');
-    if (transform)
-      textElement.setAttribute('transform', transform);
-
-    // set text properties
-    textElement.setAttribute('text-anchor', 'middle');
-    textElement.setAttribute('dominant-baseline', 'middle');
-    textElement.textContent = text;
-
-    // replace foreignObject's parent g with new text element
-    if (parentG?.parentElement)
-      parentG.parentElement.replaceChild(textElement, parentG);
-  });
-
-  // serialize back to string
-  return new XMLSerializer().serializeToString(doc);
 }
 
 
@@ -191,14 +163,16 @@ export const RenderCodeMermaid = React.forwardRef(function RenderCodeMermaid(pro
       try {
         const elementId = `mermaid-${Math.random().toString(36).substring(2, 9)}`;
         const { svg } = await mermaidAPI!.render(elementId, props.mermaidCode, mermaidContainerRef.current!);
-        return svg ? { success: true, svg: svg.replaceAll('&amp;quot;', '&quot;').replaceAll('&amp;amp;', '&amp;') } : { success: false, error: 'No SVG returned.' };
+        const safeSvg = !svg ? '' : sanitizeSvgMarkup(svg.replaceAll('&amp;quot;', '&quot;').replaceAll('&amp;amp;', '&amp;'), { allowExternalLinks: true });
+        return safeSvg ? { success: true, svg: safeSvg } : { success: false, error: 'No SVG returned.' };
       } catch (error: any) {
         return { success: false, error: error?.message ?? error?.toString() ?? 'unknown error' };
       }
     },
     staleTime: 1000 * 60 * 60 * 24, // 1 day
   });
-  const patchedSvgCode = useFittedSvgString(data?.success === true ? data.svg : null, props.fitScreen);
+  const svgCode = data?.success === true ? data.svg : null;
+  const patchedSvgCode = useFittedSvgString(svgCode, props.fitScreen);
 
   // AI Fixup function
   const renderError = mermaidLoadError || (data?.success === false ? data.error : null) || null;
@@ -226,16 +200,15 @@ export const RenderCodeMermaid = React.forwardRef(function RenderCodeMermaid(pro
   // Expose control methods
   React.useImperativeHandle(ref, () => ({
     renderAsPNGBlob: async (transparentBackground: boolean) => {
-      if (!patchedSvgCode) return null;
-      const hotfixedMermaidCode = _cleanMermaidSVG(patchedSvgCode);
-      const blob = await renderSVGToPNGBlob(hotfixedMermaidCode, transparentBackground, 2)
+      if (!svgCode) return null;
+      const blob = await renderSVGToPNGBlob(svgCode, transparentBackground, 2)
         .catch((error) => {
           console.warn('Error converting Mermaid SVG to PNG:', error);
           return null;
         });
       return !blob ? null : { blob, prefix: 'diagram' };
     },
-  }), [patchedSvgCode]);
+  }), [svgCode]);
 
 
   return (
@@ -270,15 +243,19 @@ export const RenderCodeMermaid = React.forwardRef(function RenderCodeMermaid(pro
           )}
         </Box>
       )}
+      {renderError ? (
+        <Typography level='body-sm' sx={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+          {renderError}
+        </Typography>
+      ) : !patchedSvgCode && (
+        <Typography level='body-sm'>
+          {data?.success === true ? 'Invalid SVG...' : 'Loading Diagram...'}
+        </Typography>
+      )}
       <Box
         component='div'
         ref={mermaidContainerRef}
-        dangerouslySetInnerHTML={{
-          __html:
-            renderError ? renderError
-              : data?.success === true ? patchedSvgCode || 'Invalid SVG...'
-                : 'Loading Diagram...',
-        }}
+        dangerouslySetInnerHTML={{ __html: (!renderError && patchedSvgCode) || '' }}
       />
     </Box>
   );

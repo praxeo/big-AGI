@@ -91,6 +91,8 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, _chatGenerate: A
       topP: undefined, // (default, optional)
       topK: undefined, // (default, optional)
     },
+    // [Gemini, 2026-10-26, hypothesis: the field is accepted on every model, its effect on the logs is not observable] generateContent logs requests to AI Studio by default on paid projects created from this date - the request field overrides the project setting
+    store: false,
   };
 
   // Top-P instead of temperature
@@ -101,7 +103,7 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, _chatGenerate: A
 
   // Thinking models: thinking budget and show thoughts
   const thinkingLevel = model.reasoningEffort; // ?? model.vndGeminiThinkingLevel;
-  if (thinkingLevel === 'none' || thinkingLevel === 'xhigh' || thinkingLevel === 'max') // domain validation
+  if (thinkingLevel === 'none' || thinkingLevel === 'max') // domain validation
     throw new Error(`Gemini API does not support '${thinkingLevel}' thinking level`);
 
   if (thinkingLevel || model.vndGeminiThinkingBudget !== undefined /*|| model.vndGeminiShowThoughts === true*/) {
@@ -157,6 +159,10 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, _chatGenerate: A
 
     // activate audio (/only) output
     payload.generationConfig!.responseModalities = noTextOutput ? ['AUDIO'] : ['TEXT', 'AUDIO'];
+
+    // [Gemini, 2026-11-09] TTS is single-turn: any request with more than one content is rejected (400 "Multiturn chat is not enabled"), so only the last turn is spoken
+    if (noTextOutput)
+      payload.contents = payload.contents.slice(-1);
 
     // default voice config - list here: https://ai.google.dev/gemini-api/docs/speech-generation#voices
     payload.generationConfig!.speechConfig = {
@@ -255,12 +261,10 @@ export function aixToGeminiGenerateContent(model: AixAPI_Model, _chatGenerate: A
   const _noToolContextCirculation = ['gemini-2.', '-image', 'nano-banana', 'deep-research'];
   const hasToolContextCirculation = !_noToolContextCirculation.some((p) => model.id.includes(p));
 
-  // [NO-CIRCULATION] can't combine hosted + custom tools with restrictive policies - custom wins -> wipe hosted if any
-  const hasUserRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
-  // NOTE: we may have to remove the 'hasUserRestrictivePolicy' as some models seem to not want any other tool when user tools are set
-  if (_addedHostedTools && hasUserTools && !hasToolContextCirculation && hasUserRestrictivePolicy) {
+  // [NO-CIRCULATION] can't combine hosted + custom tools, regardless of policy (400 "Built-in tools ... and Function Calling cannot be combined") - custom wins -> wipe hosted if any
+  if (_addedHostedTools && hasUserTools && !hasToolContextCirculation) {
     _addedHostedTools = false;
-    payload.tools = undefined; // wipe
+    payload.tools = computerUseEnv ? payload.tools?.filter(tool => 'computerUse' in tool) : undefined; // wipe, except Computer Use: client-side, and its models 400 without it
   }
 
   // Function Calls

@@ -41,7 +41,7 @@
     "@mixmark-io/domino": "^2.2.0",
     "@mui/icons-material": "^5.18",
     "@mui/joy": "5.0.0-beta.52",
-    "@next/bundle-analyzer": "~15.5.28",
+    "@next/bundle-analyzer": "~15.5.29",
     "@prisma/client": "~5.22.0",
     "@tanstack/react-query": "^5.105.0",
     "@tanstack/react-virtual": "^3.14.23",
@@ -50,22 +50,23 @@
     "@trpc/react-query": "11.22.1",
     "@trpc/server": "11.22.1",
     "@vercel/analytics": "^2.0.1",
-    "@vercel/speed-insights": "^2.0.0",
+    "@vercel/speed-insights": "^2.1.0",
     "aws4fetch": "^1.0.20",
     "browser-fs-access": "^0.38.0",
     "csv-stringify": "^6.9.0",
     "dexie": "~4.0.11",
     "dexie-react-hooks": "~1.1.7",
     "diff": "^9.0.0",
+    "dompurify": "^3.4.17",
     "eventemitter3": "^5.0.4",
     "idb-keyval": "^6.2.6",
     "mammoth": "^1.13.0",
     "nanoid": "^6.0.2",
-    "next": "~15.5.28",
+    "next": "~15.5.29",
     "nprogress": "^0.2.0",
     "pdfjs-dist": "5.4.54",
-    "posthog-js": "^1.442.1",
-    "posthog-node": "^5.60.1",
+    "posthog-js": "^1.447.7",
+    "posthog-node": "^5.67.0",
     "prismjs": "^1.30.0",
     "puppeteer-core": "^25",
     "react": "^18",
@@ -82,7 +83,7 @@
     "superjson": "^2.2.6",
     "tesseract.js": "^7.0.0",
     "tiktoken": "^1.0.22",
-    "turndown": "^7.2.4",
+    "turndown": "^7.2.5",
     "zod": "^4.6.7",
     "zustand": "5.0.16"
   },
@@ -97,7 +98,7 @@
     "@types/turndown": "^5.0.6",
     "cross-env": "^10.1.0",
     "eslint": "^9",
-    "eslint-config-next": "~15.5.28",
+    "eslint-config-next": "~15.5.29",
     "eslint-plugin-compat": "^7.0.2",
     "prettier": "^3.9.10",
     "prisma": "~5.22.0",
@@ -107,23 +108,16 @@
   "engines": {
     "node": "^26.0.0 || ^24.0.0 || ^22.0.0"
   },
-  "browserslist": {
-    "production": [
-      "chrome >= 110",
-      "edge >= 110",
-      "firefox >= 115",
-      "safari >= 16.4",
-      "ios_saf >= 16.4",
-      "and_chr >= 110",
-      "samsung >= 21",
-      "not dead"
-    ],
-    "development": [
-      "last 2 chrome versions",
-      "last 2 firefox versions",
-      "last 2 safari versions"
-    ]
-  },
+  "browserslist": [
+    "chrome >= 110",
+    "edge >= 110",
+    "firefox >= 115",
+    "safari >= 16.4",
+    "ios_saf >= 16.4",
+    "and_chr >= 110",
+    "samsung >= 21",
+    "not dead"
+  ],
   "allowScripts": {
     "@posthog/cli": false,
     "@prisma/client": false,

@@ -42,6 +42,7 @@ Paths: `P/` = `src/modules/aix/server/dispatch/chatGenerate/parsers/`, `TX` = `.
 - [ ] **P21** (low) A salvaged `failed` response drops its error text; NS `cancelled`/`in_progress`/`queued` end as `ok` (synthetic)
 - [ ] **P13** (low) `refusal` parts dropped; a refusal-only message stores nothing (synthetic)
 - [ ] **P14** (low) `reasoning_text` dropped; never emitted by GPT-6 (0/87 items)
+- [ ] **P55** (low) A failed `image_generation_call` (moderation block) is stored as a composed error text and replayed as `[ERROR]` (Q1); its id, status and error object are lost (P16) - `_forwardFailedImageGenerationCallItem`
 
 ### Parse: Gemini (`P/gemini.parser.ts`, `P/gemini.interactions.parser.ts`)
 
@@ -57,6 +58,7 @@ Paths: `P/` = `src/modules/aix/server/dispatch/chatGenerate/parsers/`, `TX` = `.
 - [ ] **P28** (low) Interactions: synthetic markdown in text (`[Image: uri]`, `[Document: uri]`, `[Video: uri]`, status lines) (synthetic)
 - [ ] **P29** (low) Interactions: citations disabled - `DISABLE_CITATIONS`
 - [ ] **P23** (low) Consecutive text parts carry no boundary and merge (T1). Not reproduced (0/12 2.5 URL-context runs, 0/21 3.x NS)
+- [ ] **P54** (low) A 0-byte code-execution file (`inlineData` without `data`) is skipped; Gemini fails its own continuation right after (in-band 400)
 
 ### Parse: Chat Completions (`P/openai.parser.ts`)
 
@@ -82,7 +84,6 @@ Paths: `P/` = `src/modules/aix/server/dispatch/chatGenerate/parsers/`, `TX` = `.
 
 ### Transmit
 
-- [ ] **T3** (high) NS `pause_turn`: content and metrics of every pre-pause segment lost (44 blocks, 10 searches on one turn) - `_consumeDispatchUnified`. S totals are correct
 - [ ] **T1** (high) `endMessagePart()` emits nothing: unit boundaries never reach the client (168 Anthropic text blocks stored as 47 fragments) - `TX`
 - [ ] **T2** (low) S synthesizes missing function-call ids as `aix_*` (Gemini 2.5), accepted on replay; NS does not synthesize, a missing NS id fails the parse - `serverSideId`
 - [ ] **T4** (low) NS re-serializes tool-call args with `JSON.stringify` on Anthropic, Bedrock, Gemini; no replay effect. Chat Completions NS keeps vendor bytes
@@ -119,7 +120,7 @@ Paths: `P/` = `src/modules/aix/server/dispatch/chatGenerate/parsers/`, `TX` = `.
 
 ### Replay (`aix.client.chatGenerateRequest.ts`, adapters)
 
-- [ ] **Q1** (high) Assistant error fragments replay as `[ERROR] ...` model text, parse issues with up to 2,048 chars of raw response JSON; the model reads them as its own output
+- [ ] **Q1** (high) Assistant error fragments replay as `[ERROR] ...` model text when the turn has other content, parse issues with up to 2,048 chars of raw response JSON; the model reads them as its own output. A turn of errors alone is not sent
 - [ ] **Q2** (high) Void fragments other than reasoning are skipped, so citations are not replayed (R8); replay without citations drops later Anthropic thinking when isolated from P4
 - [ ] **Q5** (high) Anthropic: model image parts are moved first and sent as user content (`hotFixImagePartsFirst`, `hotFixMapModelImagesToUser`): a generated chart lands in the user's message and that turn's thinking is dropped
 - [ ] **Q6** (high) OpenAI: assistant images sent as a user `input_image`: an image-generation turn dissolves into the user message, a code chart splits the assistant turn
@@ -129,6 +130,7 @@ Paths: `P/` = `src/modules/aix/server/dispatch/chatGenerate/parsers/`, `TX` = `.
 - [ ] **Q4** (low) Anthropic: one `ma` emits its thinking block, then all its redacted blocks (R3); matches wire order for every stored shape
 - [ ] **Q8** (low) OpenAI: `attachCodeInterpreterCallOutputs` overwrites `outputs` per stored tool result, only the last replays (synthetic)
 - [ ] **Q10** (low) Gemini: an assistant turn holding only `ma` fragments emits no model content, leaving two user contents adjacent (synthetic)
+- [ ] **Q11** (medium) Anthropic: with thinking off on Haiku 5.x and Sonnet 5.x, earlier turns' thinking is not replayed (it cannot be bound there, and a prefix change would 400 on newer accounts); an only-thinking reply is sent as an empty assistant turn - `_stripThinkingBeforeCurrentTurn`
 
 ## IR gaps
 
