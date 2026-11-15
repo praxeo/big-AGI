@@ -13,7 +13,7 @@ When adding a customization: put the logic in a new file, and call it from upstr
 
 | Feature | Fork-owned files (never conflict) | Hooks in upstream files |
 |---|---|---|
-| Clinical personas (MDM Helper v2/v3, HPI Helper, Wound Care Note, Clinical Assistant) | - | `src/data.ts` (persona set replaced); with the Developer and YouTube Transcriber personas gone, their references are deleted in `AppChat.tsx`, `Composer.tsx`, `PersonaSelector.tsx`, `store-chats.ts` |
+| Clinical personas (MDM Helper v2/v3, HPI Helper, Wound Care Note, Clinical Assistant) | - | `src/data.ts` (persona set replaced); with the Developer and YouTube Transcriber personas gone, their references are deleted in `Composer.tsx` (`isDeveloperMode` and its placeholder hints), `PersonaSelector.tsx`, `store-chats.ts` |
 | Voice input (ElevenLabs `scribe_v2` default, Cloudflare, realtime STT) | `app/api/stt/*`, `speechrecognition/CloudflareSTTEngine.ts`, `speechrecognition/RealtimeSTTEngine.ts` | `speechrecognition/AudioRecorderEngine.ts`, `speechrecognition/useSpeechRecognition.ts` |
 | Code blocks: plain text while streaming (no HTML/SVG/PlantUML render, no Prism) | `blocks/code/code-renderers/RenderCodeStreamingPlain.tsx` | `blocks/code/RenderCode.tsx`: 5 lines |
 | Unsloth local server (listing, Thinking, Web Search) | `llms/server/openai/models/unsloth.models.ts`, `llms/models-modal/UnslothParametersConfig.tsx`, `llms/vendors/openai/openai.unsloth.ts`, `aix/.../adapters/openai.chatCompletions.unsloth.ts`, `icons/vendors/UnslothIcon.tsx` | 1-2 lines each in `listModels.dispatch.ts`, `LLMParametersEditor.tsx`, `aix.client.ts`, `openai.chatCompletions.ts`; small additive blocks in `aix.wiretypes.ts`, `openai.wiretypes.ts`, `openai.parser.ts`, `llms.parameters.ts`, `llm.server.types.ts`, `models.mappings.ts`, `llms.defs.manifest.ts`, `OpenAIHostAutocomplete.tsx` |
@@ -39,8 +39,19 @@ Builds regenerate it anyway (`prebuild`; Vercel and Docker run `npm run build`),
 git remote add upstream https://github.com/enricoros/big-AGI.git   # once
 git fetch upstream main
 git checkout -b sync-upstream origin/v2-dev
+git merge-base --all HEAD upstream/main   # expect one commit; if several, see below
 git merge upstream/main
 git checkout upstream/main -- src/modules/llms/server/gen/llms.defs.versions.ts
+```
+
+If `merge-base --all` prints several commits (a criss-cross history), `git merge` builds a virtual base from them and reports
+conflicts in files the fork never touched. Merge against the newest one instead, the last upstream commit already synced.
+First confirm `git diff --stat <newest> HEAD` lists only the files in the table above, then:
+
+```bash
+T=$(git merge-tree --write-tree --merge-base=<newest> HEAD upstream/main | head -1)
+git read-tree -u --reset $T                       # conflict markers land in the worktree
+git rev-parse upstream/main > .git/MERGE_HEAD     # the commit becomes a real two-parent merge
 ```
 
 3. For each remaining conflict: take upstream's version of the code, then re-add the `[praxeo fork]` line(s) from the table above.
