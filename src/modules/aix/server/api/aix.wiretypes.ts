@@ -610,6 +610,9 @@ export namespace AixWire_API {
     vndUnslothThinking: z.enum(['none', 'low', 'medium', 'high', 'max']).optional(),
     vndUnslothWebSearch: z.enum(['auto']).optional(), // server-side web_search tool loop
 
+    // [praxeo fork] Strata (local server): server-side MCP tool loop, sent as `strata_mcp: true`
+    vndStrataMcp: z.enum(['auto']).optional(),
+
     // xAI
     vndXaiCodeExecution: z.enum(['off', 'auto']).optional(),
     vndXaiSearchInterval: z.enum(['unfiltered', '1d', '1w', '1m', '6m', '1y']).optional(),

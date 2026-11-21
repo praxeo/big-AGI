@@ -124,6 +124,8 @@ const ModelParameterSpec_schema = z.object({
     // Unsloth
     'llmVndUnslothThinking',
     'llmVndUnslothWebSearch',
+    // Strata
+    'llmVndStrataMcp',
     // xAI
     'llmVndXaiCodeExecution',
     'llmVndXaiSearchInterval',
