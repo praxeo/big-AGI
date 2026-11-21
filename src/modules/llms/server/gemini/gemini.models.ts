@@ -79,7 +79,7 @@ const geminiExpFree: ModelDescriptionSchema['chatPrice'] = {
 };
 
 
-// Pricing based on https://aistudio.google.com/docs/pricing (November 13, 2026)
+// Pricing based on https://aistudio.google.com/docs/pricing (November 17, 2026)
 
 // NOTE(2026-12-01): Gemini 4 Carbon and Argon introductory pricing expires November 30, 2026 - flip gemini4ArgonPricing to the list prices in its comments
 // NOTE(2027-01-01): 3.8/3.6 Flash, 3.8 Flash(-Lite) TTS and Robotics-ER 2 introductory pricing expires December 31, 2026 -
@@ -92,6 +92,13 @@ const gemini4ArgonPricing: ModelDescriptionSchema['chatPrice'] = {
   input: 2.00, // introductory through 2026-11-30, then $4.00; no >200k tier or per-modality split
   output: 10.00, // including thinking tokens; $20.00 from 2026-12-01
   cache: { read: 0.10 }, // implicit caching only (explicit not supported); $0.20 from 2026-12-01
+  tools: GEM_PRICE_TOOLS,
+};
+
+const gemini4NeonPricing: ModelDescriptionSchema['chatPrice'] = {
+  input: 3.00, // no introductory price; no >200k tier or per-modality split
+  output: 15.00, // including thinking tokens
+  cache: { read: 0.15 }, // implicit caching only (explicit not supported)
   tools: GEM_PRICE_TOOLS,
 };
 
@@ -153,6 +160,7 @@ const gemini31FlashLitePricing: ModelDescriptionSchema['chatPrice'] = {
 const geminiNanoBanana21Pricing: ModelDescriptionSchema['chatPrice'] = {
   input: 1.50, // text/image input - 3x Nano Banana 2
   output: 7.50, // text/thinking output
+  tools: GEM_PRICE_TOOLS,
   // NOTE: Additional image-specific pricing (not yet supported in schema) - half the Nano Banana 2 rate:
   // - Image output: $30.00/MTok ($0.0336/image 1K, $0.0504/image 2K, $0.113/image 4K)
 };
@@ -160,6 +168,7 @@ const geminiNanoBanana21Pricing: ModelDescriptionSchema['chatPrice'] = {
 const gemini31FlashImagePricing: ModelDescriptionSchema['chatPrice'] = {
   input: 0.50, // text/image input
   output: 3.00, // text/thinking output
+  tools: GEM_PRICE_TOOLS,
   // NOTE: Additional image-specific pricing (not yet supported in schema):
   // - Image output: $60.00/MTok ($0.045/image 0.5K, $0.067/image 1K, $0.101/image 2K, $0.151/image 4K)
 };
@@ -182,6 +191,7 @@ const gemini30ProPricing: ModelDescriptionSchema['chatPrice'] = {
 const gemini30ProImagePricing: ModelDescriptionSchema['chatPrice'] = {
   input: 2.00, // text/image input - flat, no >200k tier (Google prices image models flat; context is 128k anyway)
   output: 12.00, // text/thinking output - flat, no >200k tier
+  tools: GEM_PRICE_TOOLS,
   // NOTE: Additional image-specific pricing (not yet supported in schema):
   // - Image input: $2.00/MTok ($0.0011/image)
   // - Image output: $120.00/MTok ($0.134/image 1K/2K, $0.24/image 4K)
@@ -229,7 +239,7 @@ const gemini25ProPreviewTTSPricing: ModelDescriptionSchema['chatPrice'] = {
 
 const gemini31FlashTTSPricing: ModelDescriptionSchema['chatPrice'] = {
   input: 1.00, // text input
-  // output: 20.00, // AUDIO - not ready for audio output yet (as of Apr 22, 2026)
+  output: 20.00, // AUDIO (all output tokens, 25 tok/s of audio)
 };
 
 const gemini38FlashTTSPricing: ModelDescriptionSchema['chatPrice'] = {
@@ -250,6 +260,7 @@ const geminiRoboticsER2Pricing: ModelDescriptionSchema['chatPrice'] = {
   input: 1.00, // introductory through 2026-12-31, then $2.00 (2x over ER 1.6); flat rate for text/image/video/audio (no audio split, unlike ER 1.6)
   output: 5.00, // including thinking tokens; $10.00 from 2027-01-01
   cache: { read: 0.10 }, // $0.20 from 2027-01-01; caching is new vs ER 1.6; storage $0.50/MTok-hour -> $1.00 (not tracked here)
+  tools: GEM_PRICE_TOOLS,
 };
 
 // REMOVED: gemini20FlashLivePricing (model shut down December 9, 2025)
@@ -264,12 +275,12 @@ const IF_40 = [...IF_30, LLM_IF_HOTFIX_NoTemperature]; // Gemini 4 ignores sampl
 // that only the Nano Banana 2 family accepts (verified 2026-10-06, natively and through OpenRouter)
 export const GEM_IMAGE_AR_NO_EXTREMES: string[] = ['1:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'];
 
-// Gemini Thinking Control (as of 2026-11-13):
+// Gemini Thinking Control (as of 2026-11-18):
 // - Gemini 3+ models use `thinkingLevel` (llmVndGemEffort) - NOT thinkingBudget.
 //   Levels are per-model (docs thinking page table): 4 Carbon/Argon + 3.8/3.7 Flash=['low','medium','high'] (default 'medium'; 'minimal' 400s),
 //   3.6/3.5 Flash + 3.5 Flash-Lite=['minimal','low','medium','high'] (Flash default 'medium'), 3.1 Pro/3 Pro=['low','medium','high'] (default 'high').
 //   Pro does not support disabling thinking. Flash's 'minimal' does not guarantee thinking is off.
-//   4 Hydrogen=['low','medium','high','xhigh'] (default 'high'; 'minimal' 400s) - the only model with 'xhigh' (400s on 4 Carbon/Argon and 3.8 Flash).
+//   4 Neon/Hydrogen=['low','medium','high','xhigh'] (default 'high'; 'minimal' 400s) - the only models with 'xhigh' (400s on 4 Carbon/Argon and 3.8 Flash).
 //   The Gemini 4 models also pass 'max' through enum validation: undocumented, and they think like the default level - do NOT expose.
 // - Gemini 2.5 models use `thinkingBudget` (llmVndGeminiThinkingBudget) - NOT thinkingLevel.
 //   Budget=0 disables thinking (Flash/Flash-Lite only; Pro cannot disable). Undefined = auto.
@@ -338,6 +349,23 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
       { paramId: 'llmVndGeminiUrlContext' },
     ],
     benchmark: { cbaElo: 1525 }, // gemini-4-argon-high (LMArena 2026-09-30, preliminary, CI +/-9)
+  },
+
+  // Gemini 4 Neon (Stable) - Released November 18, 2026; between Hydrogen and Carbon - paid tier only, Hydrogen's API surface
+  {
+    id: 'models/gemini-4-neon',
+    labelOverride: 'Gemini 4 Neon',
+    pubDate: '20261118',
+    chatPrice: gemini4NeonPricing,
+    contextWindow: 1_048_576,
+    interfaces: IF_40,
+    parameterSpecs: [
+      { paramId: 'llmVndGemEffort', enumValues: ['low', 'medium', 'high', 'xhigh'] }, // no 'minimal' (live 400); default 'high' per docs
+      { paramId: 'llmVndGeminiMediaResolution' },
+      { paramId: 'llmVndGeminiCodeExecution' },
+      { paramId: 'llmVndGeminiGoogleSearch' },
+      { paramId: 'llmVndGeminiUrlContext' },
+    ],
   },
 
   // Gemini 4 Hydrogen (Stable) - Released November 12, 2026; everyday coding and agents - on the free tier per the pricing page, Carbon/Argon are not
@@ -739,7 +767,7 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     id: 'models/gemini-2.5-pro-preview-tts',
     pubDate: '20250520',
     isPreview: true,
-    deprecated: '2026-11-17',
+    deprecated: '2026-12-18',
     chatPrice: gemini25ProPreviewTTSPricing,
     interfaces: [
       LLM_IF_OAI_Chat, LLM_IF_OAI_Vision,
@@ -813,7 +841,7 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
   },
 
   // Antigravity Agent Preview (09-2026) - Released Sep 17, 2026; replaces 05-2026
-  // General-purpose managed agent: powered by Gemini 3.8 Flash by default (selectable via agent_config.model, which we don't send),
+  // General-purpose managed agent: powered by Gemini 4 Hydrogen by default (selectable via agent_config.model, which we don't send),
   // runs inside a Google-hosted Linux sandbox with default tools (code_execution, google_search, url_context) plus file tools with
   // PascalCase params (write_to_file, replace_file_content, view_file, list_dir, find_by_name, grep_search). Interactions-only
   // (generateContent 400s). 1M context (compacted at ~135k), 64K output. Sandbox compute is not billed during the preview.
@@ -824,7 +852,7 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     labelOverride: 'Antigravity Agent Preview (2026-09)',
     pubDate: '20260914', // first seen on the list API; announced 2026-09-17
     isPreview: true,
-    chatPrice: gemini38FlashPricing, // PAYG on underlying tokens - default model is gemini-3.8-flash; tool/compute not billed during preview
+    chatPrice: gemini4HydrogenPricing, // PAYG on underlying tokens - default model is gemini-4-hydrogen; tool/compute not billed during preview
     interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Reasoning, LLM_IF_GEM_Interactions],
     // No per-model parameters yet - default tool set is enabled implicitly. Future: a tools-allowlist parameter to restrict the default set.
     benchmark: undefined, // Agent harness, not benchmarkable on standard tests
@@ -1018,15 +1046,15 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     benchmark: undefined, // TTS models are not benchmarkable
   },
 
-  // 3.1 Flash TTS Preview - Released April 15, 2026; DEPRECATED: shutdown November 17, 2026 (-> gemini-3.8-flash(-lite)-tts)
-  // Cost-efficient, expressive, and steerable text-to-speech model
+  // 3.1 Flash TTS Preview - Released April 15, 2026; DEPRECATED: shutdown December 18, 2026 (-> gemini-3.8-flash(-lite)-tts)
+  // Cost-efficient, expressive, and steerable text-to-speech model; 400s without a speechConfig voice
   {
-    hidden: true, // audio outputs are unavailable
+    hidden: true, // superseded by gemini-3.8-flash(-lite)-tts
     id: 'models/gemini-3.1-flash-tts-preview',
     labelOverride: 'Gemini 3.1 Flash TTS Preview',
     pubDate: '20260415',
     isPreview: true,
-    deprecated: '2026-11-17',
+    deprecated: '2026-12-18',
     chatPrice: gemini31FlashTTSPricing,
     interfaces: [
       LLM_IF_OAI_Chat, LLM_IF_OAI_Vision,
@@ -1043,7 +1071,7 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     id: 'models/gemini-2.5-flash-preview-tts',
     pubDate: '20250520',
     isPreview: true,
-    deprecated: '2026-11-17',
+    deprecated: '2026-12-18',
     chatPrice: gemini25FlashPreviewTTSPricing,
     interfaces: [
       LLM_IF_OAI_Chat, LLM_IF_OAI_Vision,
@@ -1143,12 +1171,17 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
   // Verified live 2026-08-02 on both models: PNG/JPEG inline_data (single, multiple, and in prior turns) is
   // read correctly and billed as IMAGE prompt tokens; systemInstruction is honored; function calling returns
   // functionCall parts; thinking emits thought parts (thinkingLevel accepts only 'minimal'/'high', 400s on 'low'/'medium').
+  // Google Search and code execution work; URL Context 400s ('Url Context as tool is not enabled for this model').
   {
     id: 'models/gemma-4-31b-it',
     pubDate: '20260402',
     isPreview: true,
-    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
-    parameterSpecs: [{ paramId: 'llmVndGemEffort', enumValues: ['minimal', 'high'] }],
+    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_GEM_CodeExecution],
+    parameterSpecs: [
+      { paramId: 'llmVndGemEffort', enumValues: ['minimal', 'high'] },
+      { paramId: 'llmVndGeminiCodeExecution' },
+      { paramId: 'llmVndGeminiGoogleSearch' },
+    ],
     chatPrice: geminiExpFree, // Free tier only according to pricing page
     benchmark: { cbaElo: 1453 }, // gemma-4-31b
   },
@@ -1157,8 +1190,12 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
     id: 'models/gemma-4-26b-a4b-it',
     pubDate: '20260402',
     isPreview: true,
-    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning],
-    parameterSpecs: [{ paramId: 'llmVndGemEffort', enumValues: ['minimal', 'high'] }],
+    interfaces: [LLM_IF_OAI_Chat, LLM_IF_OAI_Vision, LLM_IF_OAI_Fn, LLM_IF_OAI_Reasoning, LLM_IF_GEM_CodeExecution],
+    parameterSpecs: [
+      { paramId: 'llmVndGemEffort', enumValues: ['minimal', 'high'] },
+      { paramId: 'llmVndGeminiCodeExecution' },
+      { paramId: 'llmVndGeminiGoogleSearch' },
+    ],
     chatPrice: geminiExpFree, // Free tier only according to pricing page
     benchmark: { cbaElo: 1437 }, // gemma-4-26b-a4b
   },
@@ -1177,10 +1214,11 @@ const _knownGeminiModels = llmsDefineModels<_GeminiModelDef>()([
 
   /// Media Generation Models - NOTE: THESE ARE FILTERED OUT (!) - but here anyway for reference
 
-  // LISTED BUT FILTERED (as of 2026-10-02, no generateContent chat path or name-filtered):
-  // - models/veo-3.1-{generate,fast-generate,lite-generate}-preview (predictLongRunning only; shutdown October 22, 2026 -> gemini-omni-1.1-flash)
+  // LISTED BUT FILTERED (as of 2026-11-17, no generateContent chat path or name-filtered):
   // - models/lyria-3.5, models/lyria-3-{clip,pro}-preview (music generation - DOES expose generateContent, dropped by the 'Lyria' name filter)
   // - models/gemini-embedding-{001,2,2-preview} (embedContent only)
+  // - models/gemini-decision-1 (createDecision only - the Decisions API, zero output tokens)
+  // REMOVED: models/veo-3.1-{generate,fast-generate,lite-generate}-preview (shut down October 22, 2026 -> gemini-omni-1.2-flash)
 
   // REMOVED MODELS (no longer returned by API as of Nov 20, 2025):
   // - models/imagen-3.0-generate-002 (Imagen 3 image generation - replaced by Nano Banana models)

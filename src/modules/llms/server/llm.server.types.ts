@@ -82,7 +82,6 @@ const ModelParameterSpec_schema = z.object({
     'llmVndOaiEffort',
     'llmVndMiscEffort',
     // Anthropic
-    'llmVndAnt1MContext',
     'llmVndAntCodeSandbox',
     'llmVndAntInfSpeed',
     'llmVndAntSkills',
@@ -138,6 +137,7 @@ const ModelParameterSpec_schema = z.object({
   // special params
   enumValues: z.array(z.string()).optional(), // restrict enum values for this model
   rangeOverride: z.tuple([z.number(), z.number()]).optional(), // [min, max]
+  enumOverlayXPrice: z.record(z.string(), z.number()).optional(), // this model's rates for some enum values, layered over the registry definition's enumXPrice
 });
 
 export const ModelDescription_schema = z.object({
@@ -174,9 +174,31 @@ export type OrtVendorLookupResult = {
 
 /// ListModels Response
 
+/**
+ * What the vendor told about the API key and its account while listing. Facts only: the client words them. Every field
+ * is optional: vendors tell different things, and most tell nothing.
+ */
+export type ListModelsAccessStatus = z.infer<typeof ListModelsAccessStatus_schema>;
+const ListModelsAccessStatus_schema = z.object({
+  freeModelsOnly: z.enum(['free-tier', 'key-limit-zero']).optional(), // the key can call the free models only, and why (a free key, or one limited to $0): the priced ones are listed hidden
+  freeRequestsPerDay: z.number().optional(), // what the free models allow this key
+});
+
+export type ListModelsResponse = z.infer<typeof ListModelsResponse_schema>;
 export const ListModelsResponse_schema = z.object({
   models: z.array(ModelDescription_schema),
+  accessStatus: ListModelsAccessStatus_schema.optional(),
 });
+
+
+/// Upstream resource ids
+
+/**
+ * A vendor-issued id (file, container, skill, stored response) that the server places in an upstream URL path,
+ * on a request that carries the caller's key or the server's. Plain tokens only: with '/', '.', '?' or '%' an id
+ * would address another endpoint of the vendor API.
+ */
+export const UpstreamResourceId_schema = z.string().regex(/^[A-Za-z0-9_-]{1,256}$/, 'invalid id');
 
 
 /// File Metadata Response

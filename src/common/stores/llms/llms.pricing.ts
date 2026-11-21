@@ -67,7 +67,7 @@ function _isPricingFree(pricing: DTieredPricing | undefined): boolean {
 /// Human readable cost
 
 export function getLlmCostForTokens(tierTokens: number, tokens: number, pricing: DTieredPricing | undefined): number | undefined {
-  if (!pricing) return undefined;
+  if (pricing === undefined || pricing === null) return undefined; // 0 is a price (free), not a missing one
   if (pricing === 'free') return 0;
 
   // Cost = tokens * price / 1e6
@@ -87,26 +87,80 @@ export function getLlmCostForTokens(tierTokens: number, tokens: number, pricing:
 }
 
 
-/// Adjusted Chat Pricing - applies registry-defined price multipliers for active enum parameters
+/// Multiplied Chat Pricing - the model's pricing at a price multiplier (service tier, fast mode)
 
 /**
- * Returns the effective chat pricing for a model, adjusted for active parameter-based
- * price multipliers (e.g. fast mode = 6x). Self-contained: reads the DLLM, resolves
- * parameter values, looks up enumPriceMultiplier in the registry, and applies.
+ * The model's chat pricing at the multiplier the given parameter values ask for, and that multiplier. The caller resolves
+ * the values: the model's own settings, or a request's (a persona, a chat or a call can replace the model's own, and cost
+ * follows what was sent).
  *
- * `confirmedMultiplier`: the served tier (metrics `$xPrice`) replaces the parameter-derived multiplier.
+ * `servedMultiplier`: the multiplier a finished generation's response reports (metrics `$xPrice`), when it reports one. It
+ * wins because the parameters only predict: the provider can serve another tier than requested (OpenAI bills a downgraded
+ * Fast request at standard rates), and some billed tiers have no request parameter at all (Anthropic batch and US data
+ * residency, Gemini flex/priority by account), so only the response knows them.
  *
  * Note: does NOT affect isLLMChatFree_cached (free * N = free). Per-call tool fees are not multiplied.
  */
-export function llmChatPricing_adjusted<TLlm extends Pick<DLLM, 'pricing' | 'userPricing' | 'parameterSpecs' | 'initialParameters' | 'userParameters'>>(llm: TLlm | null, confirmedMultiplier?: number): DPricingChatGenerate | undefined {
-  if (!llm) return undefined;
+export function llmChatPricing_multipliedFromParams(llm: Pick<DLLM, 'pricing' | 'userPricing' | 'parameterSpecs'>, llmParameters: DModelParameterValues, servedMultiplier?: number): {
+  pricing: DPricingChatGenerate | undefined;
+  multiplier: number;
+} {
+  const multiplier = servedMultiplier ?? _computeMultiplierFromParams(llm.parameterSpecs, llmParameters);
+  return { pricing: _multiplyChatPricing(llm, multiplier), multiplier };
+}
 
+/**
+ * The price multiplier that a set of parameter values asks for on a model (service tier, fast mode), vs the
+ * listed rates. 1 when none.
+ *
+ * Composes the multipliers of the model's enum parameters, each from `llmChatPricing_enumValueMultiplier`.
+ *
+ * Note: any enum with enumXPrice must have its
+ * effective default in initialParameters (via spec or registry `initialValue`).
+ */
+function _computeMultiplierFromParams(parameterSpecs: DModelParameterSpecAny[], parameterValues: DModelParameterValues): number {
+  if (!parameterSpecs?.length) return 1;
+
+  let multiplier = 1;
+  for (const spec of parameterSpecs) {
+    // guarded: this runs while rendering and while finalizing a message, and malformed values must cost a multiplier, not a crash
+    try {
+      const value = parameterValues[spec.paramId];
+      if (typeof value !== 'string') continue;
+      const m = llmChatPricing_enumValueMultiplier(spec, value);
+      if (m !== undefined && m !== 1)
+        multiplier *= m;
+    } catch (error) {
+      console.warn('[DEV] llmChatPricing: skipping parameter', { paramId: spec.paramId, error });
+    }
+    // NOTE: may add other (e.g. boolean) multipliers in the future
+  }
+
+  return multiplier;
+}
+
+/**
+ * The price multiplier one enum value asks for on a model: the model's overlay (spec `enumOverlayXPrice`) over
+ * the definition's rate (registry `enumXPrice`). undefined when the value carries none.
+ */
+export function llmChatPricing_enumValueMultiplier(spec: DModelParameterSpecAny, value: string): number | undefined {
+  // only find multipliers for parameters defined with enumXPrice
+  const registryDef = DModelParameterRegistry[spec.paramId];
+  if (registryDef?.type !== 'enum' || !('enumXPrice' in registryDef) || !registryDef.enumXPrice) return undefined;
+
+  // find the multiplier in the spec's overlay, then the registry's definition, or undefined
+  const m =
+    (spec.enumOverlayXPrice as Record<string, number | undefined> | undefined)?.[value]
+    ?? (registryDef.enumXPrice as Record<string, number | undefined>)[value];
+  return typeof m === 'number' ? m : undefined;
+}
+
+
+function _multiplyChatPricing(llm: Pick<DLLM, 'pricing' | 'userPricing'>, multiplier: number): DPricingChatGenerate | undefined {
   // base chat pricing
   const gcPricing = (llm.userPricing ?? llm.pricing)?.chat;
   if (!gcPricing) return undefined;
 
-  // compute composed multiplier from active enum parameters
-  const multiplier = confirmedMultiplier ?? _computePriceMultiplier(llm.parameterSpecs, llm.initialParameters, llm.userParameters);
   if (multiplier === 1) return gcPricing;
 
   // Apply the multiplier per present class - never emit `key: undefined` (missing and undefined differ on the wire and at rest)
@@ -122,37 +176,6 @@ export function llmChatPricing_adjusted<TLlm extends Pick<DLLM, 'pricing' | 'use
       },
     }),
   };
-}
-
-/**
- * Scans parameterSpecs for enum parameters with enumPriceMultiplier in the registry.
- * For each, resolves the effective value (user > initial) and if it matches a multiplier key, accumulates it.
- *
- * Note: any enum with enumPriceMultiplier must have its
- * effective default in initialParameters (via spec or registry `initialValue`).
- */
-function _computePriceMultiplier(parameterSpecs: DModelParameterSpecAny[], initialParameters: DModelParameterValues | undefined, userParameters: DModelParameterValues | undefined): number {
-  if (!parameterSpecs?.length) return 1;
-
-  let multiplier = 1;
-  for (const spec of parameterSpecs) {
-
-    const paramId = spec.paramId;
-    const registryDef = DModelParameterRegistry[paramId];
-
-    // 'enum' values multipliers
-    if (registryDef?.type === 'enum' && 'enumPriceMultiplier' in registryDef && registryDef.enumPriceMultiplier) {
-      const value = (userParameters?.[paramId] ?? initialParameters?.[paramId]) as string | undefined;
-      if (value !== undefined) {
-        const m = (registryDef.enumPriceMultiplier as Record<string, number | undefined>)[value];
-        if (m !== undefined && m !== 1 && m !== null /* extra caution */)
-          multiplier *= m;
-      }
-    }
-    // NOTE: may add other (e.g. boolean) multipliers in the future
-  }
-
-  return multiplier;
 }
 
 function _multiplyTieredPricing(pricing: DTieredPricing, multiplier: number): DTieredPricing {
@@ -174,7 +197,7 @@ interface Was_DModelPricingV2 {
 }
 
 export function portModelPricingV2toV3(llm: DLLM): void {
-  // NOTE: direct .pricing access instead of llmChatPricing_adjusted, because there was no user pricing in this generation
+  // NOTE: direct .pricing access instead of llmChatPricing_multipliedFromParams, because there was no user pricing in this generation
   if (!llm.pricing) return;
   if (typeof llm.pricing !== 'object') return;
 

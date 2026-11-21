@@ -920,7 +920,7 @@ export async function attachmentPerformConversion(
             edit(attachment.id, { outputsConversionProgress: progress / 2 }); // Update progress (0% to 50%)
           });
           for (const pdfPageImage of imageDataURLs) {
-            const pdfPageImageF = await imageDataToImageAttachmentFragmentViaDBlob(pdfPageImage.mimeType, pdfPageImage.base64Data, source, `${title} (pg. ${newFragments.length + 1})`, caption, false, false);
+            const pdfPageImageF = await imageDataToImageAttachmentFragmentViaDBlob(pdfPageImage.mimeType, pdfPageImage.base64Data, source, `${title} (pg. ${imageFragments.length + 1})`, caption, false, false);
             if (pdfPageImageF)
               imageFragments.push(pdfPageImageF);
           }
@@ -1139,7 +1139,7 @@ function _cleanPossibleHtmlText(inputStr: string): string {
       tag.replace(/ class="[^"]*"/g, '').replace(/ style="[^"]*"/g, ''),
     )
     // remove svg elements
-    .replace(/<svg[^>]*>.*?<\/svg>/g, '');
+    .replace(/<svg[^>]*>[\s\S]*?<\/svg>/g, ''); // [\s\S]: svg elements span lines
 }
 
 

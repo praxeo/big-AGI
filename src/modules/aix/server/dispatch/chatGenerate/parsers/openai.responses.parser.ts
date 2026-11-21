@@ -348,7 +348,17 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
     // throws on malformed event data
     const chunkData = JSON.parse(eventData);
 
-    const event = OpenAIWire_API_Responses.StreamingEvent_schema.parse(chunkData);
+    const parsed = OpenAIWire_API_Responses.StreamingEvent_schema.safeParse(chunkData);
+    if (!parsed.success) {
+      // An event type the union does not list is an unknown value (skipped in production), not a malformed event:
+      // [ChatGPT-backed relays, 2026-11] 'response.metadata' carries moderation flags between the events of the API
+      const [issue] = parsed.error.issues;
+      if (issue.code !== 'invalid_union' || issue.path[0] !== 'type') throw parsed.error;
+      R.validateSequenceNumber(typeof chunkData?.sequence_number === 'number' ? chunkData.sequence_number : undefined);
+      aixResilientUnknownValue('OpenAI-Responses', 'eventType', chunkData?.type);
+      return;
+    }
+    const event = parsed.data;
     const eventType = event?.type;
 
     // Validations
@@ -658,7 +668,8 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
         break;
 
       case 'response.output_text.done':
-        R.contentPartVisit(eventType, event.output_index, event.content_index);
+        if (event.content_index !== undefined) // not sent by some relays: no index to check
+          R.contentPartVisit(eventType, event.output_index, event.content_index);
         // .text: ignore finalized content, we already transmitted all partials
         // [xAI] release any non-marker text held back by the citations-leak filter
         const heldTail = xaiCitationsFilter?.flush();
@@ -1282,6 +1293,12 @@ function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 
   return metricsUpdate;
 }
 
+/**
+ * The served side of the rates the request side reads from the model defs (`llmVndOaiServiceTier` spec `enumOverlayXPrice`
+ * over the registry definition): change both together.
+ * This is likely for 'this point in time' pricing.
+ * Keep this in sync when updating OpenAI models.
+ */
 function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined, modelId: string | undefined): number | undefined {
   switch (serviceTier) {
     case 'default':
@@ -1294,7 +1311,8 @@ function _priceMultiplierFromServiceTier(serviceTier: string | null | undefined,
       return modelId?.startsWith('gpt-5.5') ? 2.5 : 2;
     case 'ultrafast':
       // [2026-09-29] 6x on every token class, both context tiers (GPT-6 Astra: $60/$6/$75/$300 vs Standard $10/$1/$12.50/$50)
-      return 6;
+      // GPT-6.2: 3x through 2027-02-28, 6x from 2027-03-01 (TODO: drop the branch then)
+      return modelId?.startsWith('gpt-6.2') ? 3 : 6;
     default: // 'auto', absent
       return undefined;
   }

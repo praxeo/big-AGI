@@ -40,7 +40,7 @@ type _EditorialPick =
   | { vendor: 'moonshot',   modelId: LlmsMoonshotModelId }
   | { vendor: 'nvidianim',  modelId: LlmsNvidiaNIMModelId }
   | { vendor: 'openai',     modelId: LlmsOpenAIModelId }
-  | { vendor: 'openrouter', modelId: `anthropic/${LlmsAnthropicModelId}` | `google/${string}` | `openai/${LlmsOpenAIModelId}` } // dynamic discovery
+  | { vendor: 'openrouter', modelId: `anthropic/${LlmsAnthropicModelId}` | `google/${string}` | `openai/${LlmsOpenAIModelId}` | 'openrouter/free' } // dynamic discovery
   | { vendor: 'xai',        modelId: LlmsXAIModelId }
   | { vendor: 'zai',        modelId: LlmsZAIModelId };
 
@@ -62,7 +62,9 @@ type _EditorialDefaultsTable = {
 // - Bedrock is the exception: access is per account and region. The newest comes first, although an account without the
 //   enablement gets 403 'not available for this account' on every Claude released since Opus 4.7; the second pick is the
 //   newest such an account can invoke, and it applies only where the first is not listed.
-// - OpenRouter serves every upstream: a single pick per domain, the best across vendors.
+// - OpenRouter serves every upstream: a single pick per domain, the best across vendors. A key that cannot pay lists the
+//   priced models hidden: there the pick is 'openrouter/free', the router across the free models, last in every domain; a
+//   single free model is often rate-limited upstream (Gemma answered 8 of 70 production chats, the router 438 of 460).
 // - NVIDIA NIM is a free trial catalog: last in every domain, so that a configured paid service always wins.
 // Scores are LMArena text (style control), 2026-10-28; prices are $/M tokens, input/output.
 
@@ -83,6 +85,7 @@ export const EditorialDefaults = {
     { vendor: 'deepseek',   modelId: 'deepseek-flash' }, // V4.1 Flash: 1476, $0.3/$1.2 - above V4 Pro (1465) at a quarter of its price
     { vendor: 'xai',        modelId: 'grok-4.7' }, // xAI's flagship - 1441, below Grok 4.5 (1465) and 4.6 (1455)
     { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-ultra-550b-a55b' }, // 1427, 1M ctx
+    { vendor: 'openrouter', modelId: 'openrouter/free' },
   ],
 
   // workhorse coder with function calling: strong, quick, mid-priced
@@ -97,26 +100,28 @@ export const EditorialDefaults = {
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-sonnet-4-6' },
     { vendor: 'zai',        modelId: 'glm-5.3' }, // 1481
     { vendor: 'deepseek',   modelId: 'deepseek-flash' }, // 1476
-    { vendor: 'moonshot',   modelId: 'kimi-k2.7-code' }, // code-focused, ~180 tok/s, $0.95/$4
+    { vendor: 'moonshot',   modelId: 'kimi-k3.1-pro' }, // $2/$10 - K2.7 Code is closed to new accounts
     { vendor: 'xai',        modelId: 'grok-4.7' },
     { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3.5-super-vl-120b-a12b' }, // agentic and tool-use tuned
+    { vendor: 'openrouter', modelId: 'openrouter/free' },
   ],
 
   // titles, summaries and other short utility calls: fast and cheap first
   fastUtil: [
     { vendor: 'anthropic',  modelId: 'claude-haiku-5-5' }, // measured ~200 tok/s with thinking off, titles in 0.4-0.8s; short prompts mostly skip thinking
+    { vendor: 'bedrock',    modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' }, // before 5.5: accounts without Claude 4.7+ enablement still list 5.5, and every title 403s "not available for this account"
+    { vendor: 'bedrock',    modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0' },
     { vendor: 'bedrock',    modelId: 'us.anthropic.claude-haiku-5-5' },
     { vendor: 'bedrock',    modelId: 'global.anthropic.claude-haiku-5-5' },
-    { vendor: 'bedrock',    modelId: 'us.anthropic.claude-haiku-4-5-20251001-v1:0' },
-    { vendor: 'bedrock',    modelId: 'global.anthropic.claude-haiku-4-5-20251001-v1:0' },
     { vendor: 'openrouter', modelId: 'anthropic/claude-haiku-5-5' },
     { vendor: 'openai',     modelId: 'gpt-6-luna' }, // $0.10/$0.50, measured ~117 tok/s
     { vendor: 'googleai',   modelId: 'models/gemini-3.5-flash-lite' }, // 1456, $0.30/$2.50 - "low-latency subagent for high-volume automation"
     { vendor: 'zai',        modelId: 'glm-5.3-flash' }, // 1477, $0.15/$0.5
     { vendor: 'deepseek',   modelId: 'deepseek-flash' }, // $0.3/$1.2
-    { vendor: 'moonshot',   modelId: 'kimi-k2.6' }, // $0.95/$4, as K2.7 Code - which cannot turn thinking off
+    { vendor: 'moonshot',   modelId: 'kimi-k3.1-pro-highspeed' }, // $4/$20, measured titles in 1.3-1.6s; K2.6 is closed to new accounts
     { vendor: 'xai',        modelId: 'grok-4.20-0309-non-reasoning' }, // non-reasoning: no thinking delay
     { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3.5-lightning-30b-a3b' }, // fastest Nemotron, 3B active
+    { vendor: 'openrouter', modelId: 'openrouter/free' },
   ],
 
   // describes an attached image as text: vision, quick
@@ -126,6 +131,7 @@ export const EditorialDefaults = {
     { vendor: 'anthropic',  modelId: 'claude-sonnet-5-5' },
     { vendor: 'openai',     modelId: 'gpt-6-luna' },
     { vendor: 'nvidianim',  modelId: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning' }, // image, video and audio in
+    { vendor: 'openrouter', modelId: 'openrouter/free' },
   ],
 
   scratchChat: [],
@@ -139,10 +145,10 @@ export const EditorialDefaults = {
  * Pick the editor's favorite for a domain, given pre-filtered candidates.
  *
  * Walks `EditorialDefaults[domainId]` for each of `domainIds` in order, each in declared
- * order, and returns the first DLLMId matching a (vendor, modelId) pair. Returns undefined
+ * order, and returns the first visible DLLMId matching a (vendor, modelId) pair. Returns undefined
  * when nothing matches; the caller (auto-resolver) falls through to the ELO/cost strategy.
  */
-export function llmsEditorial_ModelIdForDomain_SLOW<Tllm extends Pick<DLLM, 'id' | 'vId' | 'initialParameters'>>(
+export function llmsEditorial_ModelIdForDomain_SLOW<Tllm extends Pick<DLLM, 'id' | 'vId' | 'initialParameters' | 'hidden' | 'userHidden'>>(
   domainIds: ReadonlyArray<DModelDomainId>,
   universe: ReadonlyArray<Tllm>,
 ): DLLMId | undefined {
@@ -152,7 +158,9 @@ export function llmsEditorial_ModelIdForDomain_SLOW<Tllm extends Pick<DLLM, 'id'
       // exact first: match by (vendor, id)
       let relaxedLlm: Tllm | undefined;
       const exactLlm = universe.find((llm) => {
-        if (llm.vId !== vendor) return false;
+        // hidden models are never picked, as in the ELO/cost strategies: the listing hides what a user should not get by
+        // default (e.g. what an OpenRouter key cannot pay for), and a user's own show or hide choice overrides it
+        if (llm.vId !== vendor || isLLMHidden(llm)) return false;
 
         const llmRef = llm.initialParameters?.llmRef;
         if (!llmRef || typeof llmRef !== 'string') return false;

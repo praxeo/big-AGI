@@ -17,7 +17,7 @@ import { useBrowseCapability } from '~/modules/browse/store-module-browsing';
 
 import type { DComposerPendingPart } from '~/common/chat-overlay/store-perchat-composer_slice';
 import { getLLMContextTokens, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
-import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
+import { llmChatPricing_multipliedFromParams } from '~/common/stores/llms/llms.pricing';
 import { AudioGenerator } from '~/common/util/audio/AudioGenerator';
 import { AudioPlayer } from '~/common/util/audio/AudioPlayer';
 import { ButtonAttachFilesMemo, openFileForAttaching } from '~/common/components/ButtonAttachFiles';
@@ -36,7 +36,7 @@ import { createHostedResourceContentFragment, createTextContentFragment, DMessag
 import { glueForMessageTokens, marshallWrapDocFragments } from '~/common/stores/chat/chat.tokens';
 import { isValidConversation, useChatStore } from '~/common/stores/chat/store-chats';
 import { orderedUserFragments } from '~/common/stores/chat/chat.fragment-order';
-import { getModelParameterValueWithFallback } from '~/common/stores/llms/llms.parameters';
+import { getAllModelParameterValues } from '~/common/stores/llms/llms.parameters';
 import { launchAppCall, removeQueryParam, useRouterQuery } from '~/common/app.routes';
 import { lineHeightTextareaMd, themeBgAppChatComposer } from '~/common/app.theme';
 import { optimaOpenPreferences } from '~/common/layout/optima/useOptima';
@@ -254,9 +254,17 @@ function Composer(props: {
   if (chatLLM && tokensComposer > 0)
     tokensComposer += glueForMessageTokens(chatLLM);
   const tokensHistory = _historyTokenCount;
-  const tokensResponseMax = getModelParameterValueWithFallback('llmResponseTokens', chatLLM?.initialParameters, chatLLM?.userParameters, 0) ?? 0 /* if null, assume 0*/;
-  const tokenLimit = getLLMContextTokens(chatLLM) ?? 0;
-  const tokenChatPricing = React.useMemo(() => llmChatPricing_adjusted(chatLLM), [chatLLM]);
+
+  // the model's context, response budget and price for the token meters, from the same parameter values a send uses
+  const { tokenLimit, tokensResponseMax, tokenChatPricing } = React.useMemo(() => {
+    if (!chatLLM) return { tokenLimit: 0, tokensResponseMax: 0, tokenChatPricing: undefined };
+    const llmParameters = getAllModelParameterValues(chatLLM.initialParameters, chatLLM.userParameters);
+    return {
+      tokenLimit: getLLMContextTokens(chatLLM) ?? 0,
+      tokensResponseMax: llmParameters.llmResponseTokens ?? 0, // if null, assume 0
+      tokenChatPricing: llmChatPricing_multipliedFromParams(chatLLM, llmParameters).pricing,
+    };
+  }, [chatLLM]);
 
 
   // Effect: load initial text if queued up (e.g. by /link/share_targetF)

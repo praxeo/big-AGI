@@ -203,8 +203,9 @@ export function aixToOpenAIResponses(
     // [2026-02-24, OpenAI] Retained reasoning: 'all_turns' makes gpt-5.4+ consume the reasoning items we
     // replay ('auto' is the model default: current_turn up to 5.5, all_turns on 5.6+ and 6). The user lever is
     // what we send (chat 'Reasoning traces' policy); the API only bills consumed items, so this is free when
-    // little/nothing is sent. Only same-family items are consumed (GPT-6 tiers share, 5.6 tiers share): another
-    // family's items are omitted silently - no error, the echo still says 'all_turns', only input_tokens shows it.
+    // little/nothing is sent. Items are consumed only by the same model or a higher tier of the same generation (6.2 Sol
+    // -> 6.2 Astra); a downgrade or another generation's items are omitted silently - no error, the echo still says
+    // 'all_turns', only input_tokens shows it.
     // Gate: gpt-5.4+ (older models 400 on 'all_turns'), not Azure (may lag), not effort 'none'.
     const gptGen = /^gpt-(\d+)(?:\.(\d+))?/.exec(model.id);
     const supportsAllTurns = !!gptGen && (+gptGen[1] > 5 || (+gptGen[1] === 5 && +(gptGen[2] || 0) >= 4));
@@ -745,7 +746,7 @@ function _pairInteriorFunctionCalls(requestInput: TRequestInput[]): void {
   for (let i = requestInput.length - 1; i >= 0; i--) {
     const item = requestInput[i];
     if ('type' in item && item.type === 'function_call_output' && !calledIds.has(item.call_id)) {
-      console.warn(`[OpenAI Responses] Dropping an orphan function_call_output (input.${i})`);
+      console.log(`[OpenAI Responses] Dropping an orphan function_call_output (input.${i})`);
       requestInput.splice(i, 1);
     }
   }
@@ -762,7 +763,7 @@ function _pairInteriorFunctionCalls(requestInput: TRequestInput[]): void {
     if (answeredIds.has(item.call_id)) continue;
 
     // insert right after the call, the canonical position for its output
-    console.warn(`[OpenAI Responses] Pairing an orphan function_call with a placeholder output (input.${i})`);
+    console.log(`[OpenAI Responses] Pairing an orphan function_call with a placeholder output (input.${i})`);
     requestInput.splice(i + 1, 0, { type: 'function_call_output', call_id: item.call_id, output: AIX_MISSING_TOOL_RESULT_TEXT });
   }
 }
