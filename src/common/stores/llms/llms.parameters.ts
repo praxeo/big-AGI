@@ -70,8 +70,8 @@ interface _BooleanParamDef extends _ParamDefBase<boolean> {
 interface _EnumParamDef<V extends string = string> extends _ParamDefBase<NoInfer<V>> {
   readonly type: 'enum';
   readonly values: readonly V[];
-  /** Per-value pricing multiplier. When the parameter is set to a value listed here, model pricing is multiplied. */
-  readonly enumPriceMultiplier?: { readonly [k in NoInfer<V>]?: number };
+  /** Per-value pricing multiplier, the rate on every model. When the parameter is set to a value listed here, model pricing is multiplied. A model's spec can layer its own rates over it (`enumOverlayXPrice`). */
+  readonly enumXPrice?: { readonly [k in NoInfer<V>]?: number };
 }
 
 /** Zero-cost identity function - TS infers V from `values` only: NoInfer constrains fallback/initial. */
@@ -184,12 +184,7 @@ export const DModelParameterRegistry = {
 
   // Anthropic-specific
 
-  llmVndAnt1MContext: {
-    label: '1M Context Window (Beta)',
-    type: 'boolean',
-    description: 'Enable 1M token context window with premium pricing for >200K input tokens',
-    // undefined means off (e.g. default 200K context window)
-  },
+  // REMOVED: llmVndAnt1MContext: boolean; it's GA and not used anymore. data at rest left untouched and fully bw/fw comp between servers and clients.
 
   llmVndAntCodeSandbox: _enumDef({
     label: 'Code Sandbox',
@@ -207,7 +202,7 @@ export const DModelParameterRegistry = {
     // The wire always sends speed:'fast'; the value encodes the per-model PRICE TIER (the cost multiplier differs by model).
     // Each model exposes exactly one tier via its parameterSpec `enumValues`. 'fast' is the legacy alias (=6x) for params stored before tiers existed.
     values: ['fast_2x', 'fast_6x', 'fast'],
-    enumPriceMultiplier: { fast_2x: 2, fast_6x: 6, fast: 6 },
+    enumXPrice: { fast_2x: 2, fast_6x: 6, fast: 6 },
     // undefined means standard speed (omitted from request)
   }),
 
@@ -434,7 +429,7 @@ export const DModelParameterRegistry = {
     type: 'enum',
     description: 'Flex: slower at half price. Fast: faster at double price. Ultrafast: fastest at 6x price. Downgrades bill at standard rates.',
     values: ['flex', 'fast', 'ultrafast'],
-    enumPriceMultiplier: { flex: 0.5, fast: 2, ultrafast: 6 },
+    enumXPrice: { flex: 0.5, fast: 2, ultrafast: 6 },
     // undefined means standard processing (omitted from the request)
   }),
 
@@ -668,6 +663,12 @@ export interface DModelParameterSpec<T extends DModelParameterId> {
    * Example: llmVndOaiEffort registry has 6 values, but a specific model may only support ['low', 'medium', 'high'].
    */
   enumValues?: readonly DModelParameterValue<T>[];
+  /**
+   * (optional, rare) For enum params whose registry definition has an `enumXPrice` (the rate on every model): this
+   * model's own rates for some values, layered over the definition's. Values not listed keep the definition's rate.
+   * Example: OpenAI's `fast` is 2x on most models, `{ fast: 2.5 }` on GPT-5.5 (its `flex` stays at the definition's 0.5).
+   */
+  enumOverlayXPrice?: { readonly [value: string]: number };
 }
 
 
@@ -711,37 +712,10 @@ export function getAllModelParameterValues(initialParameters: undefined | DModel
     ...userParameters,
   };
 
-  // legacy persisted values - the stores never validate enum values against the registry, so migrate here (feeds both the UI and the AIX request)
+  // LEGACY persisted values: the store drops unknown enum strings only when the service is re-listed, and keeps non-strings and persona/chat values; migrate here (feeds both the UI and the AIX request)
   const imageGeneration: unknown = values.llmVndOaiImageGeneration;
   if (imageGeneration === true) values.llmVndOaiImageGeneration = 'mq'; // pre-enum boolean
   else if (imageGeneration === 'hq_edit' || imageGeneration === 'hq_png') values.llmVndOaiImageGeneration = 'hq'; // dropped 2026-09-09: input_fidelity is rejected by gpt-image-2+, uncompressed PNG saving never landed
 
   return values;
-}
-
-
-/**
- * NOTE: this is actually only used for `llmResponseTokens` from the Composer for now (!)
- */
-export function getModelParameterValueWithFallback<T extends DModelParameterId>(
-  paramId: T,
-  initialValues: undefined | DModelParameterValues,
-  userValues: undefined | DModelParameterValues,
-  fallbackValue: DModelParameterValue<T>,
-): DModelParameterValue<T> {
-
-  // check user values first
-  if (userValues && paramId in userValues) {
-    const value = userValues[paramId];
-    if (value !== undefined) return value;
-  }
-
-  // then check initial values
-  if (initialValues && paramId in initialValues) {
-    const value = initialValues[paramId];
-    if (value !== undefined) return value;
-  }
-
-  // then try provided fallback
-  return fallbackValue;
 }
