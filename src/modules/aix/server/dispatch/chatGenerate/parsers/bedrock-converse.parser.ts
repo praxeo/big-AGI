@@ -60,6 +60,12 @@ export function createBedrockConverseStreamParser(): ChatGenerateParseFunction {
             // Tool use input delta (incremental JSON string)
             if (currentToolUseId)
               pt.appendFunctionCallInvocationArgs(currentToolUseId, delta.toolUse.input);
+          } else if ('reasoningContent' in delta) {
+            // Reasoning delta, in its own content block before the text
+            const { text, signature, redactedContent } = delta.reasoningContent;
+            if (text) pt.appendReasoningText(text);
+            if (signature) pt.setReasoningSignature(signature);
+            if (redactedContent) pt.addReasoningRedactedData(redactedContent);
           }
           break;
         }
@@ -95,11 +101,12 @@ export function createBedrockConverseStreamParser(): ChatGenerateParseFunction {
           return pt.setDialectEnded('done-dialect'); // the last event of a Converse stream
         }
 
-        // case 'error': {
-        //   hasErrored = true;
-        //   const errorText = parsed?.message || parsed?.error?.message || safeErrorString(parsed);
-        //   return pt.setDialectTerminatingIssue(errorText || 'Unknown Bedrock Converse error', IssueSymbols.Generic, 'srv-warn');
-        // }
+        // exception frames, re-emitted as `event: error` by the AWS event-stream transform
+        case 'error': {
+          hasErrored = true;
+          const errorText = parsed?.message || parsed?.error?.message || safeErrorString(parsed);
+          return pt.setDialectTerminatingIssue(errorText || 'Unknown Bedrock Converse error', IssueSymbols.Generic, 'srv-warn');
+        }
 
         default:
           // Unknown event - log and skip
@@ -140,6 +147,13 @@ export function createBedrockConverseParserNS(): ChatGenerateParseFunction {
           (block.toolUse.input as object) || null,
         );
         pt.endMessagePart();
+      } else if ('reasoningContent' in block) {
+        const reasoning = block.reasoningContent;
+        if ('reasoningText' in reasoning) {
+          pt.appendReasoningText(reasoning.reasoningText.text);
+          if (reasoning.reasoningText.signature) pt.setReasoningSignature(reasoning.reasoningText.signature);
+        } else
+          pt.addReasoningRedactedData(reasoning.redactedContent);
       }
       // image and toolResult blocks are not expected in assistant responses
     }

@@ -7,8 +7,8 @@ import type { DModelParameterValues } from '~/common/stores/llms/llms.parameters
 
 /**
  * Reasoning rides the unified reasoningEffort field (llmVndOaiEffort), so only the MCP switch lives here.
- * @param llmOptions the model options with the overrides already applied
+ * @param llmParameters the request's resolved parameter values
  */
-export function strataToAixModel(llmOptions: Pick<DModelParameterValues, 'llmVndStrataMcp'>): Pick<AixAPI_Model, 'vndStrataMcp'> {
-  return llmOptions.llmVndStrataMcp === 'auto' ? { vndStrataMcp: 'auto' } : {};
+export function strataToAixModel(llmParameters: Pick<DModelParameterValues, 'llmVndStrataMcp'>): Pick<AixAPI_Model, 'vndStrataMcp'> {
+  return llmParameters.llmVndStrataMcp === 'auto' ? { vndStrataMcp: 'auto' } : {};
 }

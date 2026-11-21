@@ -7,7 +7,7 @@ import { LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Vision } from '~/common/stor
 import { createDebugWireLogger } from '~/server/wire';
 import { fetchJsonOrTRPCThrow } from '~/server/trpc/trpc.router.fetchers';
 
-import type { ModelDescriptionSchema } from './llm.server.types';
+import type { ListModelsAccessStatus, ListModelsResponse, ModelDescriptionSchema } from './llm.server.types';
 import { llmDevValidateParameterSpecs_DEV, llmsAutoImplyInterfaces, llmsWireCompatCacheTag } from './models.mappings';
 
 
@@ -55,9 +55,10 @@ import { metaAIModelsToModelDescriptions } from './openai/models/metaai.models';
 import { mistralModels } from './openai/models/mistral.models';
 import { modularModelsToModelDescriptions } from './openai/models/modular.models';
 import { moonshotModelFilter, moonshotModelSortFn, moonshotModelToModelDescription } from './openai/models/moonshot.models';
-import { openRouterInjectVariants, openRouterModelFamilySortFn, openRouterModelToModelDescription } from './openai/models/openrouter.models';
+import { openRouterFetchListing, openRouterListingToModelDescriptions } from './openai/models/openrouter.models';
 import { openAIInjectVariants, openAIModelFilter, openAIModelToModelDescription, openAISortModels, openaiValidateModelDefs_DEV } from './openai/models/openai.models';
 import { sakanaAIModelsToModelDescriptions } from './openai/models/sakanaai.models';
+import { sarvamHeuristic, sarvamModelsToModelDescriptions } from './openai/models/sarvam.models';
 import { perplexityHardcodedModelDescriptions, perplexityInjectVariants } from './openai/models/perplexity.models';
 import { togetherAIModelsToModelDescriptions } from './openai/models/together.models';
 import { xaiFetchModelDescriptions, xaiModelSort } from './openai/models/xai.models';
@@ -72,6 +73,7 @@ import { strataHeuristic, strataModelsToModelDescriptions } from './openai/model
 export type ListModelsDispatch<TWireModels = any> = {
   fetchModels: () => Promise<TWireModels>;
   convertToDescriptions: (wireModels: TWireModels) => ReadonlyArray<ModelDescriptionSchema>;
+  accessStatus?: (wireModels: TWireModels) => ListModelsAccessStatus | undefined; // what the vendor told about the key, where it does
 };
 
 /**
@@ -85,7 +87,7 @@ function createListModelsDispatch<T>(dispatch: ListModelsDispatch<T>): ListModel
 
 // -- Specialized Implementations -- Core of Server-side LLM Model Listing abstraction --
 
-export async function listModelsRunDispatch(access: AixAPI_Access, signal?: AbortSignal): Promise<ModelDescriptionSchema[]> {
+export async function listModelsRunDispatch(access: AixAPI_Access, signal?: AbortSignal): Promise<ListModelsResponse> {
   const dispatch = _listModelsCreateDispatch(access, signal);
   const wireModels = await unslothAttachServerStatus(access, await dispatch.fetchModels(), signal); // [praxeo fork] no-op unless an Unsloth server
   const models = dispatch.convertToDescriptions(wireModels)
@@ -96,7 +98,8 @@ export async function listModelsRunDispatch(access: AixAPI_Access, signal?: Abor
   if (process.env.NODE_ENV === 'development')
     models.forEach(llmDevValidateParameterSpecs_DEV);
 
-  return models;
+  const accessStatus = dispatch.accessStatus?.(wireModels);
+  return { models, ...(accessStatus && { accessStatus }) };
 }
 
 
@@ -336,8 +339,8 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
             return {
               id: model.name,
               label,
-              created: Date.parse(model.modified_at) ?? undefined,
-              updated: Date.parse(model.modified_at) ?? undefined,
+              created: Math.round(Date.parse(model.modified_at) / 1000) || undefined, // seconds, as every other vendor
+              updated: Math.round(Date.parse(model.modified_at) / 1000) || undefined,
               description: description, // description: (model.license ? `License: ${model.license}. Info: ` : '') + model.modelfile || 'Model unknown',
               contextWindow,
               ...(contextWindow ? { maxCompletionTokens: Math.round(contextWindow / 2) } : {}),
@@ -397,6 +400,14 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
         convertToDescriptions: (descriptions) => descriptions,
       });
 
+    case 'openrouter':
+      // [OpenRouter] custom listing: the key endpoint is asked beside the public list, in openrouter.models.ts
+      return createListModelsDispatch({
+        fetchModels: async () => openRouterFetchListing(access, signal),
+        convertToDescriptions: openRouterListingToModelDescriptions,
+        accessStatus: ({ accessStatus }) => accessStatus,
+      });
+
     case 'alibaba':
     case 'azure':
     case 'cohere':
@@ -409,7 +420,6 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
     case 'moonshot':
     case 'nvidianim':
     case 'openai':
-    case 'openrouter':
     case 'sakanaai':
     case 'togetherai':
 
@@ -555,6 +565,10 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               if (novitaHeuristic(oaiUrl))
                 return novitaModelsToModelDescriptions(openAIWireModelsResponse);
 
+              // [Sarvam] Token Factory - the listing describes each model
+              if (sarvamHeuristic(oaiUrl))
+                return sarvamModelsToModelDescriptions(openAIWireModelsResponse);
+
               // [LLM API] OpenAI-compatible gateway with rich model metadata
               if (llmapiHeuristic(oaiUrl))
                 return llmapiModelsToModelDescriptions(openAIWireModelsResponse);
@@ -586,14 +600,6 @@ function _listModelsCreateDispatch(access: AixAPI_Access, signal?: AbortSignal):
               // [DEV] check for stale/unknown model definitions
               openaiValidateModelDefs_DEV(maybeModels, models, !isNotOpenai);
               return models;
-
-            case 'openrouter':
-              // openRouterStatTokenizers(maybeModels);
-              return maybeModels
-                .sort(openRouterModelFamilySortFn)
-                .map(openRouterModelToModelDescription)
-                .filter(desc => !!desc)
-                .reduce(openRouterInjectVariants, []);
 
             case 'nvidianim':
               // [NVIDIA NIM] API lists ids only (constant 'created', no metadata) - curated table with

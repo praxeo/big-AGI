@@ -18,7 +18,7 @@ import { findLLMOrThrow } from '~/common/stores/llms/store-llms';
 import type { AIVndOaiBeamSandboxPolicy } from '~/common/stores/store-ai';
 import { getAixInspectorEnabled } from '~/common/stores/store-ui';
 import { getLabsLosslessImages } from '~/common/stores/store-ux-labs';
-import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
+import { llmChatPricing_multipliedFromParams } from '~/common/stores/llms/llms.pricing';
 import { metricsStoreAddChatGenerate } from '~/common/stores/metrics/store-metrics';
 import { stripUndefined } from '~/common/util/objectUtils';
 import { videoPlayObjectUrl } from '~/common/util/video/videoPlayManaged';
@@ -63,24 +63,26 @@ async function _loadCsfModuleOrThrow(): Promise<typeof import('./aix.client.dire
   }
 }
 
-export function aixCreateModelFromLLMOptions(
+/**
+ * The parameter values one request is built from, last wins: model defaults, the user's (or a persona/chat replacement), per-call writes.
+ * One object feeds the model, the hotfixes and the cost, so the cost follows what was sent.
+ */
+function _aixResolveLLMParametersForClient(llm: DLLM, clientOptions: Pick<AixClientOptions, 'llmUserParametersReplacement' | 'llmParamsWrite'> | undefined): DModelParameterValues {
+  const llmParameters = getAllModelParameterValues(llm.initialParameters, clientOptions?.llmUserParametersReplacement ?? llm.userParameters);
+  return !clientOptions?.llmParamsWrite ? llmParameters : { ...llmParameters, ...clientOptions.llmParamsWrite, llmRef: llmParameters.llmRef }; // a per-call write never retargets the model
+}
+
+export function aixCreateModelFromLLMParameters(
+  llmParameters: DModelParameterValues, // the request's resolved values, from _aixResolveLLMParametersForClient
   llmInterfaces: DLLM['interfaces'],
-  llmOptions: DModelParameterValues, // this must have been already externally computed, usually as the initial values + user/over replacements
-  llmOptionOverrides: Omit<DModelParameterValues, 'llmRef'> | undefined,
   debugLlmId: string,
 ): AixAPI_Model {
 
-  // make sure llmRef is removed, if present in the override - excess of caution here
-  if (llmOptionOverrides) {
-    llmOptionOverrides = { ...llmOptionOverrides };
-    delete (llmOptionOverrides as { llmRef?: any }).llmRef;
-  }
-
-  // destructure input with the overrides
+  // destructure input
   const {
     llmRef, llmTemperature, llmResponseTokens, llmTopP, llmForceNoStream,
     llmVndAntEffort, llmVndGemEffort, llmVndOaiEffort, llmVndMiscEffort,
-    llmVndAnt1MContext, llmVndAntCodeSandbox, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
+    llmVndAntCodeSandbox, llmVndAntInfSpeed, llmVndAntSkills, llmVndAntThinkingBudget, llmVndAntWebDynamic, llmVndAntWebFetch, llmVndAntWebFetchMaxUses, llmVndAntWebSearch, llmVndAntWebSearchMaxUses,
     llmVndBedrockAPI,
     llmVndGeminiAgentViz, llmVndGeminiAspectRatio, llmVndGeminiImageSize, llmVndGeminiCodeExecution, llmVndGeminiComputerUse, llmVndGeminiGoogleSearch, llmVndGeminiMediaResolution, llmVndGeminiThinkingBudget, llmVndGeminiUrlContext,
     // llmVndMoonshotWebSearch,
@@ -88,14 +90,11 @@ export function aixCreateModelFromLLMOptions(
     llmVndOrtWebFetch, llmVndOrtWebSearch, llmVndOrtWebToolsAdvanced,
     llmVndPerplexityDateFilter, llmVndPerplexitySearchMode,
     llmVndXaiCodeExecution, llmVndXaiSearchInterval, llmVndXaiWebSearch, llmVndXaiXSearch, llmVndXaiXSearchHandles,
-  } = {
-    ...llmOptions,
-    ...llmOptionOverrides,
-  };
+  } = llmParameters;
 
   // llmRef is absolutely required
   if (!llmRef)
-    throw new Error(`AIX: Error in configuration for model ${debugLlmId} (missing ref, temperature): ${JSON.stringify(llmOptions)}`);
+    throw new Error(`AIX: Error in configuration for model ${debugLlmId} (missing ref, temperature): ${JSON.stringify(llmParameters)}`);
 
   // llmTemperature is highly recommended, so we display a note if it's missing
   if (llmTemperature === undefined)
@@ -145,7 +144,6 @@ export function aixCreateModelFromLLMOptions(
 
     // Anthropic - (vndAntContainerId, vndAntTransformInlineFiles are set in the decorate function)
     ...(llmVndAntThinkingBudget !== undefined ? { vndAntThinkingBudget: llmVndAntThinkingBudget === -1 ? 'adaptive' as const : llmVndAntThinkingBudget } : {}),
-    ...(llmVndAnt1MContext ? { vndAnt1MContext: llmVndAnt1MContext } : {}),
     ...(llmVndAntCodeSandbox === 'auto' ? { vndAntCodeSandbox: llmVndAntCodeSandbox } : {}), // standalone server-side code sandbox (Skills/PTC also enable it server-side)
     ...(llmVndAntInfSpeed ? { vndAntInfSpeed: 'fast' } : {}), // any tier (fast_2x/fast_6x/legacy fast) collapses to the wire 'fast'
     ...(llmVndAntSkills ? { vndAntSkills: llmVndAntSkills } : {}),
@@ -189,8 +187,8 @@ export function aixCreateModelFromLLMOptions(
     ...(llmVndPerplexitySearchMode ? { vndPerplexitySearchMode: llmVndPerplexitySearchMode } : {}),
 
     // [praxeo fork] Unsloth (local server)
-    ...unslothToAixModel({ ...llmOptions, ...llmOptionOverrides }),
-    ...strataToAixModel({ ...llmOptions, ...llmOptionOverrides }), // [praxeo fork] Strata (local server)
+    ...unslothToAixModel(llmParameters),
+    ...strataToAixModel(llmParameters), // [praxeo fork] Strata (local server)
 
     // xAI
     ...(llmVndXaiCodeExecution === 'auto' ? { vndXaiCodeExecution: llmVndXaiCodeExecution } : {}),
@@ -468,8 +466,8 @@ export async function aixChatGenerateText_Simple(
   const { transportAccess: aixAccess, vendor: llmVendor, serviceSettings: llmServiceSettings } = findServiceAccessOrThrow<object, AixAPI_Access>(llm.sId);
 
   // Aix Model
-  const llmParameters = getAllModelParameterValues(llm.initialParameters, clientOptions?.llmUserParametersReplacement ?? llm.userParameters);
-  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmParamsWrite, llmId);
+  const llmParameters = _aixResolveLLMParametersForClient(llm, clientOptions);
+  const aixModel = aixCreateModelFromLLMParameters(llmParameters, llm.interfaces, llmId);
   if (clientOptions?.llmResponseHint === 'short' && (aixModel.maxTokens ?? 0) > _SHORT_RESPONSE_MAX_TOKENS)
     aixModel.maxTokens = _SHORT_RESPONSE_MAX_TOKENS; // lowers a set budget, never raises one; unset stays the vendor's default
 
@@ -487,7 +485,7 @@ export async function aixChatGenerateText_Simple(
 
 
   // Client-side late stage model HotFixes
-  const { hotfixNoStream } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
+  const { hotfixNoStream } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, aixModel.id);
   const wireStreaming = !hotfixNoStream && !aixModel.forceNoStream ? callerStreaming : false;
 
 
@@ -532,7 +530,7 @@ export async function aixChatGenerateText_Simple(
 
   // LLM Cost computation & Aggregations
   _llToL2Simple(llFinal, state);
-  const metrics = _finalizeLlmMetricsWithCosts(cgMetricsLg, llm, `aix_chatgenerate_text-${aixContextName}`);
+  const metrics = _finalizeLlmMetricsWithCosts(cgMetricsLg, llm, llmParameters, `aix_chatgenerate_text-${aixContextName}`);
   if (metrics) state.generator = { ...state.generator, metrics };
 
 
@@ -669,8 +667,8 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   const { transportAccess: aixAccess, vendor: llmVendor, serviceSettings: llmServiceSettings } = findServiceAccessOrThrow<TServiceSettings, TAccess>(llm.sId);
 
   // Aix Model
-  const llmParameters = getAllModelParameterValues(llm.initialParameters, clientOptions?.llmUserParametersReplacement ?? llm.userParameters);
-  const aixModel = aixCreateModelFromLLMOptions(llm.interfaces, llmParameters, clientOptions?.llmParamsWrite, llmId);
+  const llmParameters = _aixResolveLLMParametersForClient(llm, clientOptions);
+  const aixModel = aixCreateModelFromLLMParameters(llmParameters, llm.interfaces, llmId);
   aixDecorateModelFromGlobals(aixModel, {
     vndAntContainerId: clientOptions?.antContainerId,
     vndOaiContainerId: clientOptions?.oaiContainerId,
@@ -679,7 +677,7 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
   });
 
   // Client-side late stage model HotFixes - collapse the caller's requested streaming preference into the effective wire-streaming decision after constraints (hotfix gate, model.forceNoStream)
-  const { hotfixNoStream } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, llmParameters.llmRef || llm.id);
+  const { hotfixNoStream } = await clientHotFixGenerateRequest_ApplyAll(llm.interfaces, aixChatGenerate, aixModel.id);
   const wireStreaming = !hotfixNoStream && !aixModel.forceNoStream ? aixStreaming : false;
 
   // Legacy Note: awaited OpenAI moderation check was removed (was only on this codepath)
@@ -725,7 +723,7 @@ export async function aixChatGenerateContent_DMessage_orThrow<TServiceSettings e
 
   // Finalize DMessage
   _llToDMessageGuts(llFinal, dMessage);
-  const metrics = _finalizeLlmMetricsWithCosts(cgMetricsLg, llm, `aix_chatgenerate_content-${aixContext.name}`);
+  const metrics = _finalizeLlmMetricsWithCosts(cgMetricsLg, llm, llmParameters, `aix_chatgenerate_content-${aixContext.name}`);
   if (metrics) dMessage.generator = { ...dMessage.generator, metrics };
   dMessage.pendingIncomplete = false;
 
@@ -753,13 +751,14 @@ function _llToDMessageGuts({ fragments, generator }: AixChatGenerateContent_LL, 
   dest.generator = generator;
 }
 
-function _finalizeLlmMetricsWithCosts(cgMetricsLg: undefined | DMetricsChatGenerate_Lg, llm: DLLM, debugCostSource: string): undefined | DMetricsChatGenerate_Md {
+/** `llmParameters`: the values this request was built from - a persona, a chat or a call can replace the model's own, and cost follows what was sent. */
+function _finalizeLlmMetricsWithCosts(cgMetricsLg: undefined | DMetricsChatGenerate_Lg, llm: DLLM, llmParameters: DModelParameterValues, debugCostSource: string): undefined | DMetricsChatGenerate_Md {
   // Compute the Md metrics from Lg
   let metricsMd = cgMetricsLg ? metricsChatGenerateLgToMd(cgMetricsLg) : undefined;
 
   // Compute costs
-  const logLlmRefId = getAllModelParameterValues(llm.initialParameters, llm.userParameters).llmRef || llm.id;
-  const adjChatPricing = llmChatPricing_adjusted(llm, cgMetricsLg?.$xPrice); // the served tier (when echoed) wins over the requested one
+  const logLlmRefId = llmParameters.llmRef || llm.id;
+  const { pricing: adjChatPricing, multiplier: $xPrice } = llmChatPricing_multipliedFromParams(llm, llmParameters, cgMetricsLg?.$xPrice); // the served tier (when echoed) wins over the requested one
   const costs = metricsComputeChatGenerateCostsMd(metricsMd, adjChatPricing, logLlmRefId);
   if (!costs) {
     // FIXME: we shall warn that the costs are missing, as the only way to get pricing is through surfacing missing prices
@@ -767,11 +766,15 @@ function _finalizeLlmMetricsWithCosts(cgMetricsLg: undefined | DMetricsChatGener
   }
   metricsMd = { ...metricsMd /* TIn, TOut, ... */, ...costs /* $c, ... $code */ };
 
+  // [#1297] a multiplied estimate names its multiplier, also when no vendor echo carries one (Anthropic echoes 'fast' without the per-model rate)
+  if (costs.$c !== undefined && $xPrice !== 1)
+    metricsMd.$xPrice = $xPrice;
+
   // Run aggregations
   const m = metricsMd;
   const inputTokens = (m?.TIn || 0) + (m?.TCacheRead || 0) + (m?.TCacheWrite || 0);
   const outputTokens = (m?.TOut || 0) /* + (m?.TOutR || 0) THIS IS A BREAKDOWN, IT'S ALREADY IN */;
-  metricsStoreAddChatGenerate(costs, inputTokens, outputTokens, llm, debugCostSource);
+  metricsStoreAddChatGenerate(costs, inputTokens, outputTokens, llm.sId || null, debugCostSource);
 
   // Merge costs into a new generator
   return metricsMd;

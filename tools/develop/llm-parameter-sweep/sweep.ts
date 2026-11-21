@@ -142,7 +142,7 @@ const SWEEP_DEFINITIONS = [
   }),
 
 
-  // Gemini 3+: model-specific thinking levels. Hydrogen adds xhigh.
+  // Gemini 3+: model-specific thinking levels. Gemini 4 Neon and Hydrogen add xhigh.
   defineSweep({
     name: 'gemini-thinking-level',
     description: 'Gemini thinkingConfig.thinkingLevel values',
@@ -1326,7 +1326,7 @@ function saveDialectResults(dialect: string, dialectResults: DialectReultsByMode
   // Insert header comments after opening brace
   const comment1 = '"_comment": "API-validated parameter values. null=undefined/missing. Values are tested and working. Note: temperature is continuous, not discrete.",';
   const comment2 = `"_evaluated": "Evaluated: ${evaluatedSweeps.sort().join(', ')}. If missing, the parameter is not supported by that model.",`;
-  const comment3 = modelFilter ? `"_modelFilter": "${modelFilter}",` : '';
+  const comment3 = modelFilter ? `"_modelFilter": ${JSON.stringify(modelFilter)},` : '';
   const comments = [comment1, comment2, comment3].filter(Boolean).join('\n  ');
   const json = jsonBody.replace(/^\{\n {2}/, '{\n  ' + comments + '\n  ');
   fs.writeFileSync(filePath, json + '\n', 'utf-8');
@@ -1723,7 +1723,7 @@ async function runSweep(
     // 1. List models for this vendor
     let models: ModelDescriptionSchema[];
     try {
-      models = await listModelsRunDispatch(access);
+      ({ models } = await listModelsRunDispatch(access));
       // print first...last
       console.log(`  Found ${COLORS.bright}${models.length}${COLORS.reset} models: ${models.length > 2 ? models[0].id + ' ... ' + models[models.length - 1].id : models.map(m => m.id).join(', ')}`);
     } catch (error: any) {
