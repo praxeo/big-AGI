@@ -298,6 +298,7 @@ type DVoidModelAnnotationsPart = {
 export type DVoidWebCitation = {
   type: 'citation',
   url: string,
+  vndGemVertexUrl?: string, // the Gemini grounding redirect that url replaced once resolved, kept for a faithful replay
   title: string,
   refNumber?: number,
   pubTs?: number, // publication timestamp
@@ -355,6 +356,7 @@ type DVoidPlaceholderAixControlRetry = {
   rStrat?: 'cli-ll-reconnect' | 'cli-ll-resume',  // strategy for cli-ll scope (reconnect: new request, resume: continue from handle)
   rCauseHttp?: number,  // HTTP status code if available (e.g., 429, 503, 502)
   rCauseConn?: string,  // connection error type if available (e.g., 'net-disconnected', 'timeout')
+  rCalm?: true,  // the retry profile marks the condition as expected (e.g. a busy best-effort tier): render without alarm
 };
 
 
@@ -480,6 +482,9 @@ export function isPlaceholderPart(part: DMessageVoidFragment['part']) {
 
 
 /// Content Fragments - Creation & Duplication
+//
+// Creators leave out what they are not given: no key holds `undefined`, which storage (JSON) cannot keep. What a
+// creator makes is then deep-equal to its own serialized copy.
 
 export function createTextContentFragment(text: string): DMessageContentFragment {
   return _createContentFragment(_create_Text_Part(text));
@@ -545,7 +550,7 @@ export function specialContentPartToDocAttachmentFragment(title: string, caption
 }
 
 function _createAttachmentFragment(title: string, caption: string, part: DMessageAttachmentFragment['part'], liveFileId: LiveFileId | undefined): DMessageAttachmentFragment {
-  return { ft: 'attachment', fId: agiId('chat-dfragment' /* -attachment */), title, caption, created: Date.now(), part, liveFileId };
+  return { ft: 'attachment', fId: agiId('chat-dfragment' /* -attachment */), title, caption, created: Date.now(), part, ...(liveFileId && { liveFileId }) };
 }
 
 
@@ -615,8 +620,7 @@ function _createSentinelFragment(): _SentinelFragment {
 
 
 export function duplicateDMessageFragments(fragments: Immutable<DMessageFragment[]>, skipVoid: boolean): DMessageFragment[] {
-  return !skipVoid ? fragments.map(_duplicateFragment)
-    : fragments.map(_duplicateFragment).filter(f => f.ft !== 'void');
+  return (!skipVoid ? fragments : fragments.filter(f => f.ft !== 'void')).map(_duplicateFragment);
 }
 
 /**
@@ -688,7 +692,7 @@ function _create_Doc_Part(vdt: DMessageDocMimeType, data: DMessageDataInline, re
 }
 
 function _create_ImageRef_Part(dataRef: DMessageDataRef, altText?: string, width?: number, height?: number): DMessageImageRefPart {
-  return { pt: 'image_ref', dataRef, altText, width, height };
+  return { pt: 'image_ref', dataRef, ...(altText !== undefined ? { altText } : {}), ...(width !== undefined ? { width } : {}), ...(height !== undefined ? { height } : {}) };
 }
 
 function _create_FunctionCallInvocation_Part(id: string, functionName: string, args: string /*| null*/): DMessageToolInvocationPart {
@@ -835,7 +839,7 @@ export const DVMimeType = {
 } as const;
 
 export function createDMessageDataInlineText(text: string, mimeType?: string): DMessageDataInline {
-  return { idt: 'text', text, mimeType };
+  return { idt: 'text', text, ...(mimeType !== undefined ? { mimeType } : {}) };
 }
 
 function _duplicate_InlineData(data: Immutable<DMessageDataInline>): DMessageDataInline {

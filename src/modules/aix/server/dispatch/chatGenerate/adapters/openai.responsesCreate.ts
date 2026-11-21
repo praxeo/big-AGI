@@ -6,12 +6,12 @@ import { AixAPI_Model, AixAPIChatGenerate_Request, AixMessages_ChatMessage, AixM
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Items, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
 
 import { AIX_OPENAI_MAX_ID_LENGTH, aixDocPart_to_OpenAITextContent, aixMetaRef_to_OpenAIText, aixOpenAICallId, aixTexts_to_OpenAIInstructionText } from './openai.chatCompletions';
-import { AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
+import { AIX_FORCED_TOOLS_HINT_TEXT, AIX_MISSING_TOOL_RESULT_TEXT, aixSpillShallFlush, aixSpillSystemToUser, approxDocPart_To_String, approxMediaUrlPart_To_String } from './adapters.common';
 
 
 // configuration
 const OPENAI_RESPONSES_DEFAULT_TRUNCATION: TRequest['truncation'] = undefined;
-export const AIX_OAI_DEFAULT_IMAGE_GEN_MODEL: Exclude<Extract<TRequestTool, { type: 'image_generation' }>['model'], undefined> = 'gpt-image-2.5-flare';
+export const AIX_OAI_DEFAULT_IMAGE_GEN_MODEL: Exclude<Extract<TRequestTool, { type: 'image_generation' }>['model'], undefined> = 'gpt-image-2.6-flare';
 
 
 type TRequest = OpenAIWire_API_Responses.Request;
@@ -245,6 +245,10 @@ export function aixToOpenAIResponses(
   const hasRestrictivePolicy = chatGenerate.toolsPolicy?.type === 'any' /* || chatGenerate.toolsPolicy?.type === 'function_call' - DISABLED 2026-07-17, see ToolsPolicy_schema */;
   const skipHostedToolsDueToCustomTools = hasCustomTools && hasRestrictivePolicy;
 
+  // forced tool use sent as 'auto' (see _toOpenAIResponsesToolChoice): the steering hint keeps the forced-call callers calling
+  if (quirks.toolChoiceOnlyAuto && hasRestrictivePolicy && hasCustomTools)
+    payload.instructions = payload.instructions ? payload.instructions + '\n\n' + AIX_FORCED_TOOLS_HINT_TEXT : AIX_FORCED_TOOLS_HINT_TEXT;
+
   // Tool: Web Search: for search and deep research models
   const requestWebSearchTool = !!model.vndOaiWebSearchContext || !!model.userGeolocation;
   if (requestWebSearchTool && !skipHostedToolsDueToCustomTools) {
@@ -305,12 +309,14 @@ export function aixToOpenAIResponses(
 
     // Map enum values to tool configuration. Quality is always explicit: omitting it means 'auto', which
     // resolves to 'low' on simple prompts (verified 2026-09-09 on gpt-image-2 and 2.5). No input_fidelity: gpt-image-2+ reject it.
-    // gpt-image-2.5-flare @1024x1024 output tokens: medium 439, high 1756, max 7024 ($30/M).
+    // [OpenAI, 2026-11-05, hypothesis: observed, undocumented] Complexity follows the effort: omitted, the tool passes an explicit reasoning.effort to the image model, which accepts only low|medium|high.
+    // gpt-image-2.6-flare output tokens at size auto (~1254x1254): medium 1700, high 2059, max 8232 ($30/M), the same at every complexity.
     const imageMode = model.vndOaiImageGeneration;
     const imageGenerationTool: Extract<TRequestTool, { type: 'image_generation' }> = {
       type: 'image_generation',
       ...(AIX_OAI_DEFAULT_IMAGE_GEN_MODEL && { model: AIX_OAI_DEFAULT_IMAGE_GEN_MODEL }),
       quality: imageMode === 'max' ? 'max' : imageMode === 'mq' ? 'medium' : 'high', // 'hq' and the legacy 'hq_edit'/'hq_png' -> high
+      complexity: reasoningEffort === 'none' || reasoningEffort === 'minimal' ? 'low' : reasoningEffort === 'xhigh' || reasoningEffort === 'max' ? 'high' : reasoningEffort, // unset: the image model default (high)
       ...(!noWebPImageOutput && { output_format: 'webp' }),
       moderation: 'low',
     };
@@ -778,7 +784,7 @@ function _toOpenAIResponsesTools(itds: AixTools_ToolDefinition[], strictToolInvo
             required: input_schema?.required,
             ...(strictToolInvocations ? { additionalProperties: false } : {}), // required for strict tool invocations
           },
-          ...(strictToolInvocations ? { strict: true } : {}), // enable strict (grammar-constrained) tool invocation inputs
+          strict: strictToolInvocations, // explicit: [OpenAI, 2026-11-05, hypothesis: observed on the wire] Responses normalizes an omitted 'strict' into strict mode (optional properties become required)
         };
 
       case 'code_execution':
@@ -800,7 +806,7 @@ function _toOpenAIResponsesToolChoice(itp: AixTools_ToolsPolicy, onlyAuto: boole
       return 'auto';
     case 'any':
       // [Meta AI] only 'auto' is accepted ('none', 'required' and named choices 400 - verified 2026-09-02): degrade rather
-      // than reject the request; the tool descriptions still steer the model
+      // than reject the request; the instructions carry the steering hint (aixToOpenAIResponses)
       return onlyAuto ? 'auto' : 'required';
     // DISABLED 2026-07-17 - forced named tool, see ToolsPolicy_schema
     // case 'function_call':

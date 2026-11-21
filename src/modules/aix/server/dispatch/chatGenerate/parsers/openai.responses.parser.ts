@@ -9,7 +9,7 @@ import type { IParticleTransmitter } from './IParticleTransmitter';
 import { AIX_OAI_DEFAULT_IMAGE_GEN_MODEL } from '../adapters/openai.responsesCreate';
 import { IssueSymbols } from '../ChatGenerateTransmitter';
 import { aixResilientUnknownValue } from '../../../api/aix.resilience';
-import { openAIUpstreamErrorLogLevel } from './openai.error-severity';
+import { openAITransientErrorToHttpStatus, openAIUpstreamErrorLogLevel } from './openai.error-severity';
 import { stripXAIDefectiveCitations, XAIDefectiveCitationsFilter } from './xai.transform-citationsLeak';
 
 import { OpenAIWire_API_Responses, OpenAIWire_Responses_Tools } from '../../wiretypes/openai.wiretypes';
@@ -96,24 +96,6 @@ function _isSalvageableFailedOutput(output: TResponse['output']): boolean {
 }
 
 /**
- * HTTP-equivalent status of a transient in-band error worth an operation retry (like Anthropic's overloaded_error), or undefined.
- * #1210 shape: { type: 'invalid_request_error', code: 'rate_limit_exceeded', message: "We're currently processing too many requests - please try again later." }
- * No denylist: in-band errors on a 200 stream are past admission (auth, quota, size); HTTP-level ones are retried before the parser runs.
- *
- * The name of the failure sits in `code` or in `type` depending on the carrier: the 'response.failed' error object
- * is { code, message } (code: 'server_error'), the 'error' event and the HTTP bodies also have a `type`.
- */
-function _transientErrorToHttpStatus(error: null | undefined | { type?: string | null, code?: string | number | null, message?: string | null }): 429 | 500 | 529 | undefined {
-  const names = [error?.code, error?.type];
-  if (names.includes('rate_limit_exceeded') || /processing too many requests/i.test(error?.message || '')) return 429;
-  // OpenAI's overload pair, documented as an HTTP 503: reported as 529, our status for the 'overloaded' retry class (a bare 503 reads as transient)
-  if (names.includes('server_is_overloaded') || names.includes('service_unavailable_error')) return 529;
-  if (names.includes('server_error')) return 500;
-  return undefined;
-}
-
-
-/**
  * We need this just to ensure events are not out of order, as out streaming is progressive
  * and ordered part-by-part.
  *
@@ -147,6 +129,7 @@ class ResponseParserStateMachine {
   #hasFunctionCalls: boolean = false; // tracks if we've seen function_call output items
   public hasEmittedText: boolean = false; // any assistant message text streamed - gates the 'error'/'response.failed' salvage (#1149)
   #responseSealed: boolean = false; // true once response.completed/failed/incomplete has been processed - trailing 'error' events are advisory only
+  public deferredErrorText: string | undefined; // the last 'error' whose verdict was left to the terminal event
 
   // hosted tool configuration echo (captured at response.created)
   #imageGenToolCfg: TImageGenToolCfg | undefined;
@@ -464,12 +447,12 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
           break;
         }
 
-        const failedText = !failedError ? 'Response failed with no error details.'
+        const failedText = !failedError ? (R.deferredErrorText ?? 'Response failed with no error details.') // the 'error' event that preceded it is the only explanation
           : `${safeErrorString(failedError.code) || 'Error'}: ${safeErrorString(failedError.message) || 'unknown.'}`;
 
         // Genuine failure: retry if transient (the deferred mid-stream 'error' lands here when the message didn't complete), else surface the error
-        const failedRetryHttpStatus = _transientErrorToHttpStatus(failedError);
-        if (failedRetryHttpStatus && context?.hasRetriesForHttpStatus(failedRetryHttpStatus))
+        const failedRetryHttpStatus = openAITransientErrorToHttpStatus(failedError);
+        if (failedRetryHttpStatus && context?.hasRetriesForHttpStatus(failedRetryHttpStatus, failedError?.code))
           throw new OperationRetrySignal(failedText, { causeHttp: failedRetryHttpStatus, causeConn: failedError?.code });
 
         pt.setTokenStopReason('cg-issue');
@@ -581,20 +564,21 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
             _hostedToolWishlistHint('image_generation');
             // -> IGC: process completed image generation using 'ii' particle for inline images
             const { id: igId, result: igResult, revised_prompt: igRevisedPrompt } = doneItem;
+            if (!igResult) {
+              _forwardFailedImageGenerationCallItem(pt, doneItem);
+              break;
+            }
             const igDoneText = !igRevisedPrompt?.length ? 'Image generated'
               : `Generated: "${igRevisedPrompt.length > 100 ? igRevisedPrompt.slice(0, 100) + '...' : igRevisedPrompt}"`;
             pt.sendOperationState('gen-image', igDoneText, { opId: igId, state: 'done' });
             // Create inline image with base64 data
-            if (igResult)
-              pt.appendImageInline(
-                _imageGenerationMimeType(doneItem), // infer from output_format echoed in the item
-                igResult,
-                igRevisedPrompt || 'Generated image',
-                R.imageGenToolCfg?.model || R.responseModel || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: the cached tool config, else the responding model ([Meta AI] muse-image-1.0 echoes no tools), else the OpenAI default
-                igRevisedPrompt || '', // prompt used
-              );
-            else
-              console.warn('[DEV] AIX: OpenAI Responses: image_generation_call done without result:', doneItem);
+            pt.appendImageInline(
+              _imageGenerationMimeType(doneItem), // infer from output_format echoed in the item
+              igResult,
+              igRevisedPrompt || 'Generated image',
+              R.imageGenToolCfg?.model || R.responseModel || AIX_OAI_DEFAULT_IMAGE_GEN_MODEL, // generator: the cached tool config, else the responding model ([Meta AI] muse-image-1.0 echoes no tools), else the OpenAI default
+              igRevisedPrompt || '', // prompt used
+            );
             break;
 
           case 'code_interpreter_call':
@@ -858,13 +842,24 @@ export function createOpenAIResponsesEventParser(rspVendor: AixWire_Vendors.RspV
         // the verdict to the imminent 'response.failed' (see _isSalvageableFailedOutput), which repeats this error
         if (OPENAI_RESPONSES_SALVAGE_FAILED && R.hasEmittedText) {
           console.warn(`[DEV] AIX: OpenAI Responses: mid-stream 'error' after text streamed - deferring the verdict to the terminal event: ${errorText}`);
+          // STOPGAP #1288 - REVERT with the typed errors (AIX-TODO-errors.md, "Stream mechanics"). The error is parked in the stop
+          // reason until a terminal event sets its own, which replaces the reason and this text; when the stream ends first, the
+          // message carries the vendor's text beside the end-of-stream line. This writes an error into the vendor's status, the
+          // client then guesses it back (ContentReassembler.onCGEnd), and the error is lost if our own function is cut.
+          // Properly: send it on arrival as a non-terminal dialect issue (subkind 'upstream-error', subCause: errorCode,
+          // aiRender: false, uiColor: 'danger'); the end only says how the read ended; the outcome is derived from both.
+          // [OpenAI, 2026-11-09, hypothesis: 'response.failed' follows every 'error' (observed, the order is undocumented), so a stream ending on 'error' is a cut connection or another host]
+          pt.setTokenStopReason('cg-issue', errorText);
+          R.deferredErrorText = errorText;
+          pt.updateMetrics(_fromResponseMetrics(undefined, R.parserCreationTimestamp, R.timeToFirstEvent)); // timing, should no terminal event bring the rest
           break;
         }
 
         // Transient and retries left: unwind to the operation retrier (#1210)
-        const retryHttpStatus = _transientErrorToHttpStatus(event.error ?? event);
-        if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus))
-          throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: errorCode });
+        const retryHttpStatus = openAITransientErrorToHttpStatus(event.error ?? event);
+        const retryUpstreamCode = [event.error?.code, event.code].find((c): c is string => typeof c === 'string'); // the machine code (errorText leads with the type, as OpenAI's own messages do)
+        if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus, retryUpstreamCode))
+          throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: retryUpstreamCode ?? errorCode });
 
         // Nothing to salvage - fail now (and seal, so the trailing 'response.failed' echo doesn't re-report)
         R.markResponseSealed();
@@ -1162,7 +1157,7 @@ export function createOpenAIResponseParserNS(rspVendor: AixWire_Vendors.RspVendo
               igRevisedPrompt || '', // prompt used
             );
           else
-            console.warn('[DEV] AIX: OpenAI Responses: image_generation_call done without result:', oItem);
+            _forwardFailedImageGenerationCallItem(pt, oItem);
           pt.endMessagePart();
           break;
 
@@ -1217,6 +1212,13 @@ function _fromResponseMetrics(response: Pick<OpenAIWire_API_Responses.Response, 
   const nCodeExec = response?.output?.filter(item => item.type === 'code_interpreter_call').length ?? 0;
   if (nCodeExec > 0)
     metricsUpdate.nCodeExec = nCodeExec;
+
+  // Page fetches: one web_search_call item with an 'open_page' action per page (find_in_page works on an opened page). Counted where the
+  // search counter leaves them out: OpenAI's tool_usage counts 'search' actions only, while xAI's web_search_calls includes its page opens (#1283)
+  const nWebFetch = !response?.tool_usage?.web_search ? 0
+    : response.output?.filter(item => item.type === 'web_search_call' && item.action?.type === 'open_page').length ?? 0;
+  if (nWebFetch > 0)
+    metricsUpdate.nWebFetch = nWebFetch;
 
   // Token Metrics - only when the upstream usage block carries completion tokens
   if (usage?.output_tokens === undefined) {
@@ -1322,9 +1324,10 @@ function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, cont
   const errorText = safeErrorString(error) || 'unknown.';
 
   // Transient and retries left: unwind to the operation retrier (#1210)
-  const retryHttpStatus = _transientErrorToHttpStatus(error);
-  if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus))
-    throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: typeof error.code === 'string' ? error.code : undefined });
+  const retryHttpStatus = openAITransientErrorToHttpStatus(error);
+  const retryUpstreamCode = typeof error.code === 'string' ? error.code : undefined;
+  if (retryHttpStatus && context?.hasRetriesForHttpStatus(retryHttpStatus, retryUpstreamCode))
+    throw new OperationRetrySignal(errorText, { causeHttp: retryHttpStatus, causeConn: retryUpstreamCode });
 
   // Transmit the error as text - note: throw if you want to transmit as 'error'
   pt.setDialectTerminatingIssue(errorText, IssueSymbols.Generic, openAIUpstreamErrorLogLevel(error));
@@ -1338,7 +1341,7 @@ function _forwardResponseErrorNS(parsedData: any, pt: IParticleTransmitter, cont
  * IMPORTANT: These are HIGH-QUALITY citations (2-3 per response) that were actually
  * used in generating the response. Different from bulk web search sources (20+ results).
  */
-function _forwardTextAnnotation(pt: IParticleTransmitter, annotation: Exclude<Extract<Extract<OpenAIWire_API_Responses.Response['output'][number], { type: 'message' }>['content'][number], { type: 'output_text' }>['annotations'], undefined>[number], annotationIndex: number): void {
+function _forwardTextAnnotation(pt: IParticleTransmitter, annotation: Exclude<Extract<NonNullable<Extract<OpenAIWire_API_Responses.Response['output'][number], { type: 'message' }>['content']>[number], { type: 'output_text' }>['annotations'], undefined>[number], annotationIndex: number): void {
   switch (annotation?.type) {
     case 'url_citation':
       pt.appendUrlCitation(
@@ -1395,7 +1398,7 @@ function _prettyImageGenConfigSuffix(cfg: TImageGenToolCfg | undefined): string 
  * The API echoes the output_format in the done item (e.g. 'png', 'webp', 'jpeg').
  * [Meta AI] muse-image-1.0 echoes no output_format (and defaults to webp): sniff the base64 magic instead.
  */
-function _imageGenerationMimeType(item: { output_format?: string, result?: string }): string {
+function _imageGenerationMimeType(item: { output_format?: string | null, result?: string | null }): string {
   switch (item?.output_format) {
     case 'webp':
       return 'image/webp';
@@ -1403,6 +1406,7 @@ function _imageGenerationMimeType(item: { output_format?: string, result?: strin
       return 'image/jpeg';
     case 'png':
       return 'image/png';
+    case null:
     case undefined:
       // no output_format: sniffed below
       break;
@@ -1411,6 +1415,23 @@ function _imageGenerationMimeType(item: { output_format?: string, result?: strin
   if (b64Head.startsWith('UklGR')) return 'image/webp'; // 'RIFF....WEBP'
   if (b64Head.startsWith('/9j/')) return 'image/jpeg'; // 0xFF 0xD8 0xFF
   return 'image/png'; // 'iVBOR' (0x89 'PNG'), and the OpenAI default
+}
+
+/**
+ * Closes the image operation in the error state, for a done image_generation_call without an image:
+ * status 'failed' (OpenAI: error { code, message }, e.g. a moderation block), or no result.
+ * Also leaves an error part where the image would be: the response goes on (the model usually explains in text),
+ * and the next request carries the part to the model as text.
+ */
+function _forwardFailedImageGenerationCallItem(pt: IParticleTransmitter, item: Extract<TOutputItem, { type: 'image_generation_call' }>): void {
+  if (item.status !== 'failed')
+    console.warn('[DEV] AIX: OpenAI Responses: image_generation_call done without result:', item);
+  const failedText = item.error?.code === 'moderation_blocked' ? 'Image blocked by moderation' : 'Image generation failed';
+  pt.sendOperationState('gen-image', failedText, {
+    opId: item.id, state: 'error', ...item.error?.message ? { oTexts: [item.error.message] } : undefined,
+  });
+  // TODO: send this as a dialect issue, of subkind image-gen-error, subCause: string, aiRender: true, uiColor: 'neutral', ... - with the AIX errors refactor (typed errors, travelling in particles)
+  pt.sendCGControl({ cg: 'issue', issueId: 'dialect-issue', issueText: item.error?.message ? `${failedText}: ${item.error.message}` : `${failedText}.` }); // an issue particle alone does not end the response
 }
 
 /**

@@ -16,14 +16,7 @@ import { NousResearchIcon } from '~/common/components/icons/vendors/NousResearch
 import { NovitaAIIcon } from '~/common/components/icons/vendors/NovitaAIIcon';
 import { UnslothIcon } from '~/common/components/icons/vendors/UnslothIcon';
 
-
-/**
- * Normalizes a host URL by stripping trailing /v1 or /v1/ suffix.
- * Server-side OPENAI_API_PATHS, uses /v1/ for all paths, so we don't repeat it here.
- */
-function normalizeHostStripV1Suffix(host: string): string {
-  return host.replace(/\/v1\/?$/, '');
-}
+import { llmsHostStripV1Suffix } from '../../shared/llm.isomorphic';
 
 
 // Verified OpenAI-compatible providers that work with the 'openai' dialect
@@ -94,7 +87,7 @@ export function OpenAIHostAutocomplete(props: {
     if (newValue === null)
       props.onChange('');
     else if (typeof newValue === 'string')
-      props.onChange(normalizeHostStripV1Suffix(newValue));
+      props.onChange(llmsHostStripV1Suffix(newValue));
     else
       props.onChange(newValue.host);
   }, [props]);
@@ -105,7 +98,7 @@ export function OpenAIHostAutocomplete(props: {
       return;
 
     // strip /v1 suffix immediately - gives user clear feedback that it's not needed
-    newInputValue = normalizeHostStripV1Suffix(newInputValue);
+    newInputValue = llmsHostStripV1Suffix(newInputValue);
     setInputValue(newInputValue);
     props.onChange(newInputValue);
   }, [props]);

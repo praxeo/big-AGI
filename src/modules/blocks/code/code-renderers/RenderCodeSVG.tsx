@@ -4,6 +4,7 @@ import type { SxProps } from '@mui/joy/styles/types';
 import { Box } from '@mui/joy';
 
 import { renderSVGToPNGBlob } from '~/common/util/imageUtils';
+import { sanitizeSvgMarkup } from '~/common/util/svgSanitizeUtils';
 
 import type { IRenderHandle } from './IRenderHandle';
 
@@ -35,6 +36,10 @@ export function heuristicIsSVGCode(trimmedCode: string): boolean {
   return false;
 }
 
+/**
+ * Display only: when the root already has a style attribute this adds a second one, which HTML tolerates but XML does not,
+ * so PNG exports render the unfitted SVG.
+ */
 export function useFittedSvgString(svgCode: string | null, fitContainer: boolean): string | null {
   return React.useMemo(() => {
     if (!svgCode) return null;
@@ -54,18 +59,20 @@ export const RenderCodeSVG = React.forwardRef(function RenderCodeSVG(props: {
   fitScreen: boolean;
 }, ref: React.Ref<IRenderHandle>) {
 
-  // state
-  const patchedSvgCode = useFittedSvgString(props.svgCode, props.fitScreen);
+  // state - code blocks are untrusted (LLM output, shared chats), sanitize before DOM injection;
+  // http(s) links and images stay, as they do in the Markdown around the block
+  const safeSvgCode = React.useMemo(() => sanitizeSvgMarkup(props.svgCode, { allowExternalLinks: true }) || null, [props.svgCode]);
+  const patchedSvgCode = useFittedSvgString(safeSvgCode, props.fitScreen);
 
 
   // Expose control methods
   React.useImperativeHandle(ref, () => ({
     renderAsPNGBlob: async (transparentBackground: boolean) => {
-      if (!patchedSvgCode) return null;
-      const blob = await renderSVGToPNGBlob(patchedSvgCode, transparentBackground, 2);
+      if (!safeSvgCode) return null;
+      const blob = await renderSVGToPNGBlob(safeSvgCode, transparentBackground, 2);
       return !blob ? null : { blob, prefix: 'svg' };
     },
-  }), [patchedSvgCode]);
+  }), [safeSvgCode]);
 
 
   return (

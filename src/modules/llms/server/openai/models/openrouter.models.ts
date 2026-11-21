@@ -324,7 +324,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       }
 
       // [Anthropic, 2026-08-17] The Claude 5 generation thinks by default THROUGH OpenRouter (probed: sonnet-5
-      // with no `reasoning` field spends reasoning tokens, 4.8 and older spend none), and Fable 5/5.1 reject
+      // with no `reasoning` field spends reasoning tokens, 4.8 and older spend none), and Fable 5.x reject
       // reasoning.enabled=false outright ('Reasoning is mandatory for this endpoint'). Since sending no field no
       // longer means "off", the non-thinking twin openRouterInjectVariants derives from the thinking-budget spec
       // would be a mislabel (no brain icon, but it reasons and bills for it): drop the spec so those models ship
@@ -426,6 +426,13 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
         if (orMandatoryLadder.length >= 2)
           parameterSpecs.push({ paramId: 'llmVndOaiEffort', enumValues: orMandatoryLadder });
       }
+      break;
+
+    // [Mistral, 2026-11-05] OR lists Large 4 efforts as ['high','none'], but upstream 400s on 'none' ("supported values:
+    // [high, low, medium]"), which the generic fallback below would offer as Off: the native ladder (mistral.models.ts)
+    case modelIdUnaliased.startsWith('mistralai/mistral-large-4-0'):
+      if (interfaces.includes(LLM_IF_OAI_Reasoning))
+        parameterSpecs.push({ paramId: 'llmVndOaiEffort', enumValues: ['low', 'medium', 'high'] });
       break;
 
     default:

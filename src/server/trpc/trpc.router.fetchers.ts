@@ -132,6 +132,21 @@ function _retryAfterMsFromHeaders(headers: Headers): number | undefined {
 }
 
 /**
+ * The machine-readable code in the `error` member of an upstream error body, where each vendor puts it: the message
+ * alone cannot tell a temporary 429 from a permanent one. Undefined when the body names none.
+ */
+function _upstreamErrorCode(error: any): string | undefined {
+  const googleDetail = (type: string) => !Array.isArray(error?.details) ? undefined : error.details.find((d: any) => d?.['@type'] === `type.googleapis.com/google.rpc.${type}`);
+  return [
+    error?.details?.error_code,                               // [Anthropic]
+    error?.code,                                              // [OpenAI and compatibles] - OpenRouter and Gemini put the HTTP status here
+    error?.metadata?.limit_source,                            // [OpenRouter] the limit that tripped
+    googleDetail('QuotaFailure')?.violations?.[0]?.quotaId,   // [Gemini] the tripped quota: window and tier
+    googleDetail('ErrorInfo')?.reason,                        // [Gemini] other errors, e.g. API_KEY_INVALID
+  ].find((code): code is string => typeof code === 'string');
+}
+
+/**
  * @abort: aborted by client/signal
  * @connection: network/TCP errors before HTTP response
  * @http: upstream returned HTTP error (4xx, 5xx)
@@ -159,11 +174,13 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
   const body = 'body' in config ? config.body : undefined;
 
   // Cleaner url without query
-  let debugCleanUrl, debugHost;
+  let debugCleanUrl, debugHost, hiddenHostname: string | undefined;
   try {
-    const { origin, pathname, host } = new URL(url);
-    debugCleanUrl = decodeURIComponent(origin + pathname);
-    debugHost = host;
+    const { protocol, pathname, host, hostname } = new URL(url);
+    // an API key pasted into a host field: a single label holding a long run with digits (names are words, or dotted)
+    hiddenHostname = !hostname.includes('.') && /(?=[a-z0-9]*\d)[a-z0-9]{20,}/.test(hostname) ? hostname : undefined;
+    debugHost = hiddenHostname ? '(hidden: looks like an API key)' : host;
+    debugCleanUrl = decodeURIComponent(`${protocol}//${debugHost}${pathname}`);
   } catch {
     // ...ignore
   }
@@ -233,7 +250,8 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
     const _cause = !error || !(error instanceof Error) || !('cause' in error) ? null : error.cause ?? null;
     const causeName = !_cause || !(_cause instanceof Error) ? null : _cause.name ?? null;
     const causeCode = !_cause || !(_cause instanceof Error || typeof _cause === 'object') ? null : (_cause as any).code ?? null;
-    const causeMessage = safeErrorString(_cause);
+    // [Node] a DNS failure names the host: 'getaddrinfo ENOTFOUND <host>'
+    const causeMessage = hiddenHostname ? safeErrorString(_cause)?.replaceAll(hiddenHostname, debugHost!) : safeErrorString(_cause);
     // const causeMessage = !_cause ? null : causeName === 'AggregateError' ? safeErrorString(_cause) : _cause?.toString() || safeErrorString(_cause) || null;
     const connErrorName = causeCode || causeName || errorName;
 
@@ -257,8 +275,8 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
     // NOTE: This may log too much - for instance a 404 not found, etc.. - so we're putting it under the flag
     //       Consider we're also throwing the same, so there will likely be further logging.
     if (SERVER_DEBUG_WIRE || SERVER_LOG_FETCHERS_ERRORS) {
-      if (prettyShowUrl && !SERVER_DEBUG_WIRE)
-        // expected user-misconfig (unreachable/wrong URL): compact line - the thrown error carries the full message to the client
+      if ((prettyShowUrl || hiddenHostname) && !SERVER_DEBUG_WIRE)
+        // expected user-misconfig (unreachable/wrong URL, a key as host): compact line, no raw error objects - the thrown error carries the full message to the client
         console.log(`[${method}] [${moduleName} network issue]: ${connErrorName} -> ${debugCleanUrl || url}`);
       else
         console.log(`[${method}] [${moduleName} network issue]: "${errorString}"`, { error, _cause, debugCleanUrl, urlShown: prettyShowUrl });
@@ -306,6 +324,8 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
     const s: number = response.status;
     let payloadString = safeErrorString(notOkayPayload);
     if (payloadString) {
+      // [Gemini] some 403 bodies quote the caller's API key: keep it out of logs and messages
+      payloadString = payloadString.replace(/AIza[\w-]{35}/g, 'AIza...');
       // truncate (480 chars: fits typical provider rate-limit/auth/quota messages with org IDs, token counts, and help URLs)
       if (payloadString.length > 480)
         payloadString = payloadString.slice(0, 480) + '...';
@@ -321,21 +341,18 @@ async function _fetchFromTRPC<TBody extends object | undefined | FormData, TOut>
       console.log(`[${method}->${parserName}] [${moduleName} issue] (http ${s}, ${response.statusText}):`, { url: debugCleanUrl || url, responseOk: response.ok, notOkayPayload: payloadString || notOkayPayload });
 
     // -> throw HTTP error: will be a 400 (BAD_REQUEST), with preserved status
-    // machine-readable upstream code: the message alone cannot tell a temporary 429 from a permanent one
-    // [Anthropic] error.details.error_code, [OpenAI and compatibles] error.code
-    const upstreamCode = notOkayPayload?.error?.details?.error_code ?? notOkayPayload?.error?.code;
-
     throw new TRPCFetcherError({
       category: 'http',
       httpStatus: s,
-      httpErrorCode: typeof upstreamCode === 'string' ? upstreamCode : undefined,
+      httpErrorCode: _upstreamErrorCode(notOkayPayload?.error),
       httpRetryAfterMs: _retryAfterMsFromHeaders(response.headers),
       message: (throwWithoutName ? '' : `[${moduleName} issue]: `)
         + `Upstream responded with HTTP ${s} ${response.statusText}`
         + (payloadString ? `: \n${payloadString}` : '')
         // Custom hints for common issues from select providers
         + (s === 403 && moduleName === 'Gemini' && payloadString?.includes('Requests from referer') ? ' \n\nGemini: Check API key restrictions in Google Cloud Console' : '')
-        + ((s === 404 || (s === 403 && !url.includes('bedrock') /* just a tad more silence */) || s === 502) ? ` \n\nPlease make sure the Server can access -> ${debugCleanUrl}` : ''),
+        // the URL is the likely cause, unless the vendor itself answered and named another one
+        + ((s === 404 || (s === 403 && !url.includes('bedrock') /* just a tad more silence */) || s === 502) && !_upstreamGaveReason(notOkayPayload) ? ` \n\nPlease make sure the Server can access -> ${debugCleanUrl}` : ''),
       // cause: payload, // NOT an Error - do not use even to preserve original error payload as cause
     });
   }
@@ -438,6 +455,17 @@ async function _jsonResponseParserOrThrow(response: Response) {
 
   }
   // unreachable
+}
+
+/**
+ * Whether an error body is the vendor's own error that names a cause (model, region, content blocks): its errors come in an
+ * `error` member. One that says only "not found" names none - OpenRouter answers a wrong base path that way.
+ */
+function _upstreamGaveReason(payload: any): boolean {
+  const error = payload?.error;
+  if (!error) return false;
+  const text = typeof error === 'string' ? error : typeof error.message === 'string' ? error.message : '';
+  return !/^not found\.?$/i.test(text.trim());
 }
 
 function _period(s: string) {

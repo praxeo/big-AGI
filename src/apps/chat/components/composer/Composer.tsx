@@ -16,7 +16,7 @@ import { useAgiAttachmentPrompts } from '~/modules/aifn/agiattachmentprompts/use
 import { useBrowseCapability } from '~/modules/browse/store-module-browsing';
 
 import type { DComposerPendingPart } from '~/common/chat-overlay/store-perchat-composer_slice';
-import { DLLM, getLLMContextTokens, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
+import { getLLMContextTokens, LLM_IF_OAI_Vision } from '~/common/stores/llms/llms.types';
 import { llmChatPricing_adjusted } from '~/common/stores/llms/llms.pricing';
 import { AudioGenerator } from '~/common/util/audio/AudioGenerator';
 import { AudioPlayer } from '~/common/util/audio/AudioPlayer';
@@ -45,6 +45,8 @@ import { supportsScreenCapture } from '~/common/util/screenCaptureUtils';
 import { useAttachHandler_CameraOpen, useAttachHandler_Files, useAttachHandler_PasteIntercept, useAttachHandler_ScreenCapture, useAttachHandler_UrlWebLinks } from '~/common/attachment-drafts/attachment-sources/useAttachmentSourceHandlers';
 import { useChatComposerOverlayStore } from '~/common/chat-overlay/store-perchat_vanilla';
 import { useComposerStartupText, useLogicSherpaStore } from '~/common/logic/store-logic-sherpa';
+import { useLLM } from '~/common/stores/llms/llms.hooks';
+import { useModelDomain } from '~/common/stores/llms/hooks/useModelDomain';
 import { useOverlayComponents } from '~/common/layout/overlays/useOverlayComponents';
 import { getUIEnterIsNewline, useUICounter, useUIPreferencesStore } from '~/common/stores/store-ui';
 import { useUXLabsStore } from '~/common/stores/store-ux-labs';
@@ -103,11 +105,15 @@ const minimizedSx: SxProps = {
 
 
 /**
+ * Memoized: AppChat passes primitives, refs, constant sx and stable handlers, so its renders skip the Composer.
+ */
+export const ComposerMemo = React.memo(Composer);
+
+/**
  * A React component for composing messages, with attachments and different modes.
  */
-export function Composer(props: {
+function Composer(props: {
   isMobile: boolean;
-  chatLLM: DLLM | null;
   composerTextAreaRef: React.RefObject<HTMLTextAreaElement>;
   targetConversationId: DConversationId | null;
   capabilityHasT2I: boolean;
@@ -159,6 +165,8 @@ export function Composer(props: {
       abortConversationTemp: state.abortConversationTemp,
     };
   }));
+  const { domainModelId: chatLLMId } = useModelDomain('primaryChat');
+  const chatLLM = useLLM(chatLLMId) ?? null;
 
   // external overlay state (extra conversationId-dependent state)
   const conversationOverlayStore = props.targetConversationId
@@ -173,8 +181,8 @@ export function Composer(props: {
   const pendingParts = useChatComposerOverlayStore(conversationOverlayStore, store => store.pendingParts.length ? store.pendingParts : null);
 
   // LLM-derived
-  const noLLM = !props.chatLLM;
-  const chatLLMSupportsImages = !!props.chatLLM?.interfaces?.includes(LLM_IF_OAI_Vision);
+  const noLLM = !chatLLM;
+  const chatLLMSupportsImages = !!chatLLM?.interfaces?.includes(LLM_IF_OAI_Vision);
 
   // don't load URLs if the user is typing a command or there's no capability
   const browseCapability = useBrowseCapability();
@@ -204,11 +212,11 @@ export function Composer(props: {
     conversationOverlayStore?.getState().addPendingPart(part);
   }, [conversationOverlayStore]);
   const { enhancerHintItem, onEnhancerDisabledMatch, clearEnhancerHint } = useComposerEnhancerHint(conversationOverlayStore, setComposeText, props.targetConversationId);
-  const enhancersOff = !props.chatLLM || showChatAttachments === 'only-images';
+  const enhancersOff = !chatLLM || showChatAttachments === 'only-images';
   const enhancersOptions = React.useMemo((): AttachmentInputEnhancersOptions | undefined => {
-    if (enhancersOff || !props.chatLLM) return undefined;
-    return { enhancers: COMPOSER_INPUT_ENHANCERS, enhancerLLM: props.chatLLM, onEnhancerAddPendingPart: addPendingPart, onEnhancerDisabledMatch };
-  }, [enhancersOff, props.chatLLM, addPendingPart, onEnhancerDisabledMatch]);
+    if (enhancersOff || !chatLLM) return undefined;
+    return { enhancers: COMPOSER_INPUT_ENHANCERS, enhancerLLM: chatLLM, onEnhancerAddPendingPart: addPendingPart, onEnhancerDisabledMatch };
+  }, [enhancersOff, chatLLM, addPendingPart, onEnhancerDisabledMatch]);
 
   const {
     /* items */ attachmentDrafts,
@@ -217,7 +225,7 @@ export function Composer(props: {
   } = useAttachmentDrafts(conversationOverlayStore, enableLoadURLsInComposer, chatLLMSupportsImages, handleFilterAGIFile, showChatAttachments === 'only-images', enhancersOptions);
 
   // attachments derived state
-  const { attEnrichment, attEnrichSummary, confirmUnsupportedLLMAttachments } = useLLMImageInputPolicy(props.chatLLM, attachmentDrafts);
+  const { attEnrichment, attEnrichSummary, confirmUnsupportedLLMAttachments } = useLLMImageInputPolicy(chatLLM, attachmentDrafts);
 
   // drag/drop
   const { dragContainerSx, dropComponent, handleContainerDragEnter, handleContainerDragStart } = useComposerDragDrop(!props.isMobile, attachAppendDataTransfer);
@@ -241,14 +249,14 @@ export function Composer(props: {
 
   // tokens derived state
 
-  const tokensComposerTextDebounced = useTextTokenCount(composeText, props.chatLLM, 800, 1600);
+  const tokensComposerTextDebounced = useTextTokenCount(composeText, chatLLM, 800, 1600);
   let tokensComposer = (tokensComposerTextDebounced ?? 0) + (attEnrichSummary.totalTokensApprox || 0);
-  if (props.chatLLM && tokensComposer > 0)
-    tokensComposer += glueForMessageTokens(props.chatLLM);
+  if (chatLLM && tokensComposer > 0)
+    tokensComposer += glueForMessageTokens(chatLLM);
   const tokensHistory = _historyTokenCount;
-  const tokensResponseMax = getModelParameterValueWithFallback('llmResponseTokens', props.chatLLM?.initialParameters, props.chatLLM?.userParameters, 0) ?? 0 /* if null, assume 0*/;
-  const tokenLimit = getLLMContextTokens(props.chatLLM) ?? 0;
-  const tokenChatPricing = React.useMemo(() => llmChatPricing_adjusted(props.chatLLM), [props.chatLLM]);
+  const tokensResponseMax = getModelParameterValueWithFallback('llmResponseTokens', chatLLM?.initialParameters, chatLLM?.userParameters, 0) ?? 0 /* if null, assume 0*/;
+  const tokenLimit = getLLMContextTokens(chatLLM) ?? 0;
+  const tokenChatPricing = React.useMemo(() => llmChatPricing_adjusted(chatLLM), [chatLLM]);
 
 
   // Effect: load initial text if queued up (e.g. by /link/share_targetF)
@@ -704,7 +712,7 @@ export function Composer(props: {
   }, [props.capabilityHasT2I]);
 
   // input-enhancer hints of the current model (e.g. 'paste a video link')
-  const enhancerHints = !enhancersOptions ? [] : attachmentEnhancersPlaceholderHints(COMPOSER_INPUT_ENHANCERS, props.chatLLM);
+  const enhancerHints = !enhancersOptions ? [] : attachmentEnhancersPlaceholderHints(COMPOSER_INPUT_ENHANCERS, chatLLM);
 
   let textPlaceholder: string =
     isDraw ? 'Describe what you would like to see...'
