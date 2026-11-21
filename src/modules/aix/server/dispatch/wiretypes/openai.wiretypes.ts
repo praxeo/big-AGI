@@ -275,6 +275,7 @@ export namespace OpenAIWire_Tools {
        */
       properties: z.json().optional(), // FC-DEF params schema
       required: z.array(z.string()).optional(),
+      additionalProperties: z.boolean().optional(), // set to false by the adapter for strict tool invocations: undeclared here, the request parse stripped it
     }).optional(),
     /**
      * [OpenAI Structured Outputs, 2024-08-06]
@@ -784,9 +785,9 @@ export namespace OpenAIWire_API_Chat_Completions {
     type: z.enum([
       'function',
       'builtin_function', // [Moonshot, 2025-11-09] (S-parse) Support Moonshot-over-OpenAI builtin tools (builtin_function)
-    ]).optional(),
+    ]).nullish(), // [NVIDIA, 2026-11-11] null on the argument chunks (z-ai/glm-5.3-flash)
 
-    id: z.string().optional(), // id of the tool call - set likely only in the first chunk
+    id: z.string().nullish(), // id of the tool call - set likely only in the first chunk; null afterwards on Alibaba (qwen3.7-*, qwen3.8-max), Fireworks (minimax-m3), NVIDIA
 
     function: z.object({
       /**
@@ -812,11 +813,12 @@ export namespace OpenAIWire_API_Chat_Completions {
     content: z.string().nullish()
       // [Mistral, 2025-10-15] Mistral SPEC-BREAKING thinking fragments
       .or(z.array(z.object({
-        type: z.string(), // 'thinking', but relaxed
+        type: z.string(), // 'thinking' or 'text', but relaxed
         thinking: z.array(z.object({
           type: z.string(),
           text: z.string(),
         })).optional(),
+        text: z.string().optional(), // [Mistral, 2026-11-17] for type: 'text' blocks - Mistral Large 4 sends the first answer chunk beside the last thinking block
       }))),
     // delta-reasoning content
     reasoning_content: z.string().nullable().optional(), // [Deepseek, 2025-01-20]
@@ -1176,7 +1178,7 @@ export namespace OpenAIWire_Responses_Items {
       }),
     ]).catch((ctx) => {
       console.log('[DEV] AIX: OpenAI Responses: unknown annotation type, ignoring:', (ctx.value as any)?.type);
-      return { type: 'url_citation', url: '' };
+      return { type: 'file_path', file_id: '' }; // a shape the parser ignores: a url_citation stand-in was emitted as an empty citation
     })).optional(),
     // [DO-NOT-CARE] // logprobs: ...
   });
@@ -1226,7 +1228,8 @@ export namespace OpenAIWire_Responses_Items {
     role: z.literal('assistant'), // [?XAI] also 'tool'?
     content: z.array(_ContentItem_Parts_schema)
       .optional(), // [Sakana Namazu] absent when the item opens ('response.output_item.added')
-    phase: z.enum(['commentary', 'final_answer']).or(z.string()).optional(), // [OpenAI, 2026-03-03] message phase indicator for multi-phase responses
+    phase: z.enum(['commentary', 'final_answer']).or(z.string()) // [OpenAI, 2026-03-03] message phase indicator for multi-phase responses
+      .nullish(), // [Responses-compatible relays] null
   });
 
   export type OutputReasoningItem = z.infer<typeof OutputReasoningItem_schema>;
@@ -1546,6 +1549,7 @@ export namespace OpenAIWire_Responses_Tools {
       type: z.literal('object'),
       properties: z.json().optional(), // FC-DEF params schema (Responses)
       required: z.array(z.string()).optional(),
+      additionalProperties: z.boolean().optional(), // set to false by the adapter for strict tool invocations: undeclared here, the request parse stripped it
     }).optional(),
     strict: z.boolean().optional(), // enforce strict parameter validation
   });
@@ -1820,7 +1824,8 @@ export namespace OpenAIWire_API_Responses {
 
     // Echo State management & API options (with defaults)
     background: z.boolean().optional(), // (false)
-    store: z.boolean().optional(), // (true)
+    store: z.boolean() // (true)
+      .nullish(), // [Responses-compatible relays] null
 
     // NOTE: the following fields seem an exact echo of what's in the request - let's ignore these for now
     // instructions: z.string().nullable(), // null
@@ -1905,6 +1910,9 @@ export namespace OpenAIWire_API_Responses {
 
   const _PartIndexedEvent_schema = _OutputIndexedEvent_schema.extend({
     content_index: z.number(), // identifies the content part in the output item
+
+    // [Responses-compatible relays] absent on the content part events, where it is not read
+    item_id: z.string().optional(),
   });
 
   const ContentPartAddedEvent_schema = _PartIndexedEvent_schema.extend({
@@ -1925,6 +1933,9 @@ export namespace OpenAIWire_API_Responses {
   const OutputTextDoneEvent_schema = _PartIndexedEvent_schema.extend({
     type: z.literal('response.output_text.done'),
     text: z.string(),
+
+    // [Responses-compatible relays] absent here, sent on the deltas
+    content_index: z.number().optional(),
   });
 
   const OutputTextAnnotationAddedEvent_schema = _PartIndexedEvent_schema.extend({

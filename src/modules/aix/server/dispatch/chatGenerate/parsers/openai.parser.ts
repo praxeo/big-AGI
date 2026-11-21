@@ -338,6 +338,11 @@ export function createOpenAIChatCompletionsChunkParser(ortFetchCountable = false
                 // Handle other thinking part types if necessary
                 console.log('AIX: OpenAI-dispatch: unexpected thinking part type from Mistral:', thinkingPart);
               }
+          }
+          // [Mistral, 2026-11-17]
+          else if (contentBlock.type === 'text' && typeof contentBlock.text === 'string') {
+            accumulator.content = (accumulator.content || '') + contentBlock.text;
+            pt.appendAutoText_weak(contentBlock.text);
           } else {
             // Handle other content types if necessary
             console.log('AIX: OpenAI-dispatch: unexpected content block type from Mistral:', contentBlock);
@@ -352,7 +357,7 @@ export function createOpenAIChatCompletionsChunkParser(ortFetchCountable = false
       for (const deltaToolCall of (delta.tool_calls || [])) {
 
         // validation
-        if (deltaToolCall.type !== undefined && deltaToolCall.type !== 'function'
+        if (deltaToolCall.type != null && deltaToolCall.type !== 'function'
           && deltaToolCall.type !== 'builtin_function' // [Moonshot, 2025-11-09] Support Moonshot-over-OpenAI builtin tools
         )
           throw new Error(`unexpected tool_call type: ${deltaToolCall.type}`);
@@ -369,7 +374,7 @@ export function createOpenAIChatCompletionsChunkParser(ortFetchCountable = false
             },
           };
           pt.startFunctionCallInvocation(created.id, created.function.name, 'incr_str', created.function.arguments);
-          break;
+          continue; // not 'break': a chunk can carry several calls (Mistral, Cerebras and NVIDIA send parallel calls whole, in one chunk)
         }
 
         // Updating arguments

@@ -13,6 +13,8 @@ Guidance to Claude Code when working with code in this repository.
 
 Dev servers may already run on ports 3xxx, started by the user or other agents: never kill those.
 
+The app is single-instance per browser and origin (`src/common/providers/single-tab/`): in browser automation, open a given dev server in one tab only. A second tab gets a `Transfer Here` screen instead of the app, and transferring wipes the first tab.
+
 ```bash
 # Validate - safe while a dev server runs, and far quicker than `next build` for the same checks
 npm run tscheck && npm run lint  # includes npm install
@@ -107,6 +109,7 @@ Local-first, all Zustand in memory. Global stores `persist` to localStorage (dis
 
 ### Testing & Quality
 - `npm test` runs `src/**/*.test.ts`. A test earns its place by driving the real code through a hard edge case, not by restating the implementation
+- `tools/jobs/` holds the work that runs against the live world, started by a schedule, a webhook or by hand, and never by `npm test`: one folder per job (`llm-registry-sync`, `llm-listing-checker`, `csf-cors-checker`), run with `sh tools/jobs/jobs.sh <job>` (rules in that script)
 - Browser floor: lint flags syntax and Web APIs below the engines we support; follow the rule messages, and never lower `browserslist` to silence them (SWC won't polyfill prototype methods)
 - Production builds minify with SWC, which miscompiles some code shapes; `tools/eslint/swc-miscompile.mjs` bans the known ones
 

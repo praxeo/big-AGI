@@ -3,13 +3,13 @@ import type { StateCreator } from 'zustand/vanilla';
 import type { ModelVendorId } from '~/modules/llms/vendors/vendors.registry';
 
 import type { DModelDomainId } from './model.domains.types';
-import type { DModelParameterValues } from './llms.parameters';
+import { type DModelParameterValues, getAllModelParameterValues } from './llms.parameters';
 import { DLLM, DLLMId, DModelInterfaceV1, isLLMHidden, isLLMVisible } from './llms.types';
 import { LlmsRootState, useModelsStore } from './store-llms';
 import { ModelDomainsList, ModelDomainsRegistry } from './model.domains.registry';
 import { createDModelConfiguration, DModelConfiguration } from './modelconfiguration.types';
 import { llmsEditorial_ModelIdForDomain_SLOW } from './model.domains.editorial';
-import { type DPricingChatGenerate, getLlmCostForTokens, llmChatPricing_adjusted } from './llms.pricing';
+import { type DPricingChatGenerate, getLlmCostForTokens, llmChatPricing_multipliedFromParams } from './llms.pricing';
 
 
 /// LLMs Assignments Slice
@@ -249,7 +249,7 @@ function _allowedDomainLlmsOrUniverse<TLlm extends Pick<DLLM, 'interfaces'>>(
  *
  * Layers, in order:
  * 1. narrow `universe` to the domain's `requiredInterfaces` - relaxed to the full universe when nothing matches
- * 2. editorial picks, for the domain then its `editorialFallbackDomain` (see model.domains.editorial.ts)
+ * 2. editorial picks among the non-hidden models, for the domain then its `editorialFallbackDomain` (see model.domains.editorial.ts)
  * 3. the domain's `autoStrategy` over the ELO-ranked, non-hidden models; `chatPinLlmId`, the user's chat pin, is the
  *    cost strategy's pick on a winning vendor that has nothing rated or priced, when it is one of that vendor's candidates
  *
@@ -337,8 +337,9 @@ function _groupLlmsByVendorRankedByElo<Tllm extends Pick<DLLM, 'id' | 'vId' | 'b
   const grouped = llms.reduce((acc, llm) => {
     if (isLLMHidden(llm)) return acc;
     const group = acc.find(v => v.vendorId === llm.vId);
-    // adjustd: includes price multipliers
-    const adjChatPricing = llmChatPricing_adjusted(llm);
+    // adjusted: at the multiplier of the model's own settings
+    const llmParameters = getAllModelParameterValues(llm.initialParameters, llm.userParameters);
+    const adjChatPricing = llmChatPricing_multipliedFromParams(llm, llmParameters).pricing;
     const eloCostItem = {
       id: llm.id,
       cbaElo: llm.benchmark?.cbaElo,

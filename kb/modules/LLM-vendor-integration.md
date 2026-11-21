@@ -67,7 +67,7 @@ user demand to warrant a dedicated setup flow.
 `LLMVendorSetup.tsx` component map and `VENDOR_DOCS` (slug must exist in `src/common/gen/com.site.docs.slug.ts`,
 mirrored from the website repo), `llms.defs.manifest.ts` bucket (+ regenerate `gen/llms.defs.versions.ts`),
 `openai.access.ts` dialect enum + switch, `listModels.dispatch.ts` two switches, `chatGenerate.dispatch.ts` two
-fallthrough groups, `tools/data/llms/llm-registry-sync.ts` switch. Silent surfaces: `env.server.ts`, the
+fallthrough groups, `tools/jobs/llm-registry-sync/llm-registry.sync.ts` switch. Silent surfaces: `env.server.ts`, the
 `update-models-<vendor>` skill, `tools/develop/llm-parameter-sweep`, `tools/develop/aix-protocol-lab`, README,
 `docs/environment-variables.md`, `docs/k8s/env-secret.yaml`, `dMessageUtils.prettyShortChatModelName`, the KB rosters.
 A vendor served over the OpenAI Responses API additionally gets: a row in `_RSP_DIALECT_QUIRKS` (`openai.responsesCreate.ts`,
@@ -116,6 +116,20 @@ In `listModels.dispatch.ts`, the `case 'openai':` handler:
 2. Runs the hostname through a chain of heuristics (in order)
 3. First matching heuristic's converter is used to parse models
 4. Falls back to stock OpenAI parsing if no heuristic matches
+
+### Hosts and API Versions
+
+Vendor docs and SDKs give a base URL that carries the API version (`.../v1`, `.../v2`, `.../paas/v4`), while the access
+code joins a host with paths that carry their own (`/v1/chat/completions`). `llmsApiUrl()` (`llm.isomorphic.ts`) is the
+one join: a host that ends in a version keeps it, and the path gives up its own; a path from the server root
+(`/api/tags`) drops the host's version; any other host takes the path as it is. Every request to a host a user can set
+goes through it - the LLM access functions, text-to-speech and transcription - so a new access function must too.
+
+The setup fields store a host as typed, with or without its version: no field rewrites it.
+
+Limits: a host mounted under a path that ends in a version, and that expects `/v1` after it, cannot be expressed. A
+pasted full endpoint (`.../chat/completions`) is reduced to its base only in the OpenAI API Endpoint field. A build
+older than the join reads a stored trailing `/v1` as a path prefix, and requests `/v1/v1/...`.
 
 ### Hostname Security
 

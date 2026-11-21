@@ -3,7 +3,11 @@ import * as z from 'zod/v4';
 import { LLM_IF_ANT_PromptCaching, LLM_IF_Inputs_Video, LLM_IF_OAI_Chat, LLM_IF_OAI_Fn, LLM_IF_OAI_Json, LLM_IF_OAI_PromptCaching, LLM_IF_OAI_Reasoning, LLM_IF_OAI_Vision, LLM_IF_Outputs_Audio, LLM_IF_Outputs_Image } from '~/common/stores/llms/llms.types';
 import { Release } from '~/common/app.release';
 
-import type { ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
+import type { OpenAIWire_API_Models_List } from '~/modules/aix/server/dispatch/wiretypes/openai.wiretypes';
+import { createDebugWireLogger } from '~/server/wire';
+import { fetchJsonOrTRPCThrow, TRPCFetcherError } from '~/server/trpc/trpc.router.fetchers';
+
+import type { ListModelsAccessStatus, ModelDescriptionSchema, OrtVendorLookupResult } from '../../llm.server.types';
 import { formatPubDate, fromManualMapping } from '../../models.mappings';
 import { llmOrtAntLookup_ThinkingVariants } from '../../anthropic/anthropic.models';
 import { GEM_IMAGE_AR_NO_EXTREMES, llmOrtGemLookup } from '../../gemini/gemini.models';
@@ -13,7 +17,8 @@ import { llmOrtMetaLookup } from './metaai.models';
 import { llmOrtSakLookup } from './sakanaai.models';
 import { llmOrtXaiLookup } from './xai.models';
 import { llmOrtZaiLookup } from './zai.models';
-import { wireOpenrouterModelsListOutputSchema } from '../wiretypes/openrouter.wiretypes';
+import { OPENAI_API_PATHS, openAIAccess, type OpenAIAccessSchema, OPENROUTER_API_PATHS } from '../openai.access';
+import { wireOpenrouterCreditsOutputSchema, wireOpenrouterKeyOutputSchema, wireOpenrouterModelsListOutputSchema } from '../wiretypes/openrouter.wiretypes';
 
 
 // configuration
@@ -37,9 +42,11 @@ const orModelFamilyOrder = [
   // Specialized/AI companies
   'perplexity/', 'inclusionai/', 'inception/', 'arcee-ai/', 'thinkingmachines/', 'sakana/', 'upstage/', 'nex-agi/', 'fireworks/',
   // Chinese majors (surfaced on OpenRouter directly)
-  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'stepfun/', 'meituan/',
+  'minimax/', 'bytedance/', 'bytedance-seed/', 'tencent/', 'baidu/', 'stepfun/', 'meituan/',
   // Research/open models
   'nvidia/', 'microsoft/', 'nousresearch/', 'ibm-granite/', 'poolside/', 'xiaomi/', 'reflection/',
+  // OpenRouter's own: shows 'openrouter/free', the router across the free models - the other routers quote no price and stay hidden
+  'openrouter/',
 ] as const;
 
 // llmVndMiscEffort thinking levels we expose, in canonical order ('xhigh' deliberately absent) - see llms.parameters.ts
@@ -47,6 +54,9 @@ const _MISC_EFFORTS = ['low', 'high', 'max'] as const;
 
 // llmVndOaiEffort levels, canonical ascending order ('none' handled separately) - see llms.parameters.ts
 const _OAI_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+// llmVndGemEffort levels, canonical ascending order - see llms.parameters.ts
+const _GEM_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh'] as const;
 
 // [2026-08-28] re-checked against the live catalog: 'openai/gpt-3.5-turbo' still hides 4 ids, the Claude 1/2/instant,
 // PaLM 2, Llama 2 and dated gpt-4-0314 prefixes matched zero models and were dropped. 'meta-llama/llama-3-' also
@@ -87,6 +97,10 @@ export function openRouterModelFamilySortFn(a: { id: string, created?: number },
     // stable final tiebreaker for same-day releases (e.g. base vs '-fast' variants)
     return b.id.localeCompare(a.id);
   }
+
+  // If neither has a prefix, keep the upstream order (returning 1 both ways made the order engine-defined)
+  if (aPrefixIndex === -1 && bPrefixIndex === -1)
+    return 0;
 
   // If one has a prefix and the other doesn't, prioritize the one with prefix
   return aPrefixIndex !== -1 ? -1 : 1;
@@ -257,7 +271,9 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
   // - openai/ excluded from breakpoints: GPT-5.6+ writes to the paid cache automatically even without
   //   cache_control (stamps are a no-op), so a breakpoint toggle would be fake - informational tag +
   //   cache_write_tokens usage read-back give correct cost accounting anyway
-  if (cacheWritePrice && !modelIdUnaliased.startsWith('google/') && !modelIdUnaliased.startsWith('openai/'))
+  // - meta/ excluded from breakpoints: Muse caches automatically, and the write OR quotes on the Meta endpoint is not
+  //   billed (muse-ember, probed 2026-11-20: cache hits without cache_control, cache_write_tokens 0)
+  if (cacheWritePrice && !modelIdUnaliased.startsWith('google/') && !modelIdUnaliased.startsWith('openai/') && !modelIdUnaliased.startsWith('meta/'))
     interfaces.push(LLM_IF_ANT_PromptCaching);
   else if (cacheReadPrice || model.pricing?.input_cache_read !== undefined)
     interfaces.push(LLM_IF_OAI_PromptCaching);
@@ -352,7 +368,10 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       // the native API uses thinkingLevel (discrete) or thinkingBudget (integer) depending on generation.
       if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndGeminiThinkingBudget' || p.paramId === 'llmVndGemEffort')) {
         // DEV_DEBUG_OPENROUTER_MODELS && console.log(`[DEV] openRouterModelToModelDescription: tagging ${gemLookup ? 'KNOWN' : 'unknown'} Gemini reasoning model:`, model.id);
-        parameterSpecs.push({ paramId: 'llmVndGemEffort' }); // use the latest known Gemini effort (thinking) levels superset
+        // OR's `supported_efforts` where it gives a ladder (it equals the native one on the indexed Gemini 3.x/4 text models),
+        // e.g. gemini-omni-1.x-flash: low|high; else the latest known Gemini effort (thinking) levels superset
+        const orGemLadder = _GEM_EFFORTS.filter(e => model.reasoning?.supported_efforts?.includes(e));
+        parameterSpecs.push({ paramId: 'llmVndGemEffort', ...(orGemLadder.length >= 2 && { enumValues: orGemLadder }) });
         // parameterSpecs.push({ paramId: 'llmVndGeminiThinkingBudget' }); // fallback with default range
       }
 
@@ -375,10 +394,14 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
         console.log('[DEV] openRouterModelToModelDescription: unknown OpenAI model:', model.id);
 
       // 0-day: non-indexed models only - indexed ones use native definitions via llmOrtOaiLookup.
-      // OR sweep may show broader effort ranges than the native API supports (OR adds levels internally).
+      // OR's `supported_efforts` ladder, as in the generic branch: mandatory ids 400 on 'none' ("Reasoning is mandatory"),
+      // and fixed-effort ids (gpt-5-pro: ['high']) get no control.
       if (interfaces.includes(LLM_IF_OAI_Reasoning) && !parameterSpecs.some(p => p.paramId === 'llmVndOaiEffort')) {
-        // console.log('[DEV] openRouterModelToModelDescription: unexpected OpenAI reasoning model:', model.id);
-        parameterSpecs.push({ paramId: 'llmVndOaiEffort' }); // latest known OpenAI effort levels superset
+        const orOaiLadder = _OAI_EFFORTS.filter(e => model.reasoning?.supported_efforts?.includes(e));
+        if (orOaiLadder.length >= 2)
+          parameterSpecs.push({ paramId: 'llmVndOaiEffort', enumValues: model.reasoning?.mandatory ? orOaiLadder : ['none', ...orOaiLadder] });
+        else if (!model.reasoning?.mandatory)
+          parameterSpecs.push({ paramId: 'llmVndOaiEffort' }); // latest known OpenAI effort levels superset
       }
       break;
 
@@ -393,7 +416,7 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
       else if (modelIdUnaliased.startsWith('sakana/'))
         _mergeLookup(llmOrtSakLookup(llmRef));
       else if (modelIdUnaliased.startsWith('meta/'))
-        _mergeLookup(llmOrtMetaLookup(llmRef)); // Muse Spark, Wonder, Spark Open; 'meta/muse-glimmer-30b' (open weights, not on api.meta.ai) falls through
+        _mergeLookup(llmOrtMetaLookup(llmRef)); // Muse Spark, Wonder, Ember, and the open-weight Spark Open and Glimmer
 
       // 0-day: xAI/Grok/Moonshot/Z.ai/DeepSeek/Sakana models get default reasoning effort if not inherited.
       // Checks llmVndOaiEffort too (else an inherited spec gets a 2nd control stacked); skips mandatory models,
@@ -534,6 +557,73 @@ export function openRouterModelToModelDescription(wireModel: object): ModelDescr
     ...(initialTemperature !== undefined && { initialTemperature }),
   });
 }
+
+// -- Listing --
+
+/** What a listing fetches */
+export type OpenRouterListing = {
+  wireModels: OpenAIWire_API_Models_List.Response['data'];
+  accessStatus?: ListModelsAccessStatus; // set when the key can call the free models only
+};
+
+/**
+ * Why the key can call the free models only, if so, read from the answer of the key endpoint:
+ * - the key has a spending limit of zero: priced models answer 403 'Key limit exceeded', or
+ * - it is a free key: its account never bought credits (402), unless it shows access: usage through its own provider
+ *   keys, or a balance (granted credits), read from the credits endpoint. An answer that cannot be read does not show access.
+ * A limit that is used up and a paid account at zero both pay again, after a reset or a top-up: they do not count.
+ */
+async function _openRouterFreeModelsOnly(access: OpenAIAccessSchema, key: z.infer<typeof wireOpenrouterKeyOutputSchema>['data'] | undefined): Promise<ListModelsAccessStatus['freeModelsOnly']> {
+  if (key?.limit === 0) return 'key-limit-zero';
+  if (key?.is_free_tier !== true || (key.byok_usage ?? 0) > 0) return undefined;
+  const { headers, url } = openAIAccess(access, null, OPENROUTER_API_PATHS.credits);
+  const credits = wireOpenrouterCreditsOutputSchema.safeParse(
+    await fetchJsonOrTRPCThrow({ url, headers, name: 'OpenAI/Openrouter', signal: AbortSignal.timeout(5000) }).catch(() => undefined),
+  ).data?.data;
+  return credits && credits.total_credits - credits.total_usage > 0 ? undefined : 'free-tier';
+}
+
+/**
+ * The list is public and loads with any key, so a wrong key would first fail in chat: the key endpoint is asked beside
+ * it, and its 401 alone fails the listing - no other answer, error or delay of it counts. Its answer also tells a key
+ * that can call the free models only.
+ */
+export async function openRouterFetchListing(access: OpenAIAccessSchema, signal?: AbortSignal): Promise<OpenRouterListing> {
+  const _wire = createDebugWireLogger('LLMs/OpenRouter');
+
+  const list = openAIAccess(access, null, OPENAI_API_PATHS.models);
+  const key = openAIAccess(access, null, OPENROUTER_API_PATHS.key);
+
+  _wire?.logRequest('GET', list.url, list.headers);
+  const [wireList, keyAnswer] = await Promise.all([
+    fetchJsonOrTRPCThrow<OpenAIWire_API_Models_List.Response>({ url: list.url, headers: list.headers, name: 'OpenAI/Openrouter', signal }),
+    fetchJsonOrTRPCThrow({ url: key.url, headers: key.headers, name: 'OpenAI/Openrouter', signal: AbortSignal.timeout(5000) })
+      .catch(error => error instanceof TRPCFetcherError && error.httpStatus === 401 ? error : undefined),
+  ]);
+  if (keyAnswer instanceof TRPCFetcherError) throw keyAnswer;
+  _wire?.logResponse(wireList);
+
+  const keyData = wireOpenrouterKeyOutputSchema.safeParse(keyAnswer).data?.data; // an answer of another shape tells nothing
+  const freeModelsOnly = await _openRouterFreeModelsOnly(access, keyData);
+  return {
+    wireModels: wireList?.data || [],
+    ...(freeModelsOnly && { accessStatus: { freeModelsOnly, freeRequestsPerDay: keyData?.free_model_daily_requests?.limit } }),
+  };
+}
+
+export function openRouterListingToModelDescriptions(listing: OpenRouterListing): ModelDescriptionSchema[] {
+  return listing.wireModels
+    // unique ids, sorted by id: the order the family sort starts from, and keeps where it has no opinion
+    .filter((model, index, models) => models.findIndex(m => m.id === model.id) === index)
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .sort(openRouterModelFamilySortFn)
+    .map(openRouterModelToModelDescription)
+    .filter(desc => !!desc)
+    // a key that can call the free models only lists the priced ones hidden: they stay in the list, with the user's settings and own show/hide choice
+    .map(desc => !listing.accessStatus?.freeModelsOnly || (desc.chatPrice?.input === 'free' && desc.chatPrice.output === 'free') ? desc : { ...desc, hidden: true })
+    .reduce(openRouterInjectVariants, []);
+}
+
 
 /**
  * Inject model variants for OpenRouter models.
