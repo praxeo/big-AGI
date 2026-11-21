@@ -7,6 +7,7 @@ import type { DMessageGenerator } from '~/common/stores/chat/chat.message';
 import { anthropicAccessSchema } from '~/modules/llms/server/anthropic/anthropic.access';
 import { bedrockAccessSchema } from '~/modules/llms/server/bedrock/bedrock.access';
 import { geminiAccessSchema } from '~/modules/llms/server/gemini/gemini.access';
+import { UpstreamResourceId_schema } from '~/modules/llms/server/llm.server.types';
 import { ollamaAccessSchema } from '~/modules/llms/server/ollama/ollama.access';
 import { openAIAccessSchema } from '~/modules/llms/server/openai/openai.access';
 
@@ -552,7 +553,6 @@ export namespace AixWire_API {
     // vndGeminiShowThoughts: z.boolean().optional(),
 
     // Anthropic
-    vndAnt1MContext: z.boolean().optional(),
     vndAntCodeSandbox: z.enum(['auto']).optional(), // standalone server-side code sandbox (also implied by Skills / programmatic tool calling)
     vndAntContainerId: z.string().optional(),
     vndAntInfSpeed: z.enum(['fast']).optional(),
@@ -632,12 +632,12 @@ export namespace AixWire_API {
   export const UpstreamHandle_schema = z.discriminatedUnion('uht', [
     z.object({
       uht: z.literal('vnd.oai.responses'),
-      runId: z.string(), // upstream: OpenAI Responses `response.id`
+      runId: UpstreamResourceId_schema, // upstream: OpenAI Responses `response.id`, placed in the URL path
       startingAfter: z.number().optional(), // the sequence number of event after which to start streaming
     }),
     z.object({
       uht: z.literal('vnd.gem.interactions'),
-      runId: z.string(), // upstream: Gemini Interactions `interaction.id`
+      runId: z.string(), // upstream: Gemini Interactions `interaction.id` (URL-encoded by the path builders)
     }),
   ]);
 
@@ -768,7 +768,7 @@ export namespace AixWire_Particles {
     | { cg: 'end', terminationReason: CGEndReason /* we know why we're sending 'end' */, tokenStopReason?: GCTokenStopReason /* we may or not have gotten a logical token stop reason from the dispatch */, tokenStopError?: string /* optional vendor-composed human-readable detail paired with tokenStopReason */ }
     | { cg: 'issue', issueId: CGIssueId, issueText: string, issueCause?: CGIssueCause }
     | { cg: 'aix-info', ait: 'flow-cont' /* important: establishes a checkpoint */, text: string }
-    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, delayMs: number, causeHttp?: number, causeConn?: string, calm?: true /* the retry profile marks the condition as expected (e.g. a busy best-effort tier): rendered without alarm */ }
+    | { cg: 'aix-retry-reset', rScope: 'srv-dispatch' | 'srv-op' | 'cli-ll', rClearStrategy: 'none' | 'since-checkpoint' | 'all', reason: string, attempt: number, maxAttempts: number, phase: 'waiting' | 'started' | 'gave-up' /* what the message announces: the wait before the attempt, the attempt beginning, no attempts left */, delayMs: number /* the wait; sent in every phase, as a client older than `phase` reads the phase from it: > 0 waiting, else gave-up */, causeHttp?: number, causeConn?: string, calm?: true /* the retry profile marks the condition as expected (e.g. a busy best-effort tier): rendered without alarm */ }
     | { cg: 'set-metrics', metrics: CGSelectMetrics }
     | { cg: 'set-model', name: string }
     | { cg: 'set-provider-infra', label: string }

@@ -188,12 +188,11 @@ async function* _connectToDispatch(
     });
     // drain (▼) signal allows to interrupt the heartbeat loop and yield particles
     let singnaldrain = promiseWithResolvers<'▼'>();
-    const onRetryAttempt = (info: RetryAttempt) => {
+    const onRetryAttempt = (attempt: RetryAttempt) => {
       // -> retry-server-dispatch
       chatGenerateTx.sendCGControl({
-        cg: 'aix-retry-reset', rScope: 'srv-dispatch',
-        rClearStrategy: 'none', // clear nothing, because no content has been streamed while trying to connect
-        ...info, // reason, attempt (2..) of maxAttempts: same notation as the operation retrier
+        cg: 'aix-retry-reset', rScope: 'srv-dispatch', rClearStrategy: 'none', // clear nothing, because no content has been streamed while trying to connect
+        ...attempt, // reason, attempt (2..) of maxAttempts: same notation as the operation retrier
       });
       singnaldrain.resolve('▼'); // -> breaks the heartbeat loop
     };
@@ -415,7 +414,10 @@ async function* _consumeDispatchStream(
 
       } catch (error: any) {
         // pass-through dispatch signals - thrown by parsers to request operation retry or continuation
-        if (error instanceof DispatchContinuationSignal) throw error;
+        if (error instanceof DispatchContinuationSignal) {
+          yield* chatGenerateTx.flushParticles(); // the paused turn's final metrics: sent once at the start, then only on a flush
+          throw error;
+        }
         if (error instanceof OperationRetrySignal) throw error;
 
         // Handle parsing issue (likely a schema break); print it to the server console as well

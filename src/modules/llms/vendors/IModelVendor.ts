@@ -3,7 +3,7 @@ import type { AixAPI_Access } from '~/modules/aix/server/api/aix.wiretypes';
 import type { ServerConf, ServerConfFlag } from '~/common/app.serverconf';
 import type { DLLM } from '~/common/stores/llms/llms.types';
 
-import type { ModelDescriptionSchema } from '../server/llm.server.types';
+import type { ListModelsResponse } from '../server/llm.server.types';
 import type { ModelVendorId } from './vendors.registry';
 
 
@@ -26,6 +26,7 @@ export interface IModelVendor<TServiceSettings extends ServiceSettingsBase = {},
 
   /// client-side-fetch ///
   readonly csfAvailable?: (setup?: Partial<TServiceSettings>) => boolean; // undefined: not supported, false: conditions not met
+  readonly csfOffReason?: (setup?: Partial<TServiceSettings>) => string | null; // asked while it is not available: why, as shown to the user; null: only the key is missing, or nothing to say
 
   /// abstraction interface ///
 
@@ -40,6 +41,6 @@ export interface IModelVendor<TServiceSettings extends ServiceSettingsBase = {},
   rpcUpdateModelsOrThrow(
     this: void, // detach-safe attestation: vendors cross-reference each other's implementations (e.g. `ModelVendorOpenAI.rpcUpdateModelsOrThrow`)
     access: TAccess,
-  ): Promise<{ models: ModelDescriptionSchema[] }>;
+  ): Promise<ListModelsResponse>;
 
 }

@@ -18,7 +18,7 @@ export function SetupFormRefetchButton(props: {
   advanced?: ToggleableBoolean
 }) {
   return (
-    <Box sx={{ display: 'flex', alignItems: 'end', justifyContent: 'space-between' }}>
+    <Box sx={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
 
       {props.leftButton}
 
@@ -29,6 +29,7 @@ export function SetupFormRefetchButton(props: {
       )}
 
       <Button
+        type='submit' // inside a form (LLMVendorSetup), Enter in a field presses it
         color={props.error ? 'warning' : 'primary'}
         disabled={props.disabled}
         loading={props.loading}

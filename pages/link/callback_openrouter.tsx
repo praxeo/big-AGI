@@ -1,90 +1,96 @@
 import * as React from 'react';
+import Head from 'next/head';
 
-import { Box, Typography } from '@mui/joy';
-
+import { apiAsync } from '~/common/util/trpc.client';
 import { llmsStoreActions } from '~/common/stores/llms/store-llms';
-
-import { InlineError } from '~/common/components/InlineError';
-import { apiQuery } from '~/common/util/trpc.client';
-import { navigateToIndex, useRouterQuery } from '~/common/app.routes';
-import { withNextJSPerPageLayout } from '~/common/layout/withLayout';
+import { openRouterOAuthEnd, openRouterOAuthVerifierForState } from '~/modules/llms/vendors/openrouter/openrouter.oauth';
+import { useRouterQuery } from '~/common/app.routes';
 
 
-function CallbackOpenRouterPage(props: { openRouterCode: string | undefined }) {
+export default function CallbackOpenRouterPage() {
+
+  // state
+  const [error, setError] = React.useState<string | null>(null);
+  const [orKey, setOrKey] = React.useState<string | null>(null);
+  const exchangeStartedRef = React.useRef(false); // codes are single-use: exchange once, also under Strict Mode's double mount
 
   // external state
-  const { data, isError, error, isPending } = apiQuery.backend.exchangeOpenRouterKey.useQuery({ code: props.openRouterCode || '' }, {
-    enabled: !!props.openRouterCode,
-    staleTime: Infinity,
-  });
-
-  // derived state
-  const isErrorInput = !props.openRouterCode;
-  const openRouterKey = data?.key ?? undefined;
-  const isSuccess = !!openRouterKey;
+  const { code, state } = useRouterQuery<{ code?: string, state?: string }>();
 
 
-  // Success: save the key and redirect to the chat app
+  // [effect] exchange the code - only for a sign-in this browser started (matching state), with that flow's verifier
   React.useEffect(() => {
-    if (!isSuccess)
+    if (!code || exchangeStartedRef.current) return;
+    exchangeStartedRef.current = true;
+
+    const codeVerifier = openRouterOAuthVerifierForState(state);
+    if (!codeVerifier) {
+      // only this page fails: a sign-in may still be in progress in another tab
+      setError('This sign-in was not started from this browser. Start it again from Models > OpenRouter.');
       return;
+    }
 
-    // 1. Save the key as the client key
-    llmsStoreActions().setOpenRouterKey(openRouterKey);
+    apiAsync.backend.exchangeOpenRouterKey.mutate({ code, codeVerifier })
+      .then(({ key }) => setOrKey(key))
+      .catch((error: any) => setError(error?.message || 'Key exchange failed.'))
+      .finally(openRouterOAuthEnd);
+  }, [code, state]);
 
-    // 2. Navigate to the chat app
-    void navigateToIndex(true); //.then(openModelsSetup);
+  // [effect] after 5 seconds, if no code show error
+  React.useEffect(() => {
+    if (code) return;
+    const timeout = setTimeout(() => setError('No authorization code provided.'), 5000);
+    return () => clearTimeout(timeout);
+  }, [code]);
 
-  }, [isSuccess, openRouterKey]);
+  // [effect] after 30 seconds without an outcome, show an error
+  React.useEffect(() => {
+    if (!code || orKey || error) return;
+    const timeout = setTimeout(() => setError('Authentication timed out. Please try again.'), 30000);
+    return () => clearTimeout(timeout);
+  }, [code, error, orKey]);
 
-  return (
-    <Box sx={{
-      flexGrow: 1,
-      overflowY: 'auto',
-      display: 'flex', justifyContent: 'center',
-      p: { xs: 3, md: 6 },
-    }}>
 
-      <Box sx={{
-        // my: 'auto',
-        display: 'flex', flexDirection: 'column', alignItems: 'center',
-        gap: 4,
-      }}>
+  // [effect] post exchange handling
+  React.useEffect(() => {
+    if (!orKey) return;
 
-        <Typography level='title-lg'>
-          Welcome Back
-        </Typography>
+    // save key to the first openrouter slot (may not work in popup context)
+    llmsStoreActions().setOpenRouterKey(orKey);
 
-        {isPending && <Typography level='body-sm'>Loading...</Typography>}
+    // if opened as popup, message parent and close
+    if (window.opener && !window.opener.closed) {
+      window.opener.postMessage(
+        { type: 'openrouter-oauth-success', orApiKey: orKey },
+        window.location.origin,
+      );
+      // close popup after brief success message display
+      setTimeout(() => window.close(), 1500);
+    } else {
+      // fallback: full page redirect (opened directly or parent closed)
+      window.location.href = '/';
+    }
+  }, [orKey]);
 
-        {isErrorInput && <InlineError error='There was an issue retrieving the code from OpenRouter.' />}
 
-        {isError && <InlineError error={error} />}
+  return <>
+    <Head>
+      <title>OpenRouter | Big-AGI Linking</title>
+    </Head>
 
-        {data && (
-          <Typography level='body-md'>
-            Success! You can now close this window.
-          </Typography>
-        )}
-
-      </Box>
-
-    </Box>
-  );
+    <div className='sherpa singletab'>
+      <div className='vcontent'>
+        {error ? <>
+          <h3 style={{ color: '#dc2626' }}>Linking Failed</h3>
+          <p className='error'>{error}</p>
+          <p>Please let us know by opening a GitHub issue.</p>
+        </> : orKey ? <>
+          <h3 style={{ color: '#16a34a' }}>Linking Succeeded</h3>
+          <p style={{ color: '#64748b' }}>Redirecting to Big-AGI...</p>
+        </> : <>
+          <p className='state-loading'>...</p>
+        </>}
+      </div>
+    </div>
+  </>;
 }
-
-
-/**
- * This page will be invoked by OpenRouter as a Callback
- *
- * Docs: https://openrouter.ai/docs#oauth
- * Example URL: https://localhost:3000/link/callback_openrouter?code=SomeCode
- */
-export default withNextJSPerPageLayout({ type: 'container' }, () => {
-
-  // external state - get the 'code=...' from the URL
-  const { code } = useRouterQuery<{ code: string | undefined }>();
-
-  return <CallbackOpenRouterPage openRouterCode={code} />;
-
-});
