@@ -20,6 +20,7 @@ import { AnthropicSkillsConfig } from './AnthropicSkillsConfig';
 import { OpenRouterWebToolsConfig } from './OpenRouterWebToolsConfig';
 
 import { UnslothParametersConfig } from './UnslothParametersConfig'; // [praxeo fork]
+import { StrataParametersConfig } from './StrataParametersConfig'; // [praxeo fork]
 
 
 const _UNSPECIFIED = '_UNSPECIFIED' as const;
@@ -570,6 +571,7 @@ export function LLMParametersEditor(props: {
       />
     )}
     <UnslothParametersConfig modelParamSpec={modelParamSpec} parameters={allParameters} onChangeParameter={onChangeParameter} onRemoveParameter={onRemoveParameter} />{/* [praxeo fork] */}
+    <StrataParametersConfig modelParamSpec={modelParamSpec} parameters={allParameters} onChangeParameter={onChangeParameter} onRemoveParameter={onRemoveParameter} />{/* [praxeo fork] */}
 
 
     {showParam('llmVndAntWebSearch') && (

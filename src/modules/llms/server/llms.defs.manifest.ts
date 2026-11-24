@@ -120,6 +120,7 @@ export const LLMS_DEFS_EXTRA_BUCKETS = {
       'openai/models/openai.models.ts',
       'openai/models/openrouter.models.ts',
       'openai/models/sarvam.models.ts',
+      'openai/models/strata.models.ts',
       'openai/models/unsloth.models.ts',
       'openai/wiretypes/baseten.wiretypes.ts',
       'openai/wiretypes/fireworksai.wiretypes.ts',
