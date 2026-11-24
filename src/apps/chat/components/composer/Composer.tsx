@@ -57,7 +57,7 @@ import { providerCommands } from './actile/providerCommands';
 import { providerStarredMessages, StarredMessageItem } from './actile/providerStarredMessage';
 import { useActileManager } from './actile/useActileManager';
 
-import type { AttachmentDraftId, AttachmentDraftsAction } from '~/common/attachment-drafts/attachment.types';
+import { AttachmentDraftId, attachmentDraftIsBusy, AttachmentDraftsAction } from '~/common/attachment-drafts/attachment.types';
 import { AttachmentInputEnhancersOptions, attachmentEnhancersPlaceholderHints } from '~/common/attachment-drafts/attachment.enhancers';
 import { AttachmentSourcesMemo } from '~/common/attachment-drafts/attachment-sources/AttachmentSources';
 import { useAttachmentDrafts } from '~/common/attachment-drafts/useAttachmentDrafts';
@@ -226,6 +226,7 @@ function Composer(props: {
 
   // attachments derived state
   const { attEnrichment, attEnrichSummary, confirmUnsupportedLLMAttachments } = useLLMImageInputPolicy(chatLLM, attachmentDrafts);
+  const attachmentsBusy = !!showChatAttachments && attachmentDrafts.some(attachmentDraftIsBusy);
 
   // drag/drop
   const { dragContainerSx, dropComponent, handleContainerDragEnter, handleContainerDragStart } = useComposerDragDrop(!props.isMobile, attachAppendDataTransfer);
@@ -316,6 +317,13 @@ function Composer(props: {
   const _handleSendActionUnguarded = React.useCallback(async (_chatExecuteMode: ChatExecuteMode, composerText: string): Promise<boolean> => {
     if (!isValidConversation(targetConversationId)) return false;
 
+    // no send while a draft is still loading or converting: it has no fragments yet, and the take below would send without it
+    const canAttach = chatExecuteModeCanAttach(_chatExecuteMode, props.capabilityHasT2IEdit);
+    if (canAttach && conversationOverlayStore?.getState().attachmentDrafts.some(attachmentDraftIsBusy)) {
+      addSnackbar({ key: 'chat-attachments-busy', message: 'Please wait for the attachments to finish loading.', type: 'info' });
+      return false;
+    }
+
     // await user confirmation (or rejection) if attachments are not supported
     if (!await confirmUnsupportedLLMAttachments()) return false;
 
@@ -332,7 +340,6 @@ function Composer(props: {
     if (composerText)
       fragments.push(createTextContentFragment(composerText + composerTextSuffix));
 
-    const canAttach = chatExecuteModeCanAttach(_chatExecuteMode, props.capabilityHasT2IEdit);
     if (canAttach) {
       // Enhancer-pending media and uploaded files join the same send-order policy.
       fragments.push(...(pendingParts || []).map(part => createHostedResourceContentFragment(part.resource)));
@@ -354,7 +361,7 @@ function Composer(props: {
     if (enqueued)
       _handleClearText();
     return enqueued;
-  }, [targetConversationId, confirmUnsupportedLLMAttachments, composerTextSuffix, props.capabilityHasT2IEdit, inReferenceTo, onAction, _handleClearText, attachmentsTakeAllFragments, pendingParts]);
+  }, [targetConversationId, confirmUnsupportedLLMAttachments, composerTextSuffix, props.capabilityHasT2IEdit, inReferenceTo, onAction, _handleClearText, attachmentsTakeAllFragments, conversationOverlayStore, pendingParts]);
 
   const handleSendAction = React.useCallback(async (chatExecuteMode: ChatExecuteMode, composerText: string): Promise<boolean> => {
     setSendStarted(true);
@@ -387,7 +394,9 @@ function Composer(props: {
       void AudioGenerator.chatAutoSend();
       // void AudioPlayer.playUrl('/sounds/mic-off-mid.mp3');
       // }
-      void handleSendAction(chatExecuteMode, nextText); // fire/forget
+      void handleSendAction(chatExecuteMode, nextText).then(sent => {
+        if (!sent) setComposeText(nextText); // a refused send (attachments still loading) keeps what was dictated
+      });
     } else {
       // if scheduled for send but not sent, clear the send state
       if (result.flagSendOnDone)
@@ -574,14 +583,14 @@ function Composer(props: {
 
       // Alt (Windows) or Option (Mac) + Enter: append the message instead of sending it
       if (e.altKey && !e.metaKey && !e.ctrlKey) {
-        if (await handleSendAction('append-user', composeText)) // 'alt+enter' -> write
+        if (!assistantAbortible && await handleSendAction('append-user', composeText)) // 'alt+enter' -> write, not while a reply streams (the send would abort it)
           e.stopPropagation();
         return e.preventDefault();
       }
 
       // Ctrl (Windows) or Command (Mac) + Enter: send for beaming
       if (e.ctrlKey && !e.metaKey && !e.altKey) {
-        if (await handleSendAction('beam-content', composeText)) // 'ctrl+enter' -> beam
+        if (!assistantAbortible && await handleSendAction('beam-content', composeText)) // 'ctrl+enter' -> beam, same gate
           e.stopPropagation();
         return e.preventDefault();
       }
@@ -1047,7 +1056,7 @@ function Composer(props: {
                     <Button
                       key='composer-act'
                       fullWidth
-                      disabled={noConversation /* || noLLM*/}
+                      disabled={noConversation || attachmentsBusy /* || noLLM*/}
                       loading={sendStarted}
                       loadingPosition='end'
                       onClick={handleSendClicked}

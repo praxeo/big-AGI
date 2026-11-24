@@ -5,7 +5,7 @@ import { ExternalDocsLink } from '~/common/components/ExternalDocsLink';
 import { GoodModal } from '~/common/components/modals/GoodModal';
 
 import { ExportChats, ExportConfig } from './ExportChats';
-import { ImportChats, ImportConfig } from './ImportChats';
+import { type ImportConfig, TradeImport } from './TradeImport';
 
 export type TradeConfig = ImportConfig | ExportConfig;
 
@@ -15,13 +15,13 @@ export function TradeModal(props: { config: TradeConfig, onConversationActivate:
       open onClose={props.onClose}
       dividers
       title={<>
-        <b>{props.config.dir === 'import' ? 'Import ' : props.config.dir === 'export' ? 'Export ' : ''}</b> {(props.config.dir === 'export' && !props.config.exportAll) ? 'conversation' : 'conversations'}
+        <b>{props.config.dir === 'import' ? 'Import' : 'Export '}</b> {(props.config.dir === 'export' && !props.config.exportAll) ? 'conversation' : ''}
       </>}
       startButton={<ExternalDocsLink level='body-sm' docPage='account-backup'>Learn more</ExternalDocsLink>}
     >
 
       {props.config.dir === 'import' && (
-        <ImportChats onConversationActivate={props.onConversationActivate} onClose={props.onClose} />
+        <TradeImport files={props.config.files} onConversationActivate={props.onConversationActivate} />
       )}
 
       {props.config.dir === 'export' && (

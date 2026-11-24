@@ -2,9 +2,9 @@ import * as React from 'react';
 import { fileOpen, fileSave, FileWithHandle } from 'browser-fs-access';
 
 import { Box, Button, Checkbox, Divider, FormControl, FormLabel, Sheet, Switch, Typography } from '@mui/joy';
-import DownloadIcon from '@mui/icons-material/Download';
 import DoneIcon from '@mui/icons-material/Done';
 import ErrorIcon from '@mui/icons-material/Error';
+import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
 import RestoreIcon from '@mui/icons-material/Restore';
 import WarningRoundedIcon from '@mui/icons-material/WarningRounded';
 
@@ -15,7 +15,6 @@ import { Release } from '~/common/app.release';
 import { createModuleLogger } from '~/common/logger';
 import { downloadBlob } from '~/common/util/downloadUtils';
 
-import { tradeFileVariant } from './trade.client';
 import { capitalizeFirstLetter, humanReadableBytes } from '~/common/util/textUtils';
 import { prettyTimestampForFilenames } from '~/common/util/timeUtils';
 
@@ -25,8 +24,17 @@ const BACKUP_FILE_FORMAT = 'Big-AGI Backup File';
 const BACKUP_FORMAT_VERSION = '1.2';
 const BACKUP_FORMAT_VERSION_NUMBER = 102000;
 const WINDOW_RELOAD_DELAY = 300;
+// Stored values that are no part of a backup: not saved, and a restore neither writes them (older backups
+// hold them) nor removes the ones of this device.
 const EXCLUDED_LOCAL_STORAGE_KEYS = [
   'agi-logger-log', // the log cannot be restored as it's in-mem and being persisted while this is running
+  'app-sharing', // the shared chat links, with their deletion keys
+  'app-from-v1-arrival', // left in browsers by the banner for arrivals from V1, since removed
+  'app-app-chat-panes-2', // the open chat panes
+  'app-fabric-cache', // the sign-in cache of the builds with accounts
+];
+const EXCLUDED_LOCAL_STORAGE_PREFIXES = [
+  'ph_', // the analytics client's state and identity
 ];
 const EXCLUDED_IDB_DATABASES = [
   'Big-AGI', // exclude DBlobs IDB
@@ -68,12 +76,16 @@ function _getErrorText(error: unknown): string {
 
 // -- LocalStorage Read --
 
+function _isExcludedLocalStorageKey(key: string): boolean {
+  return EXCLUDED_LOCAL_STORAGE_KEYS.includes(key) || EXCLUDED_LOCAL_STORAGE_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
 async function getAllLocalStorageKeyValues(): Promise<Record<string, any>> {
   const data: Record<string, any> = {};
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (!key || EXCLUDED_LOCAL_STORAGE_KEYS.includes(key)) continue;
+      if (!key || _isExcludedLocalStorageKey(key)) continue;
       try {
         const value = localStorage.getItem(key);
         if (value !== null) {
@@ -99,6 +111,7 @@ async function getAllLocalStorageKeyValues(): Promise<Record<string, any>> {
 
 async function getAllIndexedDBData(ignoreExclusions: boolean): Promise<Record<string, any>> {
   const data: Record<string, any> = {};
+  const unread: string[] = [];
   try {
     const dbNames = await listIndexedDBDatabaseNames();
     for (const dbName of dbNames) {
@@ -107,12 +120,16 @@ async function getAllIndexedDBData(ignoreExclusions: boolean): Promise<Record<st
         data[dbName] = await getIndexedDBContent(dbName);
       } catch (error) {
         console.error(`Error getting content for IndexedDB "${dbName}":`, error);
+        unread.push(`"${dbName}" (${_getErrorText(error)})`);
       }
     }
   } catch (error) {
     console.error('Error processing IndexedDB databases:', error);
     // return what we have
   }
+  // a file saved as a backup must hold every database it was asked for: fail here, the caller reports it and saves nothing
+  if (unread.length)
+    throw new Error(`Could not read the database ${unread.join(', ')}. Reload the app and retry.`);
   return data;
 }
 
@@ -190,22 +207,24 @@ function getIndexedDBContent(dbName: string): Promise<Record<string, { key: any;
           return;
         }
 
-        let transactionError = false;
         const transaction = db.transaction(storeNames, 'readonly');
 
         transaction.onerror = (event) => {
-          transactionError = true;
           const target = event.target as IDBTransaction;
           const errorMsg = target.error ? target.error.message : 'Unknown error';
           logger.error(`transaction error in "${dbName}": ${errorMsg}`);
-          // Don't reject - we'll resolve with partial data at completion
+          // the transaction aborts next: onabort settles
         };
 
         transaction.oncomplete = () => {
           db.close();
-          if (transactionError)
-            logger.warn(`transaction for "${dbName}" completed with some errors. Data may be incomplete.`);
           resolve(dbData);
+        };
+
+        // a failed read aborts the transaction, and an aborted transaction never completes: settle here, or the backup hangs
+        transaction.onabort = () => {
+          db.close();
+          reject(new Error(`read aborted: ${transaction.error?.message || 'unknown error'}`));
         };
 
         storeNames.forEach(storeName => {
@@ -249,29 +268,43 @@ function getIndexedDBContent(dbName: string): Promise<Record<string, { key: any;
 
 // --- Data Restore Functions ---
 
-async function restoreLocalStorage(data: Record<string, any>): Promise<void> {
+/** @returns the keys that could not be written, for the caller to report */
+async function restoreLocalStorage(data: Record<string, any>): Promise<string[]> {
+  const failures: string[] = [];
   try {
     // Skip restoration if backup contains no localStorage data
     if (!hasKeys(data)) {
       logger.info('Skipping localStorage restore - backup contains no localStorage data');
-      return;
+      return failures;
     }
 
-    localStorage.clear();
+    // everything goes, but what is no part of a backup: that stays as this device has it
+    const keysToReplace: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && !_isExcludedLocalStorageKey(key)) keysToReplace.push(key);
+    }
+    for (const key of keysToReplace)
+      localStorage.removeItem(key);
+
     for (const key in data) {
+      if (_isExcludedLocalStorageKey(key)) continue;
       try {
         const value = data[key];
         localStorage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
       } catch (error) {
         logger.error(`Error restoring localStorage key "${key}":`, error);
+        failures.push(`setting "${key}": ${_getErrorText(error)}`);
       }
     }
   } catch (error) {
     throw new Error(`Failed to restore localStorage: ${_getErrorText(error)}`);
   }
+  return failures;
 }
 
-async function restoreIndexedDB(allDbData: Record<string, any>): Promise<void> {
+/** @returns the databases and stores that were not restored, for the caller to report */
+async function restoreIndexedDB(allDbData: Record<string, any>): Promise<string[]> {
   // expected local DBs to restore over, from the latest `main` (was: `v2-dev`, 2025-05-14)
   const dbTargetVersions: { [dbName: string]: number } = {
     'keyval-store': 1,
@@ -345,8 +378,10 @@ async function restoreIndexedDB(allDbData: Record<string, any>): Promise<void> {
             const existingStoreNames = Array.from(db.objectStoreNames);
             const storesToRestore = dbStoreNames.filter(name => existingStoreNames.includes(name));
 
-            if (storesToRestore.length < dbStoreNames.length)
+            if (storesToRestore.length < dbStoreNames.length) {
               logger.error(`No matching stores found in ${dbName}, expected '${dbStoreNames.join(', ')}' but found '${existingStoreNames.join(', ')}'`);
+              failures.push(`"${dbName}": expected stores '${dbStoreNames.join(', ')}' but found '${existingStoreNames.join(', ')}'`); // their items are not restored
+            }
             if (storesToRestore.length === 0) {
               db.close();
               resolve();
@@ -402,6 +437,12 @@ async function restoreIndexedDB(allDbData: Record<string, any>): Promise<void> {
                   // Add each item from the backup
                   items.forEach(item => {
                     try {
+                      // the backup's JSON turned the image assets' Dates into ISO strings: back to Date, as both fields are indexed and sorted as dates
+                      if (dbName === 'Big-AGI' && storeName === 'largeAssets' && item.value) {
+                        if (typeof item.value.createdAt === 'string') item.value.createdAt = new Date(item.value.createdAt);
+                        if (typeof item.value.updatedAt === 'string') item.value.updatedAt = new Date(item.value.updatedAt);
+                      }
+
                       // Handle possible cases:
                       // 1. Store with keyPath - add value directly
                       // 2. Store without keyPath - add value with explicit key
@@ -494,9 +535,8 @@ async function restoreIndexedDB(allDbData: Record<string, any>): Promise<void> {
     }
   }
 
-  // a failed database kept its old content (an aborted transaction rolls back): the caller must not report success
-  if (failures.length)
-    throw new Error(failures.join('; '));
+  // a failed database kept its old content (an aborted transaction rolls back)
+  return failures;
 }
 
 // --- Validation and Utility Functions ---
@@ -668,7 +708,10 @@ async function createFlashObject(backupType: 'full' | 'partial' | 'auto-before-r
  * Backup and Restore (Flashing) functionality for Big-AGI client-side data.
  * Saves and fully restores localStorage and IndexedDB data.
  */
-export function FlashRestore(props: { unlockRestore?: boolean }) {
+export function FlashRestore(props: {
+  unlockRestore?: boolean,
+  file?: File, // the backup to restore, when it is already chosen: the button does not ask for one
+}) {
 
   // state
   const [restoreState, setRestoreState] = React.useState<'idle' | 'processing' | 'confirm' | 'success' | 'error'>('idle');
@@ -680,6 +723,7 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
   const [tenantSlugWarning, setTenantSlugWarning] = React.useState<string | null>(null);
 
   // derived state
+  const { file: fileGiven } = props;
   const isUnlocked = !!props.unlockRestore;
   const isBusy = restoreState === 'processing';
   const hasLocalStorageData = backupDataForRestore ? hasKeys(backupDataForRestore.storage.localStorage) : false;
@@ -696,9 +740,9 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
     setTenantSlugWarning(null);
 
     // user selects a file
-    let file: FileWithHandle;
+    let file: File;
     try {
-      file = await fileOpen({
+      file = fileGiven ?? await fileOpen({
         // only '.json': the compound '.agi.json' is an invalid extension for Chrome's File System Access API and breaks the picker (the backup file can't be selected). '.json' still matches '*.agi.json' files by suffix.
         extensions: ['.json'],
         description: BACKUP_FILE_FORMAT,
@@ -771,7 +815,7 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
       setRestoreState('error');
       setErrorMessage(`Restore failed: ${_getErrorText(error)}`);
     }
-  }, []);
+  }, [fileGiven]);
 
   const handleRestoreFlashConfirmed = React.useCallback(async () => {
     if (!backupDataForRestore) return;
@@ -798,12 +842,13 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
       // }
 
       // 2. Restore data based on user selections
+      const failures: string[] = [];
       if (restoreLocalStorageEnabled) {
-        await restoreLocalStorage(backupDataForRestore.storage.localStorage);
+        failures.push(...await restoreLocalStorage(backupDataForRestore.storage.localStorage));
         logger.info('localStorage restore complete');
       }
       if (restoreIndexedDBEnabled) {
-        await restoreIndexedDB(backupDataForRestore.storage.indexedDB || {});
+        failures.push(...await restoreIndexedDB(backupDataForRestore.storage.indexedDB || {}));
         logger.info('indexedDB restore complete');
       }
 
@@ -815,14 +860,17 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
 
       // 3. Close the modal cleanly first to prevent React DOM errors during unmount
       // Set state to idle and clear backup data to trigger modal close
-      setRestoreState('success');
+      setRestoreState(failures.length ? 'error' : 'success');
 
       // 3. Alert and reload - Close modal first, then wait for storage flush and DOM cleanup
       setBackupDataForRestore(null);
 
       // 4. Wait for React to complete the modal unmount and storage to flush
+      // reload also after a partial restore: the stores hold the old data in memory, and would write it back over what was restored
       setTimeout(() => {
-        alert('Backup restored successfully.\n\nThe application will now reload to apply the changes.');
+        alert(failures.length
+          ? `The backup was restored in part. Not restored: ${failures.join('; ')}\n\nThe application will now reload with what was restored.`
+          : 'Backup restored successfully.\n\nThe application will now reload to apply the changes.');
         window.location.reload();
       }, WINDOW_RELOAD_DELAY); // 300ms allows modal to unmount and storage to flush
 
@@ -842,7 +890,7 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
   return <>
 
     <Typography level='body-sm' mt={2}>
-      Restore from a backup file:
+      {fileGiven ? 'Or replace everything on this device with it:' : 'Restore from a backup file:'}
     </Typography>
     <Button
       variant='soft'
@@ -853,12 +901,10 @@ export function FlashRestore(props: { unlockRestore?: boolean }) {
       endDecorator={restoreState === 'success' ? <DoneIcon /> : restoreState === 'error' ? <ErrorIcon /> : <RestoreIcon />}
       onClick={handleRestoreLoad}
       sx={{
-        boxShadow: 'md',
-        backgroundColor: 'background.popup',
         justifyContent: 'space-between',
       }}
     >
-      {restoreState === 'success' ? 'Restore Complete' : restoreState === 'error' ? 'Restore Failed' : restoreState === 'processing' ? 'Restoring...' : 'Restore from Backup File'}
+      {restoreState === 'success' ? 'Restore Complete' : restoreState === 'error' ? 'Restore Failed' : restoreState === 'processing' ? 'Restoring...' : fileGiven ? 'Restore Device' : 'Restore from Backup File'}
     </Button>
     {/*{!errorMessage && <Typography level='body-xs'>*/}
     {/*  Warning: Replaces current data.<br />Requires page reload.*/}
@@ -1009,7 +1055,7 @@ export function FlashBackup(props: {
         includeImages,
         includeSettings,
         true, // includeIndexedDB - full backup includes everything
-        `Big-AGI-${tradeFileVariant()}-flash${includeImages ? '+images' : ''}${includeSettings ? '' : '-nosets'}${event.ctrlKey ? '-download' : ''}-${dateStr}.json`,
+        `Big-AGI-${capitalizeFirstLetter(Release.TenantSlug)}-flash${includeImages ? '+images' : ''}${includeSettings ? '' : '-nosets'}${event.ctrlKey ? '-download' : ''}-${dateStr}.json`,
       );
       setBackupState(success ? 'success' : 'idle');
       if (typeof success === 'number')
@@ -1029,8 +1075,8 @@ export function FlashBackup(props: {
 
   return <>
 
-    <Typography level='body-sm' mt={3}>
-      Save <strong>all settings and chats</strong>:
+    <Typography level='body-sm'>
+      A copy of <strong>this device</strong>, to restore it whole:
     </Typography>
     <Button
       variant='soft'
@@ -1038,20 +1084,18 @@ export function FlashBackup(props: {
       color={backupState === 'success' ? 'success' : backupState === 'error' ? 'warning' : 'primary'}
       disabled={isProcessing}
       loading={isProcessing}
-      endDecorator={backupState === 'success' ? <DoneIcon /> : backupState === 'error' ? <ErrorIcon /> : <DownloadIcon />}
+      endDecorator={backupState === 'success' ? <DoneIcon /> : backupState === 'error' ? <ErrorIcon /> : <FileDownloadOutlinedIcon />}
       onClick={handleFullBackup}
       onDoubleClick={console.log}
       sx={{
-        boxShadow: 'md',
-        backgroundColor: 'background.popup',
         justifyContent: 'space-between',
       }}
     >
-      {backupState === 'success' ? 'Backup Saved' : backupState === 'error' ? 'Backup Failed' : isProcessing ? 'Backing Up...' : 'Export All'}
+      {backupState === 'success' ? 'Backup Saved' : backupState === 'error' ? 'Backup Failed' : isProcessing ? 'Backing Up...' : 'Back Up Device'}
     </Button>
     {backupState === 'success' && backupSizeBytes !== null && (
       <Typography level='body-xs' color='success'>
-        Flash backup saved · {humanReadableBytes(backupSizeBytes)}
+        Device backup saved · {humanReadableBytes(backupSizeBytes)}
       </Typography>
     )}
     {!errorMessage && <>

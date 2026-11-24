@@ -132,7 +132,7 @@ function ChatDrawer(props: {
   }, [onConversationsDelete]);
 
   const handleConversationsExport = React.useCallback(() => {
-    // null conversationId is fine: the dialog disables the single-chat buttons and still offers the all-chats/flash backups
+    // null conversationId is fine: the dialog disables the single-chat buttons and still offers the export of everything
     onConversationsExportDialog(props.activeConversationId, true);
   }, [onConversationsExportDialog, props.activeConversationId]);
 
@@ -481,7 +481,7 @@ function ChatDrawer(props: {
           {/*<OpenAIIcon sx={{  ml: 'auto' }} />*/}
         </ListItemButton>
 
-        {/* Always enabled: this is also the only route to 'Backup All Chats' / 'Export All', which must stay reachable (e.g. with Beam open, or zero chats).
+        {/* Always enabled: this is also the only route to the export of all data, which must stay reachable (e.g. with Beam open, or zero chats).
           - former gate (d8c78b1a004, 'Export: disable when beam open, as it's not exported for now'), kept for the record:
             disabled={filteredChatsAreEmpty || props.focusedChatBeamOpen} */}
         <ListItemButton onClick={handleConversationsExport} sx={{ flex: 1 }}>

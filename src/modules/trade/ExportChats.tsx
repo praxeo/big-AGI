@@ -3,6 +3,8 @@ import * as React from 'react';
 import { Box, Button, Grid, Typography } from '@mui/joy';
 import DoneIcon from '@mui/icons-material/Done';
 import FileDownloadOutlinedIcon from '@mui/icons-material/FileDownloadOutlined';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import KeyboardArrowRightIcon from '@mui/icons-material/KeyboardArrowRight';
 
 import { hasServerConf } from '~/common/app.serverconf';
 
@@ -10,12 +12,12 @@ import type { DConversationId } from '~/common/stores/chat/chat.conversation';
 import { GoodTooltip } from '~/common/components/GoodTooltip';
 import { KeyStroke } from '~/common/components/KeyStroke';
 import { getConversation } from '~/common/stores/chat/store-chats';
-import { humanReadableBytes } from '~/common/util/textUtils';
 import { ExportClaudeCode } from './claude-code/ExportClaudeCode';
 
 import { ChatLinkExport } from './link/ChatLinkExport';
 import { FlashBackup } from './BackupRestore';
-import { downloadAllJsonV1B, downloadSingleChat } from './trade.client';
+import { TradeExportAll } from './TradeExportAll';
+import { downloadSingleChat } from './trade.client';
 
 
 export type ExportConfig = {
@@ -32,10 +34,9 @@ export function ExportChats(props: { config: ExportConfig, onClose: () => void }
 
   // state
   const [downloadedJSONState, setDownloadedJSONState] = React.useState<'busy' | 'ok' | 'fail' | null>(null);
+  const [downloadedJSONFailure, setDownloadedJSONFailure] = React.useState<string | null>(null);
   const [downloadedMarkdownState, setDownloadedMarkdownState] = React.useState<'busy' | 'ok' | 'fail' | null>(null);
-  const [downloadedAllState, setDownloadedAllState] = React.useState<'busy' | 'ok' | 'fail' | null>(null);
-  const [downloadAllError, setDownloadAllError] = React.useState<string | null>(null);
-  const [downloadAllInfo, setDownloadAllInfo] = React.useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = React.useState(false);
 
   // external state
   const enableSharing = hasServerConf('hasDB');
@@ -51,9 +52,15 @@ export function ExportChats(props: { config: ExportConfig, onClose: () => void }
     const conversation = getConversation(props.config.conversationId);
     if (!conversation) return;
     setDownloadedJSONState('busy');
+    setDownloadedJSONFailure(null);
     downloadSingleChat(conversation, 'json')
       .then(() => setDownloadedJSONState('ok'))
-      .catch((error: any) => setDownloadedJSONState(error?.name === 'AbortError' ? null : 'fail'));
+      .catch((error: any) => {
+        // closing the save dialog is not a failure; a conversation this device does not export is one, and says why
+        const failure = error?.name === 'AbortError' ? null : error?.message || 'Could not save the file';
+        setDownloadedJSONState(failure ? 'fail' : null);
+        setDownloadedJSONFailure(failure);
+      });
   };
 
   const handleDownloadConversationMarkdown = () => {
@@ -66,34 +73,14 @@ export function ExportChats(props: { config: ExportConfig, onClose: () => void }
       .catch((error: any) => setDownloadedMarkdownState(error?.name === 'AbortError' ? null : 'fail'));
   };
 
-  const handleDownloadAllConversationsJSON = () => {
-    if (downloadedAllState === 'busy') return;
-    setDownloadedAllState('busy');
-    setDownloadAllError(null);
-    setDownloadAllInfo(null);
-    downloadAllJsonV1B()
-      .then(({ conversationCount, sizeBytes }) => {
-        setDownloadedAllState('ok');
-        setDownloadAllInfo(`Saved ${conversationCount.toLocaleString()} chats · ${humanReadableBytes(sizeBytes)}`);
-      })
-      .catch((error: any) => {
-        // user closed the save dialog: back to idle, not an error
-        if (error?.name === 'AbortError')
-          return setDownloadedAllState(null);
-        setDownloadedAllState('fail');
-        setDownloadAllError(error?.message || 'Unknown error saving the backup.');
-      });
-  };
-
-
   const hasConversation = !!props.config.conversationId;
 
   return <>
 
     <Grid container spacing={3}>
 
-      {/* Current Chat */}
-      <Grid xs={12} md={6} sx={{ display: 'flex', alignItems: 'flex-start', py: 2 }}>
+      {/* Current Chat: not shown without one (the export opened from outside a chat) */}
+      {hasConversation && <Grid xs={12} md={6} sx={{ display: 'flex', alignItems: 'flex-start', py: 2 }}>
         <Box sx={{ display: 'grid', gap: 1, mx: 'auto' }}>
 
           {exportAll && (
@@ -113,6 +100,7 @@ export function ExportChats(props: { config: ExportConfig, onClose: () => void }
               Download · JSON
             </Button>
           </GoodTooltip>
+          {!!downloadedJSONFailure && <Typography level='body-xs' color='warning' sx={{ maxWidth: 240 }}>{downloadedJSONFailure}</Typography>}
 
           <Button
             variant='soft' disabled={!hasConversation || downloadedMarkdownState === 'busy'} loading={downloadedMarkdownState === 'busy'}
@@ -144,41 +132,21 @@ export function ExportChats(props: { config: ExportConfig, onClose: () => void }
           <ExportClaudeCode conversationId={props.config.conversationId} getConversation={getConversation} />
 
         </Box>
-      </Grid>
+      </Grid>}
 
       {/* All Chats */}
       {exportAll && (
-        <Grid xs={12} md={6} sx={{ display: 'flex', alignItems: 'flex-start', py: 2 }}>
+        <Grid xs={12} md={hasConversation ? 6 : 12} sx={{ display: 'flex', alignItems: 'flex-start', py: 2 }}>
           <Box sx={{ display: 'grid', gap: 1, mx: 'auto' }}>
 
-            <Typography level='body-sm'>
-              Backup or transfer <strong>all chats</strong>:
-            </Typography>
+            <TradeExportAll />
 
-            <Button
-              variant='soft' disabled={downloadedAllState === 'busy'} loading={downloadedAllState === 'busy'}
-              color={downloadedAllState === 'ok' ? 'success' : downloadedAllState === 'fail' ? 'warning' : 'primary'}
-              endDecorator={downloadedAllState === 'ok' ? <DoneIcon /> : downloadedAllState === 'fail' ? '✘' : <FileDownloadOutlinedIcon />}
-              sx={{ minWidth: 240, justifyContent: 'space-between' }}
-              onClick={handleDownloadAllConversationsJSON}
-            >
-              Backup All Chats
+            <Button variant='plain' color='neutral' size='sm' startDecorator={showAdvanced ? <KeyboardArrowDownIcon /> : <KeyboardArrowRightIcon />} onClick={() => setShowAdvanced(on => !on)} sx={{ mt: 2, justifyContent: 'flex-start', fontWeight: 'md' }}>
+              Device backup (legacy)
             </Button>
 
-            {!!downloadAllInfo && (
-              <Typography level='body-xs' color='success' sx={{ maxWidth: 240 }}>
-                {downloadAllInfo}
-              </Typography>
-            )}
-
-            {!!downloadAllError && (
-              <Typography level='body-xs' color='danger' sx={{ maxWidth: 240 }}>
-                {downloadAllError}
-              </Typography>
-            )}
-
             {/* Insert to Download a Flash */}
-            <FlashBackup />
+            {showAdvanced && <FlashBackup />}
 
           </Box>
         </Grid>
